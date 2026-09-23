@@ -69,6 +69,20 @@ def _scene(
     )
 
 
+def test_clear_unscoped_xy_transit_uses_one_coordinated_segment():
+    plan = plan_motion(
+        _scene(),
+        Point3D(1, 1, 5),
+        Point3D(9, 9, 5),
+    )
+
+    assert plan.strategy == "coordinated_xy"
+    assert len(plan.segments) == 1
+    assert plan.segments[0].kind == "coordinated_xy"
+    assert plan.segments[0].axis == "xy"
+    assert plan.segments[0].length_mm == pytest.approx(math.sqrt(128))
+
+
 def test_y_first_is_selected_when_x_first_crosses_a_fixture():
     scene = _scene(_box("rack", 4, 6, 0, 2, 4, 6))
 
@@ -81,9 +95,32 @@ def test_y_first_is_selected_when_x_first_crosses_a_fixture():
     )
 
     assert plan.strategy == "y_first"
+    assert all(segment.axis != "xy" for segment in plan.segments)
     assert [segment.axis for segment in plan.segments] == ["y", "x"]
     assert plan.segments[0].start == Point3D(1, 1, 5)
     assert plan.segments[-1].end == Point3D(9, 9, 5)
+
+
+def test_scoped_access_keeps_axis_aligned_approach():
+    fixture = _box("rack", 8, 9, 8, 9, 4, 6)
+    corridor = Corridor(
+        "rack-access",
+        _box("rack-access-box", 0, 10, 0, 10, 4, 6),
+        ("rack",),
+    )
+    plan = plan_motion(
+        _scene(fixture, corridors=(corridor,)),
+        Point3D(1, 1, 5),
+        Point3D(9, 9, 5),
+        access=AccessScope(
+            allowed_fixture_names=("rack",),
+            allowed_corridor_names=("rack-access",),
+            allowed_tool_names=("pipette",),
+        ),
+    )
+
+    assert plan.strategy in {"x_first", "y_first"}
+    assert all(segment.axis in {"x", "y"} for segment in plan.segments)
 
 
 def test_obstacle_edge_detour_is_selected_when_both_direct_orders_are_blocked():
@@ -606,8 +643,8 @@ def _valid_segment(
         ({"start": (0, 0, 0)}, "endpoints"),
         ({"tool_state": object()}, "tool_state"),
         ({"access": object()}, "access"),
-        ({"end": Point3D(0, 0, 0)}, "exactly one axis"),
-        ({"end": Point3D(1, 1, 0)}, "exactly one axis"),
+        ({"end": Point3D(0, 0, 0)}, "one axis or coordinated XY"),
+        ({"end": Point3D(1, 0, 1)}, "one axis or coordinated XY"),
     ],
 )
 def test_motion_segment_rejects_non_executable_moves(kwargs, message):
@@ -622,6 +659,25 @@ def test_motion_segment_rejects_non_executable_moves(kwargs, message):
     values.update(kwargs)
     with pytest.raises(InvalidGeometryError, match=message):
         MotionSegment(**values)
+
+
+def test_motion_segment_accepts_coordinated_xy_but_rejects_xy_with_z():
+    segment = MotionSegment(
+        kind="coordinated_xy",
+        start=Point3D(0, 0, 5),
+        end=Point3D(3, 4, 5),
+        phase="transit",
+    )
+
+    assert segment.axis == "xy"
+    assert segment.length_mm == 5.0
+    with pytest.raises(InvalidGeometryError, match="one axis or coordinated XY"):
+        MotionSegment(
+            kind="coordinated_xy",
+            start=Point3D(0, 0, 5),
+            end=Point3D(3, 4, 6),
+            phase="transit",
+        )
 
 
 def _plan(**overrides) -> MotionPlan:

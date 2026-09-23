@@ -259,7 +259,11 @@ def test_native_planned_commands_execute_preflighted_exact_segments() -> None:
     serialized = context.serialized_motion_plans()
     assert serialized
     assert any(plan["state_changes"] for plan in serialized)
-    assert all(segment["axis"] in {"x", "y", "z"} for plan in serialized for segment in plan["segments"])
+    assert all(
+        segment["axis"] in {"x", "y", "z", "xy"}
+        for plan in serialized
+        for segment in plan["segments"]
+    )
 
 
 def test_transfer_destination_no_route_rejects_before_pickup_or_aspirate() -> None:

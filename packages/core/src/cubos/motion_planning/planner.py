@@ -1,4 +1,4 @@
-"""Bounded, deterministic axis-aligned motion planning."""
+"""Bounded, deterministic motion planning."""
 
 from __future__ import annotations
 
@@ -94,7 +94,8 @@ def plan_motion(
 ) -> MotionPlan:
     """Plan one bounded move or raise ``NoRouteError``.
 
-    The search is intentionally finite: X-first, Y-first, then routes around
+    The search is intentionally finite: a coordinated XY line when its
+    conservative swept volume is clear, X-first, Y-first, then routes around
     each forbidden carriage-box edge. Equal candidates retain that order.
     """
     if not isinstance(scene, Scene):
@@ -132,10 +133,20 @@ def plan_motion(
             state_changes=changes,
         )
 
-    direct_candidates: list[tuple[int, str, tuple[Point3D, ...]]] = [
-        (0, "x_first", _direct_points(start, end, x_first=True)),
-        (1, "y_first", _direct_points(start, end, x_first=False)),
-    ]
+    direct_candidates: list[tuple[int, str, tuple[Point3D, ...]]] = []
+    if (
+        start.z == end.z
+        and start.x != end.x
+        and start.y != end.y
+        and not scope.allowed_fixture_names
+        and not scope.allowed_corridor_names
+        and not scope.allowed_tool_names
+    ):
+        direct_candidates.append((0, "coordinated_xy", (start, end)))
+    direct_candidates.extend([
+        (1, "x_first", _direct_points(start, end, x_first=True)),
+        (2, "y_first", _direct_points(start, end, x_first=False)),
+    ])
     seen_paths: set[tuple[Point3D, ...]] = set()
     direct_blockers: set[tuple[str, str]] = set()
     for candidate_rank, strategy, points in direct_candidates:
@@ -169,7 +180,7 @@ def plan_motion(
         relative_boxes, expanded_fixtures, direct_blockers,
     )
     candidates: list[tuple[int, str, tuple[Point3D, ...]]] = []
-    rank = 2
+    rank = 3
     for fixture_name, tool_name, forbidden in blockers:
         for edge, coordinate in (
             ("x_min", forbidden.minimum.x - _EDGE_EPSILON_MM),
@@ -226,7 +237,12 @@ def _motion_plan(
 ) -> MotionPlan:
     segments = tuple(
         MotionSegment(
-            kind="axis_aligned",
+            kind=(
+                "coordinated_xy"
+                if segment_start.x != segment_end.x
+                and segment_start.y != segment_end.y
+                else "axis_aligned"
+            ),
             start=segment_start,
             end=segment_end,
             phase=phase,
@@ -477,10 +493,11 @@ def _segment_check(
     access: AccessScope,
     expanded_fixtures: tuple[tuple[str, AABB], ...],
 ) -> tuple[bool, set[tuple[str, str]]]:
-    changed = sum(
-        getattr(start, axis) != getattr(end, axis) for axis in ("x", "y", "z")
+    changed_axes = tuple(
+        axis for axis in ("x", "y", "z")
+        if getattr(start, axis) != getattr(end, axis)
     )
-    if changed != 1:
+    if len(changed_axes) != 1 and changed_axes != ("x", "y"):
         return False, set()
     if not scene.bounds.contains_point(start) or not scene.bounds.contains_point(end):
         return False, set()

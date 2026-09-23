@@ -18,7 +18,7 @@ Ordinary access is vertical: approach a target from a collision-free entry, enga
 
 Access permission is restricted to the operation's target fixture and corridor. It never permits crossing neighboring labware or unrelated loaded tips. The route to/from that corridor can include Y-before-X or additional intermediate segments. A physically impossible approach or departure is a planning failure.
 
-The transit search checks both direct XY orders and a finite set of obstacle-edge detours. It is deterministic, but not a complete search of every possible 3D path: a complex feasible route can still be rejected. Local engagement, lift and withdrawal segments cannot take detours through an access corridor.
+For unscoped travel at unchanged Z, the transit search first tries one coordinated XY line. That diagonal is used only when its conservative swept box is clear; otherwise the planner checks both direct XY orders and a finite set of obstacle-edge detours. It is deterministic, but not a complete search of every possible 3D path: a complex feasible route can still be rejected. Scoped engagement, lift and withdrawal segments remain axis-specific and cannot take detours through an access corridor.
 
 The deck opts in with `motion_planning: {clearance_mm: 2}`. Each labware entry then needs a `motion.box`; each mounted instrument needs a `motion_envelope`. Ordinary labware can omit `motion.access` and use vertical access. The saved rack adds:
 
@@ -45,7 +45,7 @@ The supported commands are `move`, `pick_up_tip`, `transfer`, `mix`, `drop_tip`,
 
 To photograph a well, use `move` with the camera and well target, then `capture` with that same well as its image attribution. The move aligns the camera at the carriage travel ceiling; capture itself does not move the machine. A transition from an engaged pipette first withdraws that pipette through its own access corridor, then travels with all mounted tools checked. Images use the existing timestamped, collision-safe names under `~/.cubos/images` (or `CUBOS_IMAGES_DIR`) and are associated with the run's campaign and well. Simulation supplies a separate temporary image directory.
 
-Configuration is checked before instrument connection. Runtime plans are built from the observed carriage pose before actuation; offline previews identify their assumed starting pose. Planned movement uses an exact axis-segment executor, and failures do not trigger an automatic retract.
+Configuration is checked before instrument connection. Runtime plans are built from the observed carriage pose before actuation; offline previews identify their assumed starting pose. Planned movement uses an exact segment executor. Clear unscoped XY travel is emitted as one coordinated GRBL command, while Z retract/approach and scoped access remain separate checked segments. Failures do not trigger an automatic retract.
 
 ## Saved-deck provenance
 

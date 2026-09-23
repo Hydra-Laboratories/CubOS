@@ -939,8 +939,9 @@ class Mill:
         (InstrumentedGantry, protocol commands) own their own "safe approach" height instead of
         the mill baking in a machine-wide retract.
 
-        When ``travel_z`` is None, the mill issues a direct axis-by-axis
-        move (X, then Y, then Z) — no Z detour, no diagonal interpolation.
+        When ``travel_z`` is None, the mill issues a direct XY move followed
+        by Z. If both horizontal axes change, they share one coordinated GRBL
+        command so the carriage follows a straight diagonal.
 
         Args:
             x_coordinate (float): X coordinate.
@@ -1033,13 +1034,11 @@ class Mill:
         current_coordinates: Coordinates,
         target_coordinates: Coordinates,
     ):
-        """Direct move from current to target, axis-by-axis.
+        """Direct move from current to target, with coordinated XY travel.
 
-        Emits one G-code per changed axis in X-then-Y-then-Z order.
-        The mill never commands simultaneous multi-axis (diagonal)
-        motion — combining axes in a single G01 would couple their
-        motion into a straight interpolation that could graze
-        obstacles the caller didn't plan for.
+        Emits one horizontal G-code containing every changed XY axis, then a
+        separate Z command. Collision-aware callers remain responsible for
+        supplying checked horizontal segments.
 
         ``current_coordinates`` may be ``None`` (position read failed);
         every axis is then emitted unconditionally — safe because the
@@ -1048,10 +1047,13 @@ class Mill:
         f = f" F{self.default_feed_rate}"
         self._validate_target_coordinates(target_coordinates)
         commands = []
+        xy_words = []
         if current_coordinates is None or target_coordinates.x != current_coordinates.x:
-            commands.append(f"G01 X{target_coordinates.x}{f}")
+            xy_words.append(f"X{target_coordinates.x}")
         if current_coordinates is None or target_coordinates.y != current_coordinates.y:
-            commands.append(f"G01 Y{target_coordinates.y}{f}")
+            xy_words.append(f"Y{target_coordinates.y}")
+        if xy_words:
+            commands.append(f"G01 {' '.join(xy_words)}{f}")
         if current_coordinates is None or target_coordinates.z != current_coordinates.z:
             commands.append(f"G01 Z{target_coordinates.z}{f}")
         return commands
@@ -1062,16 +1064,15 @@ class Mill:
         target_coordinates: Coordinates,
         travel_z: float,
     ):
-        """Transit via ``travel_z``, axis-by-axis: lift → X → Y → descend.
+        """Transit via ``travel_z``: lift → coordinated XY → descend.
 
         Each step is emitted only when it would produce actual motion,
         so a move already at ``travel_z`` skips the lift, a same-X
-        (or same-Y) move skips that axis, and a final Z matching
-        ``travel_z`` skips the descent. X and Y always move in
-        separate G-codes — no diagonal.
+        (or same-Y) move omits that axis from the horizontal command, and a
+        final Z matching ``travel_z`` skips the descent.
 
         ``current_coordinates`` may be ``None`` (position read failed);
-        the full lift → X → Y → descend sequence is then emitted
+        the full lift → coordinated XY → descend sequence is then emitted
         unconditionally — safe because the commands are absolute and the
         lift happens first.
         """
@@ -1081,10 +1082,13 @@ class Mill:
         commands = []
         if current_coordinates is None or current_coordinates.z != travel_z:
             commands.append(f"G01 Z{travel_z}{f}")
+        xy_words = []
         if current_coordinates is None or target_coordinates.x != current_coordinates.x:
-            commands.append(f"G01 X{target_coordinates.x}{f}")
+            xy_words.append(f"X{target_coordinates.x}")
         if current_coordinates is None or target_coordinates.y != current_coordinates.y:
-            commands.append(f"G01 Y{target_coordinates.y}{f}")
+            xy_words.append(f"Y{target_coordinates.y}")
+        if xy_words:
+            commands.append(f"G01 {' '.join(xy_words)}{f}")
         if target_coordinates.z != travel_z:
             commands.append(f"G01 Z{target_coordinates.z}{f}")
         return commands

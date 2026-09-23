@@ -58,7 +58,7 @@ class InstrumentedGantry:
         *,
         instrument: str | BaseInstrument | None = None,
     ) -> None:
-        """Execute one preplanned axis-aligned carriage segment exactly.
+        """Execute one preplanned single-axis or coordinated-XY segment.
 
         This deliberately bypasses instrument offset conversion, automatic
         safe-Z selection, and the driver's ``travel_z`` expansion. The caller
@@ -69,16 +69,17 @@ class InstrumentedGantry:
         end_xyz = self._resolve_position(end)
         self._validate_finite_xyz(*start_xyz, "carriage")
         self._validate_finite_xyz(*end_xyz, "carriage")
-        changed = sum(
-            abs(before - after) > 1e-9
-            for before, after in zip(start_xyz, end_xyz)
-        )
-        if changed > 1:
+        changed_axes = {
+            axis
+            for axis, before, after in zip("xyz", start_xyz, end_xyz)
+            if abs(before - after) > 1e-9
+        }
+        if len(changed_axes) > 1 and changed_axes != {"x", "y"}:
             raise ValueError(
-                "move_carriage_exact requires one axis-aligned segment; "
+                "move_carriage_exact requires one axis or coordinated XY motion; "
                 f"got {start_xyz} -> {end_xyz}."
             )
-        if changed == 0:
+        if not changed_axes:
             return
         try:
             coordinates = self.controller.get_coordinates()

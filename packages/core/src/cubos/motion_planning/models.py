@@ -353,7 +353,7 @@ class ToolStateChange:
 
 @dataclass(frozen=True)
 class MotionSegment:
-    """One collision-checked, single-axis carriage movement."""
+    """One collision-checked single-axis or coordinated-XY movement."""
 
     kind: str
     start: Point3D
@@ -371,25 +371,30 @@ class MotionSegment:
             raise InvalidGeometryError("MotionSegment.tool_state must be a ToolState.")
         if not isinstance(self.access, AccessScope):
             raise InvalidGeometryError("MotionSegment.access must be an AccessScope.")
-        changed = sum(
-            getattr(self.start, axis) != getattr(self.end, axis)
-            for axis in ("x", "y", "z")
+        changed_axes = tuple(
+            axis for axis in ("x", "y", "z")
+            if getattr(self.start, axis) != getattr(self.end, axis)
         )
-        if changed != 1:
+        if len(changed_axes) != 1 and changed_axes != ("x", "y"):
             raise InvalidGeometryError(
-                "MotionSegment must move along exactly one axis with distinct endpoints."
+                "MotionSegment must move along one axis or coordinated XY "
+                "with distinct endpoints."
             )
 
     @property
     def axis(self) -> str:
-        return next(
+        changed = "".join(
             axis for axis in ("x", "y", "z")
             if getattr(self.start, axis) != getattr(self.end, axis)
         )
+        return changed
 
     @property
     def length_mm(self) -> float:
-        return abs(getattr(self.end, self.axis) - getattr(self.start, self.axis))
+        return math.sqrt(sum(
+            (getattr(self.end, axis) - getattr(self.start, axis)) ** 2
+            for axis in self.axis
+        ))
 
     def to_dict(self) -> dict[str, Any]:
         return {

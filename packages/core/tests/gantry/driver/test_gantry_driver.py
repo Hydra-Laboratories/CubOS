@@ -499,11 +499,8 @@ class TestCNCDriverLogic(unittest.TestCase):
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
     @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_build_direct_move_are_axis_by_axis(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Direct moves emit X, Y, Z on separate G-code lines — never a
-        combined ``G01 X… Y…`` interpolation. The mill must not command
-        simultaneous multi-axis motion so callers own every straight
-        segment of the path."""
+    def test_build_direct_move_coordinates_xy(self, mock_cmd_logger, mock_mill_logger, mock_serial):
+        """Direct moves coordinate changed X/Y axes and keep Z separate."""
         mill = Mill()
 
         current = Coordinates(0.0, 0.0, 0.0)
@@ -511,12 +508,9 @@ class TestCNCDriverLogic(unittest.TestCase):
         commands = mill._build_direct_move(current, target)
 
         self.assertEqual(commands, [
-            "G01 X10.0 F3000",
-            "G01 Y20.0 F3000",
+            "G01 X10.0 Y20.0 F3000",
             "G01 Z-5.0 F3000",
         ])
-        # Regression guard: no combined-XY command anywhere.
-        self.assertFalse(any("Y" in c and "X" in c for c in commands))
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -548,13 +542,29 @@ class TestCNCDriverLogic(unittest.TestCase):
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
     @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
+    def test_build_direct_move_coordinates_xy_when_position_is_unavailable(
+        self, mock_cmd_logger, mock_mill_logger, mock_serial,
+    ):
+        mill = Mill()
+
+        commands = mill._build_direct_move(
+            None, Coordinates(10.0, 20.0, -5.0),
+        )
+
+        self.assertEqual(commands, [
+            "G01 X10.0 Y20.0 F3000",
+            "G01 Z-5.0 F3000",
+        ])
+
+    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
+    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
+    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
     def test_build_transit_move_lifts_traverses_descends(
         self, mock_cmd_logger, mock_mill_logger, mock_serial,
     ):
-        """Transit: lift → X → Y → (descend skipped when target_z == travel_z).
+        """Transit: lift → coordinated XY → no redundant descent.
 
-        Models an inter-well scan hop. X and Y always ship as separate
-        G-code lines so no diagonal motion is ever commanded.
+        Models an inter-well scan hop where both horizontal axes change.
         """
         mill = Mill()
 
@@ -564,8 +574,7 @@ class TestCNCDriverLogic(unittest.TestCase):
 
         self.assertEqual(commands, [
             "G01 Z-85.0 F3000",    # lift
-            "G01 X-110.0 F3000",   # X alone
-            "G01 Y-60.0 F3000",    # Y alone
+            "G01 X-110.0 Y-60.0 F3000",  # coordinated XY
             # target.z == travel_z, final descent skipped.
         ])
 
@@ -611,7 +620,7 @@ class TestCNCDriverLogic(unittest.TestCase):
     def test_build_transit_move_emits_all_four_steps(
         self, mock_cmd_logger, mock_mill_logger, mock_serial,
     ):
-        """Lift → X → Y → descend, all four fire when every axis changes
+        """Lift → coordinated XY → descend when every axis changes
         and travel_z differs from both current.z and target.z."""
         mill = Mill()
 
@@ -621,8 +630,7 @@ class TestCNCDriverLogic(unittest.TestCase):
 
         self.assertEqual(commands, [
             "G01 Z-85.0 F3000",    # lift
-            "G01 X-110.0 F3000",   # X alone
-            "G01 Y-60.0 F3000",    # Y alone
+            "G01 X-110.0 Y-60.0 F3000",  # coordinated XY
             "G01 Z-90.0 F3000",    # descend
         ])
 
@@ -649,8 +657,7 @@ class TestCNCDriverLogic(unittest.TestCase):
         commands = [c[0][0] for c in mill.execute_command.call_args_list]
         self.assertEqual(commands, [
             "G01 Z-5.0 F3000",     # lift first, unconditionally
-            "G01 X-110.0 F3000",
-            "G01 Y-60.0 F3000",
+            "G01 X-110.0 Y-60.0 F3000",
             "G01 Z-90.0 F3000",
         ])
 
@@ -673,8 +680,7 @@ class TestCNCDriverLogic(unittest.TestCase):
             z_coordinate=-90.0,
         )
 
-        mill.execute_command.assert_any_call("G01 X-110.0 F3000")
-        mill.execute_command.assert_any_call("G01 Y-60.0 F3000")
+        mill.execute_command.assert_any_call("G01 X-110.0 Y-60.0 F3000")
         mill.execute_command.assert_any_call("G01 Z-90.0 F3000")
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
@@ -684,7 +690,7 @@ class TestCNCDriverLogic(unittest.TestCase):
         self, mock_cmd_logger, mock_mill_logger, mock_serial,
     ):
         """End-to-end: move_to(..., travel_z=...) routes
-        through _build_transit_move and emits lift → X → Y →
+        through _build_transit_move and emits lift → coordinated XY →
         descend in order. The emitted travel_z matches the input."""
         mill = Mill()
         mill.ser_mill = MagicMock()
@@ -702,8 +708,7 @@ class TestCNCDriverLogic(unittest.TestCase):
 
         self.assertEqual(sent, [
             "G01 Z-85.0 F3000",
-            "G01 X-110.0 F3000",
-            "G01 Y-60.0 F3000",
+            "G01 X-110.0 Y-60.0 F3000",
             "G01 Z-90.0 F3000",
         ])
 

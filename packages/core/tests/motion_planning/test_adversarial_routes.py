@@ -317,12 +317,37 @@ def test_executed_endpoints_equal_serialized_plan_without_hidden_moves() -> None
     ]
 
 
-def test_exact_segment_execution_rejects_multi_axis_end_before_motion() -> None:
+def test_clear_xy_plan_executes_as_one_exact_controller_move() -> None:
+    scene = build_scene(
+        bounds=_box("working-volume", 0, 10, 0, 10, 0, 10),
+        fixtures=(),
+        tool_envelopes=(_tool(),),
+    )
+    plan = plan_motion(scene, Point3D(1, 1, 5), Point3D(3, 4, 5))
+    controller = _RecordingController({"x": 1.0, "y": 1.0, "z": 5.0})
+    gantry = InstrumentedGantry(controller)
+
+    assert [segment.axis for segment in plan.segments] == ["xy"]
+    gantry.move_carriage_exact(plan.segments[0].start, plan.segments[0].end)
+
+    assert controller.calls == [(3.0, 4.0, 5.0, None)]
+
+
+def test_exact_segment_execution_accepts_coordinated_xy() -> None:
     controller = _RecordingController({"x": 1.0, "y": 1.0, "z": 1.0})
     gantry = InstrumentedGantry(controller)
 
-    with pytest.raises(ValueError, match="axis-aligned"):
-        gantry.move_carriage_exact((1, 1, 1), (2, 2, 1))
+    gantry.move_carriage_exact((1, 1, 1), (2, 2, 1))
+
+    assert controller.calls == [(2.0, 2.0, 1.0, None)]
+
+
+def test_exact_segment_execution_rejects_xy_plus_z_before_motion() -> None:
+    controller = _RecordingController({"x": 1.0, "y": 1.0, "z": 1.0})
+    gantry = InstrumentedGantry(controller)
+
+    with pytest.raises(ValueError, match="one axis or coordinated XY"):
+        gantry.move_carriage_exact((1, 1, 1), (2, 2, 2))
     assert controller.calls == []
 
 
