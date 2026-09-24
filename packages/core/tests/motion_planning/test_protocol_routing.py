@@ -65,6 +65,9 @@ class FakePipette:
     def dispense(self, volume_ul, speed=50):
         self.actions.append(f"dispense:{volume_ul}")
 
+    def blowout(self, speed=50):
+        self.actions.append("blowout")
+
 
 class FakeCamera(CameraInstrument):
     def __init__(self) -> None:
@@ -248,6 +251,7 @@ def test_native_planned_commands_execute_preflighted_exact_segments() -> None:
         "pick_up_tip",
         "aspirate:100.0",
         "dispense:100.0",
+        "blowout",
         "aspirate:50.0",
         "dispense:50.0",
         "aspirate:50.0",
@@ -706,6 +710,35 @@ def test_native_move_executes_cached_intermediate_detour_when_both_direct_orders
         and not segment.access.allowed_corridor_names
         for segment in plan.segments
     )
+
+
+def test_routed_ordinary_transit_uses_diagonal_with_instrument_identity() -> None:
+    context, controller, _pipette = _context()
+    controller.coords = {"x": 20.0, "y": 20.0, "z": 80.0}
+    protocol = compile_protocol([
+        CommandCall("move", {
+            "instrument": "pipette",
+            "position": [80, 80, 80],
+        }),
+    ])
+
+    protocol.execute(context)
+
+    plan = context.motion_plans[0]
+    diagonal_segments = [segment for segment in plan.segments if segment.axis == "xy"]
+    assert len(diagonal_segments) == 1
+    diagonal = diagonal_segments[0]
+    assert diagonal.access.allowed_tool_names == ("pipette",)
+    assert not diagonal.access.allowed_fixture_names
+    assert not diagonal.access.allowed_corridor_names
+    assert diagonal.start.z == diagonal.end.z == 80.0
+    assert diagonal.end.x == 80.0
+    assert diagonal.end.y == 80.0
+    assert [move[:3] for move in controller.moves] == [
+        (segment.end.x, segment.end.y, segment.end.z)
+        for segment in plan.segments
+    ]
+    assert all(move[3] is None for move in controller.moves)
 
 
 def _write_planned_move_files(tmp_path):

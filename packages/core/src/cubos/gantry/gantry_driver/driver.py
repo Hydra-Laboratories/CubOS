@@ -678,31 +678,31 @@ class Mill:
         return status
 
     def current_status(self) -> str:
-        """Get the current status of the mill."""
-        self._require_open_serial()
-        attempt_limit = 5
-        status = self._read_serial()
+        """Request status before reading; acknowledgments are not completion.
 
-        while status.strip().lower() in ["", "ok"] and attempt_limit > 0:
+        GRBL does not stream status by default. Reading before sending ``?``
+        costs a full serial timeout on every completion poll. Bound both the
+        number of requests and intervening acknowledgment/message lines.
+        """
+        self._require_open_serial()
+        for _ in range(5):
             self._write_serial(b"?")
             time.sleep(0.05)
-            status = self._read_serial()
-            attempt_limit -= 1
-
-        if not status:
-            raw_lines = self.ser_mill.readlines()
-            lines = [item.decode(errors="replace").rstrip() for item in raw_lines]
-            if not lines:
-                self.logger.error("Failed to get status from the mill")
-                raise StatusReturnError("Failed to get status from the mill")
-            # Find the first status line (<...>) or join all lines
-            status = next((l for l in lines if l.startswith("<")), "; ".join(lines))
-            self.last_status = status
-            if any(re.search(r"\b(error|alarm)\b", item.lower()) for item in lines):
-                self.logger.error("Error in status: %s", status)
-                raise StatusReturnError(f"Error in status: {status}")
-        self.last_status = status
-        return status
+            for _ in range(10):
+                status = self._read_serial().strip()
+                if not status:
+                    break
+                lowered = status.lower()
+                if lowered.startswith(("error:", "alarm:")):
+                    self.last_status = status
+                    raise StatusReturnError(f"Error in status: {status}")
+                if status.startswith("<") and status.endswith(">"):
+                    self.last_status = status
+                    return status
+                # 'ok' acknowledges a command, and [MSG:...] is informational.
+                # Neither is a controller state, so keep reading this reply.
+        self.logger.error("Failed to get status from the mill")
+        raise StatusReturnError("Failed to get status from the mill")
 
     def _read_serial(self):
         self._require_open_serial()

@@ -140,7 +140,6 @@ def plan_motion(
         and start.y != end.y
         and not scope.allowed_fixture_names
         and not scope.allowed_corridor_names
-        and not scope.allowed_tool_names
     ):
         direct_candidates.append((0, "coordinated_xy", (start, end)))
     direct_candidates.extend([

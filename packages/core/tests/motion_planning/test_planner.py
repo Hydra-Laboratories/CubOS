@@ -83,6 +83,20 @@ def test_clear_unscoped_xy_transit_uses_one_coordinated_segment():
     assert plan.segments[0].length_mm == pytest.approx(math.sqrt(128))
 
 
+def test_tool_attribution_without_fixture_scope_allows_coordinated_xy():
+    plan = plan_motion(
+        _scene(),
+        Point3D(1, 1, 5),
+        Point3D(9, 9, 5),
+        access=AccessScope(allowed_tool_names=("pipette",)),
+    )
+
+    assert plan.strategy == "coordinated_xy"
+    assert len(plan.segments) == 1
+    assert plan.segments[0].axis == "xy"
+    assert plan.segments[0].access.allowed_tool_names == ("pipette",)
+
+
 def test_y_first_is_selected_when_x_first_crosses_a_fixture():
     scene = _scene(_box("rack", 4, 6, 0, 2, 4, 6))
 
