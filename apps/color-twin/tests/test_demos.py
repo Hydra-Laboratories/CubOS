@@ -45,6 +45,8 @@ def test_ordinary_planner_comparison_uses_same_native_protocol_and_matches():
     assert result['planned_route']['source'] == 'core-motion-plan'
     assert result['planned_route']['parity'] == {'segments_equal': True, 'checked': True}
     assert result['planned_run']['route']['segments'] == result['planned_route']['segments']
+    assert any(segment['axis'] == 'xy' for segment in result['planned_route']['segments'])
+    assert any(segment['axes'] == 'XY' for segment in result['planned_route']['execution_segments'])
 
 
 def test_ordinary_registered_boxes_contain_calibrated_labware(tmp_path):

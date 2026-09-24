@@ -99,10 +99,22 @@ class SimController:
         self.position = [bounds.x_min, bounds.y_min, bounds.z_max]
 
     def move_to(self, x, y, z, travel_z=None):
-        # Match CubOS Mill: direct X/Y/Z, or travel-Z then X/Y/final-Z.
+        # Match CubOS Mill's coordinated XY command and separate Z moves.
         sx, sy, sz = self.position
-        targets = ([[x,sy,sz], [x,y,sz], [x,y,z]] if travel_z is None
-                   else [[sx,sy,travel_z], [x,sy,travel_z], [x,y,travel_z], [x,y,z]])
+        if travel_z is None:
+            targets = []
+            if x != sx or y != sy:
+                targets.append([x,y,sz])
+            if z != sz:
+                targets.append([x,y,z])
+        else:
+            targets = []
+            if sz != travel_z:
+                targets.append([sx,sy,travel_z])
+            if x != sx or y != sy:
+                targets.append([x,y,travel_z])
+            if z != travel_z:
+                targets.append([x,y,z])
         # Validate every waypoint before recording a partial move.
         for target in targets:
             if not all(math.isfinite(v) for v in target) or not self.bounds.contains(*target):
@@ -110,8 +122,13 @@ class SimController:
         for target in targets:
             length = math.dist(self.position, target)
             if length < 1e-8: continue
+            words = ' '.join(
+                f'{axis}{value:.3f}'
+                for axis, before, value in zip('XYZ', self.position, target)
+                if value != before
+            )
             self.world.emit('move', duration=length/35, start=self.position[:], end=target[:],
-                            gcode='G90 G1 ' + ' '.join(f'{a}{v:.3f}' for a,v in zip('XYZ',target)) + ' F2100')
+                            gcode=f'G90 G1 {words} F2100')
             self.position = target[:]
 
     def get_coordinates(self): return dict(zip('xyz', self.position))

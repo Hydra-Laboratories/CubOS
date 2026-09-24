@@ -28,7 +28,11 @@ def test_side_exit_native_color_protocol_no_hardware(monkeypatch):
         assert exit['end'][0]<exit['start'][0]
         assert exit['end'][1:]==exit['start'][1:]
     assert all(0<=e['end'][2]<=56 for e in r['events'] if e['kind']=='move')
-    assert all(sum(a!=b for a,b in zip(e['start'],e['end']))==1 for e in r['events'] if e['kind']=='move')
+    assert all(
+        1 <= sum(a != b for a, b in zip(e['start'], e['end'])) <= 2
+        and (e['start'][2] == e['end'][2] or e['start'][:2] == e['end'][:2])
+        for e in r['events'] if e['kind'] == 'move'
+    )
     assert all(e['target']=='waste' for e in r['events'] if e['kind']=='tip' and not e['attached'])
     assert r['events'][-1]['kind']=='capture'
 

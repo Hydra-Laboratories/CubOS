@@ -41,11 +41,31 @@ def test_real_mount_offsets_and_tip_extension_reach_correct_tool_targets(inputs)
 def test_travel_waypoints_validate_before_partial_motion():
     w=World();c=SimController(w,WorkingVolume(0,290,0,180,0,100))
     c.move_to(30,50,10,travel_z=80)
-    assert [e['end'] for e in w.events]==[[0,0,80],[30,0,80],[30,50,80],[30,50,10]]
+    assert [e['end'] for e in w.events]==[[0,0,80],[30,50,80],[30,50,10]]
+    assert [e['gcode'] for e in w.events]==[
+        'G90 G1 Z80.000 F2100',
+        'G90 G1 X30.000 Y50.000 F2100',
+        'G90 G1 Z10.000 F2100',
+    ]
     n=len(w.events)
     with pytest.raises(ValueError,match='exceeds'): c.move_to(40,60,5,travel_z=110)
     assert len(w.events)==n
     with pytest.raises(ValueError): c.move_to(math.nan,20,10)
+
+def test_direct_coordinated_xy_is_one_simulated_move_and_checks_bounds():
+    w=World();c=SimController(w,WorkingVolume(0,290,0,180,0,100))
+    c.position=[30,50,80]
+
+    c.move_to(130,120,70)
+
+    assert len(w.events)==2
+    assert w.events[0]['start']==[30,50,80]
+    assert w.events[0]['end']==[130,120,80]
+    assert w.events[0]['gcode']=='G90 G1 X130.000 Y120.000 F2100'
+    assert w.events[1]['end']==[130,120,70]
+    with pytest.raises(ValueError,match='exceeds'):
+        c.move_to(300,120,80)
+    assert len(w.events)==2
 
 @pytest.mark.parametrize('protocol',[
     {'protocol':[{'home':{}}]},

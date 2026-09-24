@@ -45,3 +45,10 @@ The PR worktree's own editable core installation was verified before tests.
 Focused driver, instrument-mount, planner, adversarial-route, and protocol-routing
 suites: 240 passed, 15 subtests. Diff coverage against the stacked PR base
 `review/coordinated-xy-base`: 97% (43/44 changed core lines).
+
+The updated PR's simulation CI exposed a real integration mismatch: its fake
+controller still split XY and violated the existing strict plan/execution parity
+assertion. Color Twin now mirrors the driver's combined XY and separate Z for
+both direct and travel-Z moves. All waypoint bounds are checked before recording
+motion; constrained side-exit assertions remain intact. Focused Color Twin suite:
+`cd apps/color-twin && ../../.venv/bin/python -m pytest tests -q` — 51 passed.
