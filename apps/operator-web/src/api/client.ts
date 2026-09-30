@@ -12,6 +12,8 @@ export type UpdateStatus = {
   checked_at: number;
   summary: string[];
   error: string | null;
+  current_tag: string | null;
+  latest_tag: string | null;
 };
 
 export class ApiError extends Error {

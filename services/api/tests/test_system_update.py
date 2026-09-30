@@ -17,6 +17,8 @@ from tests.api_client import api_request
 
 CURRENT_SHA = "1" * 40
 LATEST_SHA = "2" * 40
+CURRENT_TAG = "v2026.08.03"
+LATEST_TAG = "v2026.08.10"
 
 
 @pytest.fixture(autouse=True)
@@ -27,16 +29,53 @@ def _isolate_updater(tmp_path, monkeypatch):
     settings = get_settings()
     original_repo = settings.update_repo_dir
     original_script = settings.update_script
+    original_mode = settings.update_mode
     settings.update_repo_dir = None
     settings.update_script = None
+    settings.update_mode = "tag"
     updater.reset_update_cache()
     yield
     updater.reset_update_cache()
     settings.update_repo_dir = original_repo
     settings.update_script = original_script
+    settings.update_mode = original_mode
 
 
-def _git_runner(*, behind: int = 2):
+def _git_runner(*, behind: int = 2, latest_tag: str | None = LATEST_TAG):
+    """Simulate git for tag mode, the default (`CUBOS_UPDATE_MODE=tag`)."""
+    calls: list[tuple[str, ...]] = []
+
+    def run(command: list[str]) -> str:
+        calls.append(tuple(command))
+        args = command[3:]
+        if args == ["rev-parse", "HEAD"]:
+            return CURRENT_SHA
+        if args[:3] == ["fetch", "--quiet", "--tags"]:
+            return ""
+        if args == ["tag", "--list"]:
+            tags = [CURRENT_TAG]
+            if latest_tag is not None:
+                tags.append(latest_tag)
+            return "\n".join(tags)
+        if args == ["describe", "--tags"]:
+            return CURRENT_TAG
+        if args[:3] == ["rev-list", "-n", "1"]:
+            return LATEST_SHA if behind else CURRENT_SHA
+        if args[:2] == ["rev-list", "--count"]:
+            return str(behind)
+        if args[:2] == ["log", "--oneline"]:
+            return (
+                "2222222 second change\n1111111 first change"
+                if behind
+                else ""
+            )
+        raise AssertionError(f"unexpected git command: {command}")
+
+    return run, calls
+
+
+def _branch_git_runner(*, behind: int = 2):
+    """Simulate git for the legacy branch mode (`CUBOS_UPDATE_MODE=branch`)."""
     calls: list[tuple[str, ...]] = []
 
     def run(command: list[str]) -> str:
@@ -78,6 +117,69 @@ def test_get_update_status_reports_availability(monkeypatch, behind, available):
         ["2222222 second change", "1111111 first change"] if behind else []
     )
     assert body["error"] is None
+    assert body["current_tag"] == CURRENT_TAG
+    assert body["latest_tag"] == LATEST_TAG
+
+
+def test_get_update_status_reports_no_release_tags_yet(monkeypatch):
+    """A repo with no calver tags at all (before the first weekly release)."""
+
+    def run(command: list[str]) -> str:
+        args = command[3:]
+        if args == ["rev-parse", "HEAD"]:
+            return CURRENT_SHA
+        if args[:3] == ["fetch", "--quiet", "--tags"]:
+            return ""
+        if args == ["tag", "--list"]:
+            return ""
+        if args == ["describe", "--tags"]:
+            raise subprocess.CalledProcessError(128, ["git"], stderr="No tags can describe")
+        raise AssertionError(f"unexpected git command: {command}")
+
+    monkeypatch.setattr(updater, "_run_git", run)
+
+    response = api_request(create_app(), "GET", "/api/v1/system/update")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["update_available"] is False
+    assert body["latest_tag"] is None
+    assert body["current_tag"] is None
+    assert body["error"] is None
+
+
+def test_get_update_status_ignores_non_calver_tags(monkeypatch):
+    run, _ = _git_runner(behind=1)
+
+    def with_extra_tags(command: list[str]) -> str:
+        args = command[3:]
+        if args == ["tag", "--list"]:
+            return f"{CURRENT_TAG}\n{LATEST_TAG}\nrelease-candidate\nv1"
+        return run(command)
+
+    monkeypatch.setattr(updater, "_run_git", with_extra_tags)
+
+    response = api_request(create_app(), "GET", "/api/v1/system/update")
+
+    assert response.json()["latest_tag"] == LATEST_TAG
+
+
+def test_get_update_status_branch_mode_ignores_tags(monkeypatch):
+    settings = get_settings()
+    settings.update_mode = "branch"
+    run, _ = _branch_git_runner(behind=2)
+    monkeypatch.setattr(updater, "_run_git", run)
+
+    response = api_request(create_app(), "GET", "/api/v1/system/update")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["current_sha"] == CURRENT_SHA
+    assert body["latest_sha"] == LATEST_SHA
+    assert body["commits_behind"] == 2
+    assert body["update_available"] is True
+    assert body["current_tag"] is None
+    assert body["latest_tag"] is None
 
 
 def test_get_update_status_caches_and_refresh_refetches(monkeypatch):
