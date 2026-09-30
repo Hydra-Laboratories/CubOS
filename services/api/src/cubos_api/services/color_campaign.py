@@ -366,11 +366,16 @@ def build_color_campaign(
         source_protocol_file=setup.source_protocol_file,
         target_mode=setup.target_mode,
         target_rgb=setup.target_rgb,
-        target_run_id=setup.target_run_id,
-        target_analysis_revision=setup.target_analysis_revision,
-        target_well=setup.target_well,
-        target_lab=setup.target_lab,
-        reference_processing_profile_id=setup.reference_processing_profile_id,
+        target_run_id=(setup.target_run_id if setup.target_mode == "camera" else None),
+        target_analysis_revision=(
+            setup.target_analysis_revision if setup.target_mode == "camera" else None
+        ),
+        target_well=(setup.target_well if setup.target_mode == "camera" else None),
+        target_lab=(setup.target_lab if setup.target_mode == "camera" else None),
+        reference_processing_profile_id=(
+            setup.reference_processing_profile_id
+            if setup.target_mode == "camera" else None
+        ),
     )
     protocol_directory.mkdir(parents=True, exist_ok=True)
     (protocol_directory / filename).write_text(yaml.safe_dump(protocol, sort_keys=False))

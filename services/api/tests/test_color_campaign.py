@@ -152,6 +152,31 @@ def test_campaign_spec_rejects_incomplete_camera_target_link(tmp_path: Path):
         type(spec).model_validate(document)
 
 
+def test_rgb_builder_ignores_browser_camera_placeholders_and_keeps_exact_rgb(tmp_path: Path):
+    # The Operator keeps target_well and the RGB-preview Lab value in its setup
+    # form even though an RGB campaign has no target capture provenance.
+    spec = build_color_campaign(
+        setup(
+            target_mode="rgb",
+            target_rgb=(223.0, 18.0, 226.0),
+            target_lab=(52.0, 82.0, -52.0),
+            target_well="plate.H12",
+            expected_center=(0.5, 0.5),
+            expected_center_source="frame_center",
+            reference_processing_profile_id=None,
+        ),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+    )
+    assert spec.target_mode == "rgb"
+    assert spec.target_rgb == (223.0, 18.0, 226.0)
+    assert spec.target_run_id is None
+    assert spec.target_analysis_revision is None
+    assert spec.target_well is None
+    assert spec.target_lab is None
+    assert spec.reference_processing_profile_id is None
+
+
 def test_builder_allocates_each_trial_from_durable_available_tip_order(tmp_path: Path):
     available = [
         f"tips.{chr(ord('A') + index // 12)}{index % 12 + 1}"
