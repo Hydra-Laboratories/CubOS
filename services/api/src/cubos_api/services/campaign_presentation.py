@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import threading
 import time
 import uuid
@@ -21,6 +22,7 @@ from cubos_api.services.run_manager import RunManager
 SCHEMA_VERSION = "1"
 EXPORT_SCHEMA_VERSION = "cubos.campaign-presentation-export.v1"
 MAX_EXPORT_BYTES = 128 * 1024 * 1024
+MAX_JSON_BYTES = 8 * 1024 * 1024
 MAX_ASSETS = 256
 _annotation_locks: dict[str, threading.Lock] = {}
 _annotation_locks_guard = threading.Lock()
@@ -99,6 +101,13 @@ class CampaignPresentationService:
         self.campaigns.get(campaign_id)
         with _lock_for(campaign_id):
             markers = self._read_markers(campaign_id)
+            if request.client_id is not None:
+                existing = next(
+                    (item for item in markers if item.client_id == request.client_id),
+                    None,
+                )
+                if existing is not None:
+                    return existing
             marker = DemoMarker(
                 id=uuid.uuid4().hex,
                 sequence=len(markers) + 1,
@@ -148,14 +157,16 @@ class CampaignPresentationService:
                 artifact = run.metadata.get("color_target_source_artifact")
                 if isinstance(artifact, str):
                     path = self.runs.store.artifact_path(target_run, artifact)
-                    if path:
+                    path = self._allowed_path(path) if path else None
+                    if path is not None:
                         asset_id = self._asset_id(campaign_id, "target", "raw", path)
                         catalog[asset_id] = {"path": path, "role": "target_raw", "trial_id": "target"}
                 revision = getattr(record.spec, "target_analysis_revision", None)
                 if revision is not None:
                     name = f"color-target-analysis-{revision}.png"
                     path = self.runs.store.artifact_path(target_run, name)
-                    if path:
+                    path = self._allowed_path(path) if path else None
+                    if path is not None:
                         asset_id = self._asset_id(campaign_id, "target", "annotated", path)
                         catalog[asset_id] = {"path": path, "role": "target_annotated", "trial_id": "target"}
         for trial in record.trials:
@@ -182,23 +193,13 @@ class CampaignPresentationService:
             entry["role"]: asset_id
             for asset_id, entry in catalog.items() if entry["trial_id"] == "target"
         }
-        first_measurement = next(
-            (
-                trial.measurement for trial in sorted(record.trials, key=lambda item: item.index)
-                if isinstance(trial.measurement, dict)
-            ),
-            None,
-        )
         target_rgb = list(record.spec.target_rgb) if record.spec.target_rgb else None
         target_lab = (
             list(rgb_to_lab(record.spec.target_rgb))
             if record.spec.target_rgb else
-            (first_measurement.get("reference_lab") if first_measurement else None)
+            (list(record.spec.target_lab) if record.spec.target_lab else None)
         )
-        profile_id = (
-            getattr(record.spec, "reference_processing_profile_id", None)
-            or (first_measurement.get("reference_processing_profile_id") if first_measurement else None)
-        )
+        profile_id = getattr(record.spec, "reference_processing_profile_id", None)
         target = {
             "source": (
                 "selected_srgb" if record.spec.target_mode == "rgb"
@@ -218,7 +219,17 @@ class CampaignPresentationService:
                 ),
             },
             "processing_profile_id": profile_id,
-            "accepted": bool(target_lab),
+            "accepted": bool(
+                target_lab
+                and (
+                    record.spec.target_mode == "rgb"
+                    or (
+                        profile_id
+                        and getattr(record.spec, "target_run_id", None)
+                        and getattr(record.spec, "target_analysis_revision", None) is not None
+                    )
+                )
+            ),
             "image_asset_id": (
                 target_assets.get("target_annotated")
                 or target_assets.get("target_raw")
@@ -227,6 +238,8 @@ class CampaignPresentationService:
         }
         if record.spec.target_mode == "camera" and "target_raw" not in target_assets:
             missing.append("target.raw_image")
+        if record.spec.target_mode == "camera" and not target_lab:
+            missing.append("target.frozen_provenance")
         attempts: list[dict[str, Any]] = []
         for trial in sorted(record.trials, key=lambda item: item.index):
             trial_id = f"trial-{trial.index + 1}"
@@ -238,6 +251,31 @@ class CampaignPresentationService:
             if measurement and "raw" not in assets:
                 missing.append(f"{trial_id}.raw_image")
             run = self.runs.get(trial.run_id)
+            quality = _measurement_quality(measurement)
+            objective_finite = (
+                isinstance(trial.objective, (int, float))
+                and not isinstance(trial.objective, bool)
+                and math.isfinite(float(trial.objective))
+            )
+            profile_matches = (
+                True if record.spec.target_mode == "rgb"
+                else bool(
+                    profile_id
+                    and measurement
+                    and measurement.get("reference_processing_profile_id") == profile_id
+                )
+            )
+            accepted_measurement = bool(
+                trial.objective_status == "accepted"
+                and trial.state == "succeeded"
+                and objective_finite
+                and measurement
+                and measurement.get("measurement_status") == "accepted"
+                and measurement.get("comparison_status") == "accepted"
+                and isinstance(quality, dict)
+                and quality.get("accepted") is True
+                and profile_matches
+            )
             attempts.append({
                 "sequence": trial.index + 1,
                 "trial_id": trial_id,
@@ -245,7 +283,8 @@ class CampaignPresentationService:
                 "well": trial.sample_well,
                 "recipe_ul": dict(trial.parameters),
                 "status": trial.state,
-                "accepted": trial.objective_status == "accepted",
+                "accepted": accepted_measurement,
+                "score_eligible": accepted_measurement,
                 "objective_status": trial.objective_status,
                 "delta_e": trial.objective,
                 "measurement": ({
@@ -261,6 +300,8 @@ class CampaignPresentationService:
                 "assets": assets,
                 "started_at": run.started_at if run else None,
                 "completed_at": run.finished_at if run else None,
+                "reveal_at": run.finished_at if run else None,
+                "reveal_event_sequence": None,
                 "error": trial.error,
             })
         accepted = [item for item in attempts if item["accepted"] and item["delta_e"] is not None]
@@ -279,12 +320,29 @@ class CampaignPresentationService:
                     "trial_id": f"trial-{trial.index + 1}",
                     "label": event.message,
                     "data": event.data,
+                    "state": event.state,
                     "source_sequence": event.sequence,
                 })
         events.sort(key=lambda item: (item["server_time"], item["trial_id"], item["source_sequence"]))
         for sequence, event in enumerate(events, 1):
             event["sequence"] = sequence
             event["elapsed_ms"] = max(0, round((event["server_time"] - record.created_at) * 1000))
+        for attempt in attempts:
+            relevant = [
+                event for event in events
+                if event["trial_id"] == attempt["trial_id"]
+                and event.get("state") == "succeeded"
+            ]
+            if not relevant and attempt["completed_at"] is not None:
+                relevant = [
+                    event for event in events
+                    if event["trial_id"] == attempt["trial_id"]
+                    and event["server_time"] <= attempt["completed_at"]
+                ]
+            if relevant:
+                reveal = max(relevant, key=lambda event: event["sequence"])
+                attempt["reveal_event_sequence"] = reveal["sequence"]
+                attempt["reveal_at"] = reveal["server_time"]
         partial = record.state not in {"completed", "stopped", "failed", "interrupted"} or bool(missing)
         return PresentationResponse(
             campaign_id=campaign_id, status=record.state, target=target,
@@ -297,6 +355,9 @@ class CampaignPresentationService:
         projection = self.project(campaign_id)
         record = self.campaigns.get(campaign_id)
         catalog = self._asset_catalog(campaign_id)
+        presentation_json = projection.model_dump_json(indent=2).encode("utf-8")
+        if len(presentation_json) > MAX_JSON_BYTES:
+            raise OverflowError("Presentation JSON exceeds the export limit")
         manifest: dict[str, Any] = {
             "schema_version": EXPORT_SCHEMA_VERSION,
             "campaign_id": campaign_id,
@@ -304,11 +365,18 @@ class CampaignPresentationService:
             "partial": projection.partial,
             "missing": list(projection.missing),
             "assets": [],
+            "snapshots": [],
         }
         output = io.BytesIO()
         total = 0
         with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("presentation.json", projection.model_dump_json(indent=2))
+            archive.writestr("presentation.json", presentation_json)
+            total += len(presentation_json)
+            manifest["snapshots"].append({
+                "file": "presentation.json",
+                "sha256": hashlib.sha256(presentation_json).hexdigest(),
+                "bytes": len(presentation_json),
+            })
             campaign_dir = self._campaign_dir(campaign_id)
             for name in ("campaign.json", "gantry.yaml", "deck.yaml", "protocol.yaml", "presentation-annotations.json"):
                 path = campaign_dir / name
@@ -317,20 +385,40 @@ class CampaignPresentationService:
                     if total + size <= MAX_EXPORT_BYTES:
                         archive.write(path, f"campaign/{name}")
                         total += size
+                        manifest["snapshots"].append({
+                            "file": f"campaign/{name}", "sha256": _sha256(path),
+                            "bytes": size,
+                        })
                     else:
                         manifest["missing"].append(f"campaign/{name}:size_limit")
                 else:
                     manifest["missing"].append(f"campaign/{name}")
-            run_ids = sorted({trial.run_id for trial in record.trials})
+            target_run_id = getattr(record.spec, "target_run_id", None)
+            run_ids = sorted(
+                {trial.run_id for trial in record.trials}
+                | ({target_run_id} if target_run_id else set())
+            )
             for run_id in run_ids:
                 run_dir = self.runs.store.run_dir(run_id)
-                for name in ("run.json", "events.jsonl", "gantry.yaml", "deck.yaml", "protocol.yaml", "result.json", "error.txt"):
+                artifact_names = [
+                    "run.json", "events.jsonl", "gantry.yaml", "deck.yaml",
+                    "protocol.yaml", "result.json", "error.txt",
+                ]
+                if run_id == target_run_id:
+                    revision = getattr(record.spec, "target_analysis_revision", None)
+                    if revision is not None:
+                        artifact_names.append(f"color-target-analysis-{revision}.json")
+                for name in artifact_names:
                     path = run_dir / name
                     if path.is_file():
                         size = path.stat().st_size
                         if total + size <= MAX_EXPORT_BYTES:
                             archive.write(path, f"runs/{run_id}/{name}")
                             total += size
+                            manifest["snapshots"].append({
+                                "file": f"runs/{run_id}/{name}",
+                                "sha256": _sha256(path), "bytes": size,
+                            })
                         else:
                             manifest["missing"].append(
                                 f"runs/{run_id}/{name}:size_limit"
@@ -359,5 +447,13 @@ class CampaignPresentationService:
                 })
             manifest["missing"] = sorted(set(manifest["missing"]))
             manifest["partial"] = bool(manifest["partial"] or manifest["missing"])
-            archive.writestr("manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-        return output.getvalue()
+            manifest_json = (
+                json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+            ).encode("utf-8")
+            if len(manifest_json) > MAX_JSON_BYTES:
+                raise OverflowError("Presentation manifest exceeds the export limit")
+            archive.writestr("manifest.json", manifest_json)
+        payload = output.getvalue()
+        if len(payload) > MAX_EXPORT_BYTES:
+            raise OverflowError("Presentation ZIP exceeds the export limit")
+        return payload

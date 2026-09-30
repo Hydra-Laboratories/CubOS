@@ -11,7 +11,12 @@ import pytest
 from pydantic import ValidationError
 
 from cubos_api.models.presentation import DemoMarkerRequest
+from cubos_api.models.campaigns import CampaignRecord, CampaignSpec, CampaignTrial
+from cubos_api.models.runs import RunRecord
+from cubos_api.config import get_settings
+from cubos_api.services.campaign_manager import CampaignManager
 from cubos_api.services.campaign_presentation import CampaignPresentationService
+from cubos_api.services.run_manager import RunManager
 
 
 class FakeCampaigns:
@@ -74,10 +79,12 @@ def test_projection_uses_only_accepted_trials_for_best_and_preserves_quality(tmp
     accepted_measurement = {
         "rgb": [20, 30, 40], "lab": [10, 2, -3],
         "quality": {"accepted": True}, "processing_profile_id": "profile-a",
+        "measurement_status": "accepted", "comparison_status": "accepted",
     }
     rejected_measurement = {
         "rgb": [120, 130, 140], "lab": [55, 2, -1],
         "quality": {"accepted": False, "rejection_reasons": ["blur"]},
+        "measurement_status": "rejected", "comparison_status": "rejected",
     }
     record = campaign(tmp_path, [
         trial(0, 4.0, measurement=accepted_measurement),
@@ -94,20 +101,67 @@ def test_projection_uses_only_accepted_trials_for_best_and_preserves_quality(tmp
     assert result.attempts[2]["measurement"] is None
 
 
+def test_legacy_camera_target_is_explicitly_unverified_and_not_inferred(tmp_path):
+    measurement = {
+        "reference_lab": [99, 88, 77],
+        "reference_processing_profile_id": "future-payload",
+        "measurement_status": "accepted", "comparison_status": "accepted",
+        "quality": {"accepted": True}, "rgb": [1, 2, 3], "lab": [4, 5, 6],
+    }
+    record = campaign(tmp_path, [trial(0, 1.0, measurement=measurement)])
+    record.spec.target_mode = "camera"
+    record.spec.target_rgb = None
+    record.spec.target_lab = None
+    record.spec.reference_processing_profile_id = None
+    record.spec.target_run_id = None
+    record.spec.target_analysis_revision = None
+    record.spec.target_well = None
+    result = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    ).project("campaign-1")
+    assert result.target["accepted"] is False
+    assert result.target["measurement"]["lab"] is None
+    assert "target.frozen_provenance" in result.missing
+    assert result.best is None
+
+
+def test_camera_score_requires_matching_profile_and_accepted_quality(tmp_path):
+    base = {
+        "measurement_status": "accepted", "comparison_status": "accepted",
+        "quality": {"accepted": True}, "rgb": [1, 2, 3], "lab": [4, 5, 6],
+        "reference_processing_profile_id": "wrong-profile",
+    }
+    record = campaign(tmp_path, [trial(0, 1.0, measurement=base)])
+    record.spec.target_mode = "camera"
+    record.spec.target_rgb = None
+    record.spec.target_lab = (42, 12, 18)
+    record.spec.reference_processing_profile_id = "profile-v1"
+    record.spec.target_run_id = "target-run"
+    record.spec.target_analysis_revision = 0
+    record.spec.target_well = "plate.C7"
+    result = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    ).project("campaign-1")
+    assert result.attempts[0]["score_eligible"] is False
+    assert result.best is None
+
+
 def test_events_are_chronological_with_stable_replay_timecodes(tmp_path):
     record = campaign(tmp_path, [trial(0, 3.0), trial(1, 2.0)])
-    event = lambda seq, stamp, message: SimpleNamespace(
-        sequence=seq, timestamp=stamp, state="running", message=message,
+    event = lambda seq, stamp, message, state="running": SimpleNamespace(
+        sequence=seq, timestamp=stamp, state=state, message=message,
         kind="lifecycle", data=None,
     )
     runs = FakeRuns(tmp_path / "runs", events={
-        "run-0": [event(2, 104.0, "later"), event(1, 101.0, "first")],
-        "run-1": [event(1, 102.0, "second")],
+        "run-0": [event(2, 104.0, "later", "succeeded"), event(1, 101.0, "first")],
+        "run-1": [event(1, 102.0, "second", "succeeded")],
     })
     result = CampaignPresentationService(FakeCampaigns(tmp_path / "campaigns", record), runs).project("campaign-1")
     assert [item["label"] for item in result.events] == ["first", "second", "later"]
     assert [item["sequence"] for item in result.events] == [1, 2, 3]
     assert [item["elapsed_ms"] for item in result.events] == [1000, 2000, 4000]
+    assert result.attempts[0]["reveal_event_sequence"] == 3
+    assert result.attempts[1]["reveal_event_sequence"] == 2
 
 
 def test_markers_are_validated_and_written_atomically(tmp_path):
@@ -118,11 +172,37 @@ def test_markers_are_validated_and_written_atomically(tmp_path):
     with pytest.raises(ValidationError):
         DemoMarkerRequest(label="   ")
     first = service.add_marker("campaign-1", DemoMarkerRequest(label="  camera  ready ", client_time=7.0))
-    second = service.add_marker("campaign-1", DemoMarkerRequest(label="attempt one", footage_offset_ms=1200))
+    second = service.add_marker(
+        "campaign-1",
+        DemoMarkerRequest(
+            label="attempt one", timeline_elapsed_ms=800,
+            video_time_ms=2000, footage_offset_ms=1200,
+        ),
+    )
     assert first.label == "camera ready"
     assert second.sequence == 2
     saved = json.loads((base / "campaign-1" / "presentation-annotations.json").read_text())
     assert [item["sequence"] for item in saved["markers"]] == [1, 2]
+
+    identified = DemoMarkerRequest(
+        label="recording sync", client_id="sync-1", client_time=10.5,
+        timeline_elapsed_ms=500, video_time_ms=3000, footage_offset_ms=2500,
+        recording_name="demo.mp4",
+        recording_size=1234, recording_last_modified=10.0,
+        recording_sha256="a" * 64,
+    )
+    created = service.add_marker("campaign-1", identified)
+    replayed = service.add_marker("campaign-1", identified)
+    assert replayed.id == created.id
+    assert replayed.recording_sha256 == "a" * 64
+
+    with pytest.raises(ValidationError, match="recording identity"):
+        DemoMarkerRequest(label="incomplete", recording_name="demo.mp4")
+    with pytest.raises(ValidationError, match="must equal"):
+        DemoMarkerRequest(
+            label="bad sync", timeline_elapsed_ms=500,
+            video_time_ms=1000, footage_offset_ms=700,
+        )
 
 
 def test_asset_catalog_rejects_outside_paths_and_symlink_escape(tmp_path, monkeypatch):
@@ -158,6 +238,9 @@ def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
         run_dir.mkdir(parents=True)
         (run_dir / "color-target-source.tiff").write_bytes(run_id.encode())
         (run_dir / "color-target-analysis-2.png").write_bytes(b"annotated")
+        (run_dir / "color-target-analysis-2.json").write_text(
+            json.dumps({"schema": "cubos.color-target-reanalysis.v1", "revision": 2})
+        )
         records[run_id] = SimpleNamespace(
             metadata={"color_target_source_artifact": "color-target-source.tiff"},
             started_at=None, finished_at=None,
@@ -184,6 +267,9 @@ def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
         }
         assert archived["target_raw"] == b"selected-target"
         assert archived["target_annotated"] == b"annotated"
+        snapshot_files = {item["file"] for item in manifest["snapshots"]}
+        assert "runs/selected-target/color-target-analysis-2.json" in snapshot_files
+        assert all(item["sha256"] for item in manifest["snapshots"])
 
 
 def test_export_contains_projection_snapshots_assets_and_explicit_missing(tmp_path, monkeypatch):
@@ -218,7 +304,7 @@ def test_export_contains_projection_snapshots_assets_and_explicit_missing(tmp_pa
         assert "campaign/gantry.yaml" in manifest["missing"]
 
 
-def test_export_applies_size_limit_to_run_artifacts(tmp_path, monkeypatch):
+def test_export_rejects_payload_over_final_size_limit(tmp_path, monkeypatch):
     import cubos_api.services.campaign_presentation as module
 
     monkeypatch.setattr(module, "MAX_EXPORT_BYTES", 8)
@@ -232,8 +318,108 @@ def test_export_applies_size_limit_to_run_artifacts(tmp_path, monkeypatch):
     service = CampaignPresentationService(
         FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
     )
-    with zipfile.ZipFile(io.BytesIO(service.export_zip("campaign-1"))) as archive:
+    with pytest.raises(OverflowError, match="ZIP exceeds"):
+        service.export_zip("campaign-1")
+
+
+def test_native_campaign_and_run_store_roundtrip_exports_frozen_evidence(tmp_path):
+    settings = get_settings()
+    runs = RunManager(settings)
+    campaigns = CampaignManager(settings, runs)
+    target = RunRecord(
+        run_id="target-native", state="succeeded", created_at=90.0,
+        started_at=91.0, finished_at=92.0,
+        metadata={"active_learning_target": "plate.C7"},
+    )
+    runs.store.create(
+        target, gantry_yaml="gantry: target\n", deck_yaml="deck: target\n",
+        protocol_yaml="protocol: []\n",
+    )
+    target_dir = runs.store.run_dir(target.run_id)
+    (target_dir / "color-target-source.tiff").write_bytes(b"frozen-pixels")
+    (target_dir / "color-target-analysis-0.png").write_bytes(b"annotated-pixels")
+    (target_dir / "color-target-analysis-0.json").write_text(json.dumps({
+        "schema": "cubos.color-target-reanalysis.v1", "revision": 0,
+        "source_image_sha256": "0" * 64,
+    }))
+    target.metadata.update({
+        "color_target_source_artifact": "color-target-source.tiff",
+        "color_target_source_sha256": "0" * 64,
+    })
+    target.artifacts.extend([
+        "color-target-source.tiff", "color-target-analysis-0.png",
+        "color-target-analysis-0.json",
+    ])
+    runs.store.write(target)
+
+    measurement = {
+        "image_path": str(settings.run_dir / "trial-native" / "candidate.png"),
+        "annotated_preview_path": str(
+            settings.run_dir / "trial-native" / "candidate.analysis.png"
+        ),
+        "rgb": [30.0, 20.0, 40.0], "lab": [9.0, 8.0, -4.0],
+        "delta_e_00": 2.0, "measurement_status": "accepted",
+        "comparison_status": "accepted", "quality": {"accepted": True},
+        "reference_processing_profile_id": "profile-v1",
+    }
+    child = RunRecord(
+        run_id="trial-native", state="succeeded", created_at=100.0,
+        started_at=101.0, finished_at=104.0,
+    )
+    runs.store.create(
+        child, gantry_yaml="gantry: trial\n", deck_yaml="deck: trial\n",
+        protocol_yaml="protocol: []\n",
+    )
+    child_dir = runs.store.run_dir(child.run_id)
+    (child_dir / "candidate.png").write_bytes(b"candidate-pixels")
+    (child_dir / "candidate.analysis.png").write_bytes(b"candidate-annotation")
+    child.result = {"results": [measurement]}
+    runs.store.write_result(child, child.result)
+    runs.store.append_event(
+        child.run_id, state="running", message="measurement started",
+    )
+    runs.store.append_event(
+        child.run_id, state="succeeded", message="execution completed",
+    )
+    runs.store.write(child)
+
+    spec = CampaignSpec(
+        name="native evidence", gantry_file="g.yaml", deck_file="d.yaml",
+        protocol_file="p.yaml",
+        parameters=[{
+            "name": "red_ul", "minimum": 0.0, "maximum": 300.0,
+            "step": 5.0, "bindings": [{"step_index": 0, "argument": "volume_ul"}],
+        }],
+        objective={"mode": "result", "path": "0.delta_e_00", "direction": "minimize"},
+        optimizer={"initial_trials": 1}, stop={"max_trials": 1},
+        mock_mode=True, target_mode="camera", target_run_id=target.run_id,
+        target_analysis_revision=0, target_well="plate.C7",
+        target_lab=(42.0, 12.0, 18.0),
+        reference_processing_profile_id="profile-v1",
+    )
+    record = CampaignRecord(
+        campaign_id="native-campaign", spec=spec, state="completed",
+        created_at=100.0, updated_at=105.0,
+        trials=[CampaignTrial(
+            index=0, parameters={"red_ul": 100.0}, run_id=child.run_id,
+            state="succeeded", objective=2.0, measurement=measurement,
+            objective_status="accepted", sample_well="plate.A3",
+        )],
+        best_objective=2.0,
+    )
+    campaigns._records[record.campaign_id] = record
+    campaigns._save(record)
+
+    service = CampaignPresentationService(campaigns, runs)
+    projection = service.project(record.campaign_id)
+    assert projection.target["accepted"] is True
+    assert projection.attempts[0]["score_eligible"] is True
+    assert projection.attempts[0]["reveal_event_sequence"] is not None
+    with zipfile.ZipFile(io.BytesIO(service.export_zip(record.campaign_id))) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["partial"] is True
-        assert "campaign/campaign.json:size_limit" in manifest["missing"]
-        assert "runs/run-0/run.json:size_limit" in manifest["missing"]
+        assert {item["role"] for item in manifest["assets"]} == {
+            "target_raw", "target_annotated", "raw", "annotated",
+        }
+        assert "runs/target-native/color-target-analysis-0.json" in {
+            item["file"] for item in manifest["snapshots"]
+        }

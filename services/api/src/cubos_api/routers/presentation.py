@@ -23,6 +23,8 @@ def get_presentation(campaign_id: str) -> PresentationResponse:
         return _service().project(campaign_id)
     except KeyError as exc:
         raise HTTPException(404, "Campaign not found") from exc
+    except OverflowError as exc:
+        raise HTTPException(413, str(exc)) from exc
 
 
 @router.post("/{campaign_id}/presentation/markers", response_model=DemoMarker, status_code=201)
@@ -50,6 +52,8 @@ def export_presentation(campaign_id: str) -> Response:
         payload = _service().export_zip(campaign_id)
     except KeyError as exc:
         raise HTTPException(404, "Campaign not found") from exc
+    except OverflowError as exc:
+        raise HTTPException(413, str(exc)) from exc
     return Response(
         payload,
         media_type="application/zip",
