@@ -31,6 +31,7 @@ type FetchMockOptions = {
   runStatus?: () => ProtocolRunStatus;
   validateSetup?: () => Response | Promise<Response>;
   calibrationWarning?: string | null;
+  activeFluidState?: () => Response | Promise<Response>;
   fluidStates?: FluidStateSummary[];
   runsSubmit?: (body: Record<string, unknown> | null) => Response | Promise<Response>;
   runsGet?: (runId: string) => Response | Promise<Response>;
@@ -335,6 +336,9 @@ function installFetchMock(state: ApiState, options: FetchMockOptions = {}) {
     if (path === "/api/v1/deck/preview-wells" && method === "POST") {
       return jsonResponse(previewWells(body as WellPlateConfig));
     }
+    if (path === "/api/v1/fluid-states/active" && method === "GET") {
+      return options.activeFluidState?.() ?? jsonResponse(null);
+    }
     if (path === "/api/v1/fluid-states" && method === "GET") {
       return jsonResponse(options.fluidStates ?? []);
     }
@@ -464,6 +468,7 @@ function renderApp() {
       <App />
     </QueryClientProvider>,
   );
+  return client;
 }
 
 async function importConfig(user: ReturnType<typeof userEvent.setup>, label: string, filename: string) {
@@ -1694,6 +1699,64 @@ describe("CubOS editor interactions", () => {
   });
 
   // ── Feature 07: create-new/resume-existing fluid-state run submission ──
+
+  it("keeps stateless runs available when no active deck contents exist", async () => {
+    const user = userEvent.setup();
+    installFetchMock(createState());
+    const client = renderApp();
+    await waitForSettingsLoad();
+    await loadRequiredProtocolDependencies(user);
+    await connectGantry(user);
+    await user.click(screen.getByRole("button", { name: "Protocol" }));
+    await importConfig(user, "Protocol config", "move.yaml");
+
+    await waitFor(() => expect(client.getQueryData(["fluid-states", "active"])).toBeNull());
+    expect(screen.getByRole("radio", { name: "No state tracking" })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Run Protocol" })).toBeEnabled();
+  });
+
+  it("lets the operator override the active deck contents default with no tracking", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetchMock(createState(), {
+      activeFluidState: () => jsonResponse({ fluid_state_id: 5, revision: 1, updated_at: "now" }),
+    });
+    renderApp();
+    await waitForSettingsLoad();
+    await loadRequiredProtocolDependencies(user);
+    await connectGantry(user);
+    await user.click(screen.getByRole("button", { name: "Protocol" }));
+    await importConfig(user, "Protocol config", "move.yaml");
+
+    await waitFor(() => expect(screen.getByRole("radio", { name: "Use active deck contents" })).toBeChecked());
+    await user.click(screen.getByRole("radio", { name: "No state tracking" }));
+    expect(screen.getByRole("radio", { name: "No state tracking" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Run Protocol" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/runs", expect.objectContaining({ method: "POST" }),
+    ));
+    const [, submitInit] = fetchMock.mock.calls.find(([input]) => input === "/api/v1/runs")!;
+    const submission = JSON.parse(String(submitInit?.body));
+    expect(submission).not.toHaveProperty("state");
+    expect(submission).not.toHaveProperty("use_active_state");
+  });
+
+  it("preserves an explicit no-tracking choice while active deck contents are loading", async () => {
+    const user = userEvent.setup();
+    let resolveActive!: (response: Response) => void;
+    const activeResponse = new Promise<Response>((resolve) => { resolveActive = resolve; });
+    installFetchMock(createState(), { activeFluidState: () => activeResponse });
+    const client = renderApp();
+    await waitForSettingsLoad();
+    await loadRequiredProtocolDependencies(user);
+    await user.click(screen.getByRole("button", { name: "Protocol" }));
+    await importConfig(user, "Protocol config", "move.yaml");
+    await user.click(screen.getByRole("radio", { name: "New fluid state" }));
+    await user.click(screen.getByRole("radio", { name: "No state tracking" }));
+
+    resolveActive(jsonResponse({ fluid_state_id: 5, revision: 1, updated_at: "now" }));
+    await waitFor(() => expect(client.getQueryData(["fluid-states", "active"])).toMatchObject({ fluid_state_id: 5 }));
+    expect(screen.getByRole("radio", { name: "No state tracking" })).toBeChecked();
+  });
 
   it("keeps Run Protocol disabled while Resume is chosen without a state selected", async () => {
     const user = userEvent.setup();

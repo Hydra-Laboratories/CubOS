@@ -141,6 +141,7 @@ export default function App() {
     resumeId: null,
     seeds: [],
   });
+  const fluidStateChoiceInitialized = useRef(false);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [requestConfirm, confirmDialog] = useConfirm();
 
@@ -258,10 +259,14 @@ export default function App() {
   const fluidStates = useFluidStates();
   const activeFluidState = useActiveFluidState();
   React.useEffect(() => {
-    if (activeFluidState.data !== undefined && fluidStateChoice.mode === "none") {
-      setFluidStateChoice((current) => current.mode === "none" ? { ...current, mode: "active" } : current);
+    // Apply the saved setup only as an initial default. A user choice made
+    // before this request finishes must also win over the async response.
+    if (fluidStateChoiceInitialized.current || activeFluidState.data === undefined) return;
+    fluidStateChoiceInitialized.current = true;
+    if (activeFluidState.data !== null) {
+      setFluidStateChoice((current) => ({ ...current, mode: "active" }));
     }
-  }, [activeFluidState.data, fluidStateChoice.mode]);
+  }, [activeFluidState.data]);
 
   // Local working copies of each editor's edits, kept in App state so
   // they survive tab switches (each editor unmounts on tab-away, which
@@ -963,7 +968,10 @@ export default function App() {
             runResult={runResult}
             runError={runError}
             fluidStateChoice={fluidStateChoice}
-            onFluidStateChoiceChange={setFluidStateChoice}
+            onFluidStateChoiceChange={(choice) => {
+              fluidStateChoiceInitialized.current = true;
+              setFluidStateChoice(choice);
+            }}
             availableFluidStates={fluidStates.data ?? []}
             activeFluidStateId={activeFluidState.data?.fluid_state_id ?? null}
           />
