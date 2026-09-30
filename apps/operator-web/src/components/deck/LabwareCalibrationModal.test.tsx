@@ -481,3 +481,89 @@ describe("LabwareCalibrationModal", () => {
     expect(saved.location).toEqual({ x: 100, y: 85, z: -55 });
   });
 });
+
+
+describe("custom labware creation", () => {
+  function renderNew(onSaveDeck = vi.fn<(filename: string, config: DeckConfig) => Promise<undefined>>(async () => undefined)) {
+    const props = { open: true, initialMode: "new" as const, onClose: vi.fn(), deck: deckResponse(), gantry: gantryResponse(false), position: position(), onSaveDeck };
+    return { ...render(<LabwareCalibrationModal {...props} />), props };
+  }
+
+  async function fillCustom(name = "My 20 well plate", rows = "4", columns = "5", x = "12.5", y = "14") {
+    const user = userEvent.setup();
+    for (const [label, value] of [["Labware name", name], ["Rows", rows], ["Columns", columns], ["Well spacing X (mm)", x], ["Well spacing Y (mm)", y]]) {
+      const field = screen.getByLabelText(label);
+      await user.clear(field);
+      if (value) await user.type(field, value);
+    }
+    return user;
+  }
+
+  it("saves a calibrated custom 4 by 5 grid and preserves all other deck entries", async () => {
+    stubPositions([{ x: 100, y: 50, z: 20 }, { x: 112.4, y: 50.1, z: 20 }]);
+    const onSaveDeck = vi.fn<(filename: string, config: DeckConfig) => Promise<undefined>>(async () => undefined);
+    renderNew(onSaveDeck);
+    const user = await fillCustom();
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(onSaveDeck).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Keep saved value" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Record A1" }));
+    await user.click(await screen.findByRole("button", { name: "Record A2" }));
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("button", { name: "Save labware calibration" }));
+    await waitFor(() => expect(onSaveDeck).toHaveBeenCalledTimes(1));
+    const [filename, body] = onSaveDeck.mock.calls[0];
+    expect(filename).toBe("demo_deck.yaml");
+    expect(body.labware.my_20_well_plate).toMatchObject({
+      type: "well_plate", name: "My 20 well plate", rows: 4, columns: 5,
+      x_offset: 12.5, y_offset: 14,
+      calibration: { a1: { x: 100, y: 50, z: 20 }, a2: { x: 112.5, y: 50 } },
+    });
+    for (const item of deckResponse().labware) expect(body.labware[item.key]).toEqual(item.config);
+    for (const field of ["length", "width", "height", "capacity_ul", "working_volume_ul", "a1"])
+      expect(body.labware.my_20_well_plate).not.toHaveProperty(field);
+  });
+
+  it.each([
+    ["", "4", "5", "12.5", "14"],
+    ["!!!", "4", "5", "12.5", "14"],
+    ["plate", "4", "5", "12.5", "14"],
+    ["constructor", "4", "5", "12.5", "14"],
+    ["custom", "0", "5", "12.5", "14"],
+    ["custom", "1.5", "5", "12.5", "14"],
+    ["custom", "4", "-2", "12.5", "14"],
+    ["custom", "4", "5", "", "14"],
+    ["custom", "4", "5", "0", "14"],
+    ["custom", "4", "5", "12.5", "-1"],
+  ])("rejects invalid or colliding definition %j %j %j %j %j", async (name, rows, columns, x, y) => {
+    const { props } = renderNew();
+    const user = await fillCustom(name, rows, columns, x, y);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.queryByRole("button", { name: "Record A1" })).not.toBeInTheDocument();
+    expect(props.onSaveDeck).not.toHaveBeenCalled();
+  });
+
+  it("uses an orientation reference for a single-column plate and clears captures after geometry edits", async () => {
+    stubPositions([{ x: 100, y: 50, z: 20 }]);
+    renderNew();
+    const user = await fillCustom("column plate", "4", "1");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(screen.getByRole("button", { name: "Record A1" }));
+    expect(await screen.findByText(/direction a second column would occupy/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    await user.clear(screen.getByLabelText("Rows"));
+    await user.type(screen.getByLabelText("Rows"), "5");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(screen.getByRole("button", { name: "Record A1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+
+  it("resets a cancelled definition on reopen", async () => {
+    const { props, rerender } = renderNew();
+    await fillCustom();
+    rerender(<LabwareCalibrationModal {...props} open={false} />);
+    rerender(<LabwareCalibrationModal {...props} open />);
+    expect(screen.getByLabelText("Labware name")).toHaveValue("");
+    expect(props.onSaveDeck).not.toHaveBeenCalled();
+  });
+});

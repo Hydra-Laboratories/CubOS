@@ -39,36 +39,6 @@ interface Props {
   isRunning?: boolean;
 }
 
-const EMPTY_WELL_PLATE: WellPlateConfig = {
-  type: "well_plate",
-  name: "",
-  model_name: "",
-  rows: 8,
-  columns: 12,
-  length: 127.76,
-  width: 85.47,
-  height: 14.22,
-  calibration: {
-    a1: { x: 100.0, y: 50.0, z: 20.0 },
-    a2: { x: 91.0, y: 50.0, z: 20.0 },
-  },
-  x_offset: 9.0,
-  y_offset: 9.0,
-  capacity_ul: 200.0,
-  working_volume_ul: 150.0,
-};
-
-const EMPTY_VIAL: VialConfig = {
-  type: "vial",
-  name: "",
-  model_name: "",
-  height: 66.75,
-  diameter: 28.0,
-  location: { x: 30.0, y: 40.0, z: 20.0 },
-  capacity_ul: 1500.0,
-  working_volume_ul: 1200.0,
-};
-
 function buildDeckResponse(
   labware: Record<string, LabwareConfig>,
   filename: string,
@@ -124,6 +94,7 @@ function labwareFromDeck(deck: DeckResponse | null): Record<string, LabwareConfi
 export default function DeckEditor({ configs, selectedFile, onSelectFile, onImportFile, onNewFile, onDeleteFile, deleteDisabledReason, lastSaved, importedFrom, deck, baseline, onSave, onLocalChange, dirty, onRefresh, gantry = null, position = null, isRunning = false }: Props) {
   const [labware, setLabware] = useState<Record<string, LabwareConfig>>(() => labwareFromDeck(deck));
   const [calibrateOpen, setCalibrateOpen] = useState(false);
+  const [calibrationMode, setCalibrationMode] = useState<"new" | "calibrate">("calibrate");
   const [saveAs, setSaveAs] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -147,24 +118,6 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
   const removeLabware = (key: string) => {
     const next = { ...labware };
     delete next[key];
-    setLabware(next);
-    syncViz(next);
-  };
-
-  const addLabware = (type: "well_plate" | "vial") => {
-    // Find the next free index rather than always using
-    // `count + 1` — removing an earlier item and adding a new one could
-    // otherwise land on a key that's still in use (e.g. wellplate_2),
-    // silently replacing that labware's calibration with a blank template.
-    let idx = Object.keys(labware).length + 1;
-    let key = type === "well_plate" ? `wellplate_${idx}` : `vial_${idx}`;
-    while (labware[key]) {
-      idx += 1;
-      key = type === "well_plate" ? `wellplate_${idx}` : `vial_${idx}`;
-    }
-    const template = type === "well_plate" ? structuredClone(EMPTY_WELL_PLATE) : structuredClone(EMPTY_VIAL);
-    template.name = key; // Pre-fill with ID
-    const next = { ...labware, [key]: template };
     setLabware(next);
     syncViz(next);
   };
@@ -244,14 +197,26 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
       />
 
       <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
-        <button onClick={() => addLabware("well_plate")} style={addBtnStyle}>
-          + Well Plate
-        </button>
-        <button onClick={() => addLabware("vial")} style={addBtnStyle}>
-          + Vial
+        <button
+          onClick={() => { setCalibrationMode("new"); setCalibrateOpen(true); }}
+          disabled={!canCalibrateLabware}
+          style={{
+            ...addBtnStyle,
+            opacity: canCalibrateLabware ? 1 : 0.45,
+            cursor: canCalibrateLabware ? "pointer" : "not-allowed",
+          }}
+          title={canCalibrateLabware
+            ? "Create and calibrate new labware"
+            : isRunning
+              ? "Protocol running"
+              : !deck
+                ? "Load a deck config first"
+                : "Load a gantry config first"}
+        >
+          New Labware
         </button>
         <button
-          onClick={() => setCalibrateOpen(true)}
+          onClick={() => { setCalibrationMode("calibrate"); setCalibrateOpen(true); }}
           disabled={!canCalibrateLabware}
           style={{
             ...calibrateBtnStyle,
@@ -352,6 +317,7 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
         gantry={gantry}
         position={position}
         onSaveDeck={handleCalibrationSave}
+        initialMode={calibrationMode}
       />
     </div>
   );
