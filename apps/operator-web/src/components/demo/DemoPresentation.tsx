@@ -335,7 +335,7 @@ export default function DemoPresentation() {
 
           <section className="demo-history">
             <header>
-              <div><small>Experiment history</small><strong>Every measured well, in order</strong></div>
+              <div><small>Experiment history</small><strong>Every attempt, in order</strong></div>
               {!overlay && (
                 <div className="demo-replay-controls">
                   <button type="button" className={live ? "is-active" : ""} onClick={() => setLive(true)}>{presentation.data.status === "running" ? "Live" : "Latest"}</button>
