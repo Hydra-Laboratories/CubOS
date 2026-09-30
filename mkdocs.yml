@@ -21,6 +21,7 @@ nav:
     - Side-Exit Tip Rack: side-exit-tip-rack.md
     - Run a Protocol with YAML: protocol-yaml.md
     - Active Learning Campaigns: active-learning.md
+    - Present a Color-Matching Demo: color-demo.md
     - Fluid State Tracking: fluid-state.md
     - PANDA-CUB Quickstart: panda-cub-quickstart.md
     - EmStat Cyclic Voltammetry: emstat-cv.md

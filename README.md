@@ -111,6 +111,7 @@ full documentation instead of treating this README as the source of truth.
 - [Gantry](docs/gantry.md)
 - [Deck](docs/deck.md)
 - [Run a Protocol with YAML](docs/protocol-yaml.md)
+- [Present a Color-Matching Demo](docs/color-demo.md)
 - [Python Protocols](docs/protocol-python.md)
 - [Data](docs/data.md)
 - [Gantry Bring-Up](docs/admin/gantry-bring-up.md)
