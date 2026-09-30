@@ -94,11 +94,8 @@ function installFetchMock(campaignsResponse = () => jsonResponse(defaultCampaign
     if (path === "/api/v1/data/campaigns") {
       return campaignsResponse();
     }
-    if (path === "/api/v1/data/campaigns/1/measurements.zip") {
+    if (path === "/api/v1/data/campaigns/1/data.zip") {
       return zipResponse("mock zip bytes");
-    }
-    if (path === "/api/v1/data/campaigns/1/asmi.zip") {
-      return zipResponse("mock asmi zip bytes");
     }
 
     return new Response("Not found", { status: 404 });
@@ -126,7 +123,7 @@ describe("Results view", () => {
     vi.restoreAllMocks();
   });
 
-  it("shows campaign output and exports measurement and ASMI ZIPs", async () => {
+  it("shows campaign output and downloads the campaign data ZIP", async () => {
     const user = userEvent.setup();
     const fetchMock = installFetchMock();
 
@@ -140,11 +137,9 @@ describe("Results view", () => {
     expect(screen.getByText(new Date("2025-10-30 12:22:07").toLocaleString())).toBeInTheDocument();
     expect(screen.getAllByText("2")).toHaveLength(3);
 
-    await user.click(screen.getByRole("button", { name: "Measurements ZIP" }));
+    await user.click(screen.getByRole("button", { name: "Download Data" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/data/campaigns/1/measurements.zip"));
-    await user.click(screen.getByRole("button", { name: "ASMI ZIP" }));
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/data/campaigns/1/asmi.zip"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/v1/data/campaigns/1/data.zip"));
     expect(URL.createObjectURL).toHaveBeenCalled();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:cubos-asmi-csv");
   });
