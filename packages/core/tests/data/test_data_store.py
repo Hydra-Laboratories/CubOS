@@ -68,60 +68,6 @@ def _create_legacy_fluid_operations_table(
     connection.commit()
 
 
-def _create_pre_correction_fluid_operations_table(
-    connection: sqlite3.Connection,
-) -> None:
-    connection.executescript(
-        """
-        CREATE TABLE fluid_state_sessions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            deck_path TEXT NOT NULL,
-            deck_fingerprint TEXT NOT NULL,
-            deck_snapshot_json TEXT NOT NULL,
-            layout_json TEXT NOT NULL
-        );
-        INSERT INTO fluid_state_sessions (
-            id, deck_path, deck_fingerprint, deck_snapshot_json, layout_json
-        ) VALUES (1, 'deck.yaml', 'fingerprint', '{}', '{}');
-        CREATE TABLE fluid_operations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fluid_state_id INTEGER NOT NULL,
-            operation_key TEXT NOT NULL UNIQUE,
-            operation_type TEXT NOT NULL CHECK (operation_type IN ('transfer', 'mix')),
-            source_labware_key TEXT NOT NULL,
-            source_location_id TEXT NOT NULL DEFAULT '',
-            destination_labware_key TEXT NOT NULL,
-            destination_location_id TEXT NOT NULL DEFAULT '',
-            volume_ul REAL NOT NULL CHECK (volume_ul > 0),
-            composition_json TEXT NOT NULL,
-            parameters_json TEXT NOT NULL DEFAULT '{}',
-            source_version INTEGER NOT NULL,
-            destination_version INTEGER NOT NULL,
-            status TEXT NOT NULL CHECK (
-                status IN (
-                    'started', 'applied', 'reconciliation_required',
-                    'cancelled', 'reconciled'
-                )
-            ),
-            campaign_id INTEGER,
-            detail TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
-            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-            applied_at TEXT
-        );
-        INSERT INTO fluid_operations (
-            fluid_state_id, operation_key, operation_type,
-            source_labware_key, destination_labware_key, volume_ul,
-            composition_json, source_version, destination_version, status
-        ) VALUES (
-            1, 'legacy-mix', 'mix',
-            'source', 'source', 10.0, '{"water":10.0}', 1, 1, 'applied'
-        );
-        """
-    )
-    connection.commit()
-
-
 def _make_uvvis_spectrum(n: int = 10) -> UVVisSpectrum:
     wavelengths = tuple(400.0 + i for i in range(n))
     intensities = tuple(0.1 * i for i in range(n))
@@ -244,38 +190,6 @@ class TestSchemaCreation:
             "SELECT 1 FROM sqlite_master WHERE type = 'table' "
             "AND name = 'fluid_operations_new'"
         ).fetchone() is None
-        store.close()
-
-    def test_legacy_pre_correction_database_migrates_and_accepts_correction(
-        self, tmp_path,
-    ):
-        db_path = tmp_path / "pre-correction.db"
-        connection = sqlite3.connect(db_path)
-        _create_pre_correction_fluid_operations_table(connection)
-        connection.close()
-
-        store = DataStore(db_path)
-
-        assert store._conn.execute(
-            "SELECT operation_key, operation_type, status FROM fluid_operations"
-        ).fetchall() == [("legacy-mix", "mix", "applied")]
-
-        store._conn.execute(
-            "INSERT INTO fluid_operations ("
-            "fluid_state_id, operation_key, operation_type, source_labware_key, "
-            "destination_labware_key, volume_ul, composition_json, "
-            "parameters_json, source_version, destination_version, status, "
-            "detail, applied_at) VALUES ("
-            "1, 'new-correction', 'correction', 'source', 'source', 20.0, "
-            "'{\"unknown\":20.0}', '{}', 1, 1, 'applied', "
-            "'[alexc] measured jar', datetime('now'))"
-        )
-        store._conn.commit()
-
-        assert store._conn.execute(
-            "SELECT operation_type FROM fluid_operations WHERE "
-            "operation_key = 'new-correction'"
-        ).fetchone() == ("correction",)
         store.close()
 
 

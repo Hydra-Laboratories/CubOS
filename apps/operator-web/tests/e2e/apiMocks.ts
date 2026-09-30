@@ -133,6 +133,12 @@ const FLUID_STATE_SUMMARY = {
   operation_count: 0,
 };
 
+const NEWER_FLUID_STATE_SUMMARY = {
+  ...FLUID_STATE_SUMMARY,
+  id: 2,
+  label: "newer run",
+};
+
 const FLUID_STATE_DETAIL = {
   ...FLUID_STATE_SUMMARY,
   containers: [
@@ -155,6 +161,11 @@ const FLUID_STATE_DETAIL = {
   reconciliation_required_count: 0,
 };
 
+export interface FluidStateScenario {
+  multiple?: boolean;
+  pendingStateId?: number;
+}
+
 function position(state: MockApiState) {
   return {
     x: 10,
@@ -173,7 +184,7 @@ export async function installApiMocks(
   page: Page,
   options: {
     connected?: boolean;
-    fluidStates?: boolean;
+    fluidStates?: boolean | FluidStateScenario;
     run?: RunScenario;
   } = {},
 ): Promise<MockApiState> {
@@ -182,6 +193,16 @@ export async function installApiMocks(
     requests: [],
   };
   const withFluidStates = options.fluidStates ?? false;
+  const fluidStateScenario = typeof withFluidStates === "object" ? withFluidStates : {};
+  const fluidStateSummaries = fluidStateScenario.multiple
+    ? [NEWER_FLUID_STATE_SUMMARY, FLUID_STATE_SUMMARY]
+    : [FLUID_STATE_SUMMARY];
+  const fluidStateDetail = (fluidStateId: number) => ({
+    ...FLUID_STATE_DETAIL,
+    ...(fluidStateId === 2 ? NEWER_FLUID_STATE_SUMMARY : FLUID_STATE_SUMMARY),
+    pending_operation_count: fluidStateScenario.pendingStateId === fluidStateId ? 1 : 0,
+    reconciliation_required_count: fluidStateScenario.pendingStateId === fluidStateId ? 1 : 0,
+  });
 
   await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
@@ -270,12 +291,13 @@ export async function installApiMocks(
     }
 
     if (path === "/data/campaigns") return json([]);
-    if (path === "/fluid-states") return json(withFluidStates ? [FLUID_STATE_SUMMARY] : []);
-    if (path === "/fluid-states/1") return json(FLUID_STATE_DETAIL);
+    if (path === "/fluid-states") return json(withFluidStates ? fluidStateSummaries : []);
+    if (path === "/fluid-states/1") return json(fluidStateDetail(1));
+    if (path === "/fluid-states/2") return json(fluidStateDetail(2));
     if (path === "/fluid-states/1/containers") return json(FLUID_STATE_DETAIL.containers);
-    if (path === "/fluid-states/1/tips") {
+    if (path === "/fluid-states/1/tips" || path === "/fluid-states/2/tips") {
       return json({
-        fluid_state_id: 1,
+        fluid_state_id: path.includes("/2/") ? 2 : 1,
         containers: [],
         pipette: {
           pipette_key: "pipette_1",
@@ -288,8 +310,11 @@ export async function installApiMocks(
         },
       });
     }
-    if (path === "/fluid-states/1/caps") return json({ fluid_state_id: 1, containers: [] });
+    if (path === "/fluid-states/1/caps" || path === "/fluid-states/2/caps") {
+      return json({ fluid_state_id: path.includes("/2/") ? 2 : 1, containers: [] });
+    }
     if (path === "/fluid-states/1/reconciliation") return json({ fluid_state_id: 1, items: [] });
+    if (path === "/fluid-states/2/reconciliation") return json({ fluid_state_id: 2, items: [] });
 
     return json({ detail: `Unmocked endpoint: ${method} ${path}` }, 404);
   });

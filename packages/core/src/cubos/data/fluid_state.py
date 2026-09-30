@@ -13,7 +13,6 @@ import json
 import logging
 import math
 import sqlite3
-import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, TypedDict
@@ -117,16 +116,6 @@ class FluidReplacementEndpoint(TypedDict):
 class FluidReplacementState(TypedDict):
     source: FluidReplacementEndpoint
     destination: FluidReplacementEndpoint
-
-
-class FluidCorrectionResult(TypedDict):
-    labware_key: str
-    location_id: str
-    previous_volume_ul: float
-    current_volume_ul: float
-    composition: dict[str, float]
-    version: int
-    detail: str
 
 
 def load_initial_fluids(path: str | Path) -> dict[str, dict[str, Any]]:
@@ -366,127 +355,6 @@ def seed_fluid(
             "UPDATE fluid_state_sessions SET updated_at = datetime('now') WHERE id = ?",
             (fluid_state_id,),
         )
-
-
-def correct_fluid_container(
-    connection: sqlite3.Connection,
-    fluid_state_id: int,
-    target: str | DeckLabwareTarget,
-    new_volume_ul: float,
-    *,
-    expected_version: int,
-    detail: str,
-) -> FluidCorrectionResult:
-    """Apply an audited operator correction to one container's volume.
-
-    Composition is not directly editable: it is rescaled proportionally to
-    the corrected volume (see ``_rescaled_composition``), so volume and
-    composition can never drift inconsistent. Created and applied in one
-    step, mirroring ``seed_fluid``'s out-of-band, non-physical correction
-    rather than ``begin_fluid_transfer``'s started/completed physical
-    two-phase journal.
-    """
-    if not isinstance(detail, str) or not detail.strip():
-        raise FluidStateError("Correction detail must be a non-empty string.")
-    new_volume = _finite_nonnegative(new_volume_ul, "new_volume_ul")
-
-    with _immediate_transaction(connection):
-        _require_state(connection, fluid_state_id)
-        pending = _pending_operations(connection, fluid_state_id)
-        if pending:
-            details = ", ".join(f"{key} ({status})" for key, status in pending)
-            raise FluidStateReconciliationRequiredError(
-                f"Fluid state {fluid_state_id} cannot be corrected while "
-                f"operations require reconciliation: {details}."
-            )
-        labware_key, location_id = _target_parts_for_state(
-            connection, fluid_state_id, target,
-        )
-        row = _container_row(connection, fluid_state_id, labware_key, location_id)
-        target_label = _format_target(labware_key, location_id)
-
-        if int(expected_version) != int(row["version"]):
-            raise FluidStateConflictError(
-                f"{target_label} changed since this correction was opened "
-                f"(expected version {expected_version}, now {row['version']})."
-            )
-
-        previous_volume = float(row["current_volume_ul"])
-        delta = new_volume - previous_volume
-        if abs(delta) <= _VOLUME_TOLERANCE_UL:
-            raise FluidStateError(
-                f"Correction for {target_label} does not change its current "
-                f"volume of {previous_volume:g} uL."
-            )
-        _validate_replacement_volume(
-            row, new_volume, target_label, action="Correction",
-        )
-
-        previous_composition = _decode_composition(
-            row["composition_json"], previous_volume, target=target_label,
-        )
-        new_composition = _rescaled_composition(
-            previous_composition, previous_volume, new_volume,
-        )
-        delta_magnitude = abs(delta)
-
-        connection.execute(
-            "INSERT INTO fluid_operations ("
-            "fluid_state_id, operation_key, operation_type, source_labware_key, "
-            "source_location_id, destination_labware_key, destination_location_id, "
-            "volume_ul, composition_json, parameters_json, source_version, "
-            "destination_version, status, campaign_id, detail, applied_at) "
-            "VALUES (?, ?, 'correction', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'applied', "
-            "NULL, ?, datetime('now'))",
-            (
-                fluid_state_id,
-                f"correction:{fluid_state_id}:{target_label}:{uuid.uuid4().hex}",
-                labware_key,
-                location_id,
-                labware_key,
-                location_id,
-                delta_magnitude,
-                _canonical_json({"unknown": delta_magnitude}),
-                _canonical_json({
-                    "previous_volume_ul": previous_volume,
-                    "previous_composition": previous_composition,
-                    "new_volume_ul": new_volume,
-                    "new_composition": new_composition,
-                }),
-                int(row["version"]),
-                int(row["version"]),
-                detail,
-            ),
-        )
-        cursor = connection.execute(
-            "UPDATE fluid_containers SET current_volume_ul = ?, "
-            "composition_json = ?, version = version + 1, "
-            "updated_at = datetime('now') WHERE id = ? AND version = ?",
-            (
-                new_volume,
-                _canonical_json(new_composition),
-                row["id"],
-                row["version"],
-            ),
-        )
-        if cursor.rowcount != 1:
-            raise FluidStateConflictError(
-                f"{target_label} changed while applying this correction."
-            )
-        connection.execute(
-            "UPDATE fluid_state_sessions SET updated_at = datetime('now') WHERE id = ?",
-            (fluid_state_id,),
-        )
-
-    return {
-        "labware_key": labware_key,
-        "location_id": location_id,
-        "previous_volume_ul": previous_volume,
-        "current_volume_ul": new_volume,
-        "composition": new_composition,
-        "version": int(row["version"]) + 1,
-        "detail": detail,
-    }
 
 
 def begin_fluid_transfer(
@@ -2046,24 +1914,6 @@ def _proportional_composition(
     return _clean_composition(result)
 
 
-def _rescaled_composition(
-    composition: Mapping[str, float],
-    previous_volume_ul: float,
-    new_volume_ul: float,
-) -> dict[str, float]:
-    """Rescale a container's composition to a corrected volume.
-
-    An empty container takes the same ``unknown``-labelled convention as
-    ``_normalize_composition``; a container corrected down to exactly zero
-    has no composition left; anything else keeps its existing proportions.
-    """
-    if previous_volume_ul <= _VOLUME_TOLERANCE_UL:
-        return _normalize_composition(None, new_volume_ul)
-    if new_volume_ul <= _VOLUME_TOLERANCE_UL:
-        return {}
-    return _proportional_composition(composition, previous_volume_ul, new_volume_ul)
-
-
 def _subtract_composition(
     composition: Mapping[str, float],
     removed: Mapping[str, float],
@@ -2166,7 +2016,6 @@ def _location_sort_key(location_id: str) -> tuple[str, int, str]:
 __all__ = [
     "FLUID_STATE_API_VERSION",
     "FluidContainerSnapshot",
-    "FluidCorrectionResult",
     "FluidOperationSnapshot",
     "FluidReplacementEndpoint",
     "FluidReplacementState",
@@ -2181,7 +2030,6 @@ __all__ = [
     "begin_fluid_transfer",
     "complete_fluid_mix",
     "complete_fluid_transfer",
-    "correct_fluid_container",
     "create_fluid_state",
     "get_fluid_container",
     "get_fluid_snapshot",

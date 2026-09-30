@@ -15,12 +15,7 @@ from cubos.instruments.uvvis_ccs.models import UVVisSpectrum
 from cubos.protocol_engine.measurements import InstrumentMeasurement, MeasurementType
 
 if TYPE_CHECKING:
-    from .fluid_state import (
-        FluidContainerSnapshot,
-        FluidCorrectionResult,
-        FluidStateSnapshot,
-        FluidStateSummary,
-    )
+    from .fluid_state import FluidContainerSnapshot, FluidStateSnapshot, FluidStateSummary
 
 DATA_DB_PATH_ENV = "CUBOS_DATA_DB_PATH"
 SQLITE_MEMORY_DATABASE = ":memory:"
@@ -192,7 +187,7 @@ CREATE TABLE IF NOT EXISTS fluid_operations (
                                         ON DELETE CASCADE,
     operation_key            TEXT    NOT NULL UNIQUE,
     operation_type           TEXT    NOT NULL CHECK (
-                                        operation_type IN ('transfer', 'mix', 'correction')
+                                        operation_type IN ('transfer', 'mix')
                                     ),
     source_labware_key       TEXT    NOT NULL,
     source_location_id       TEXT    NOT NULL DEFAULT '',
@@ -424,7 +419,6 @@ class DataStore:
         if (
             "parameters_json" in columns
             and "'mix'" in table_sql
-            and "'correction'" in table_sql
             and "'cancelled'" in table_sql
             and "'reconciled'" in table_sql
         ):
@@ -441,7 +435,7 @@ class DataStore:
                                                     ON DELETE CASCADE,
                 operation_key            TEXT    NOT NULL UNIQUE,
                 operation_type           TEXT    NOT NULL CHECK (
-                                                    operation_type IN ('transfer', 'mix', 'correction')
+                                                    operation_type IN ('transfer', 'mix')
                                                 ),
                 source_labware_key       TEXT    NOT NULL,
                 source_location_id       TEXT    NOT NULL DEFAULT '',
@@ -1123,27 +1117,6 @@ class DataStore:
             target,
             volume_ul,
             composition,
-        )
-
-    def correct_fluid_container(
-        self,
-        fluid_state_id: int,
-        target: Any,
-        new_volume_ul: float,
-        *,
-        expected_version: int,
-        detail: str,
-    ) -> "FluidCorrectionResult":
-        """Apply an audited operator volume correction to one container."""
-        from .fluid_state import correct_fluid_container
-
-        return correct_fluid_container(
-            self._conn,
-            fluid_state_id,
-            target,
-            new_volume_ul,
-            expected_version=expected_version,
-            detail=detail,
         )
 
     def begin_fluid_transfer(

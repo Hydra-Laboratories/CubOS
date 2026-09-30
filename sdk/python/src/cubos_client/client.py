@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import time
 from typing import Any
-from urllib.parse import quote
 
 import requests
 
@@ -337,39 +336,6 @@ class StationClient:
             self.session,
             "POST",
             f"{self.base_url}/api/v1/fluid-states/{fluid_state_id}/reconciliation/resolve",
-            payload=payload,
-            timeout=timeout,
-            headers=self.headers,
-        )
-
-    def correct_container(
-        self,
-        fluid_state_id: int,
-        labware_key: str,
-        *,
-        location_id: str = "",
-        new_volume_ul: float,
-        version: int,
-        operator: str,
-        reason: str,
-        timeout: float = 15.0,
-    ) -> dict[str, Any]:
-        """Apply an audited operator volume correction to one container.
-
-        Composition is not part of the request: the backend rescales it
-        proportionally to the corrected volume."""
-        query = f"?location_id={quote(location_id)}" if location_id else ""
-        payload: dict[str, Any] = {
-            "new_volume_ul": new_volume_ul,
-            "version": version,
-            "operator": operator,
-            "reason": reason,
-        }
-        return request_json(
-            self.session,
-            "PATCH",
-            f"{self.base_url}/api/v1/fluid-states/{fluid_state_id}/containers/"
-            f"{quote(labware_key)}{query}",
             payload=payload,
             timeout=timeout,
             headers=self.headers,

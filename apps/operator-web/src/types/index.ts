@@ -621,23 +621,6 @@ export interface ResolveReconciliationResponse {
   detail: string | null;
 }
 
-export interface CorrectContainerRequest {
-  new_volume_ul: number;
-  version: number;
-  operator: string;
-  reason: string;
-}
-
-export interface CorrectContainerResponse {
-  labware_key: string;
-  location_id: string;
-  previous_volume_ul: number;
-  current_volume_ul: number;
-  composition: Record<string, number>;
-  version: number;
-  detail: string;
-}
-
 export interface CreateFluidStateRequest {
   deck_file: string;
   label?: string | null;

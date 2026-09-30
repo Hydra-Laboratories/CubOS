@@ -48,12 +48,12 @@ shows the resulting record.
    pipette, and each tip-rack slot's status: **available**, **consumed**,
    or uncertain.
 
-Further down, **Caps** lists cap state for capper-managed vials, and the
-footer reports any pending operations — steps that were interrupted
-mid-way. When an interrupted operation leaves the physical state uncertain,
-a **Resolution** form appears so an operator can record what they observed
-and reconcile the record. See
-[Fluid State Tracking](../fluid-state.md#interrupted-operations).
+Further down, **Caps** lists cap state for capper-managed vials. The State
+view is read-only: use **Start new state** to return to the Protocol tab with
+a fresh state selected, or **Resume state** to continue the selected saved
+state. A state with pending or uncertain operations cannot be resumed; the
+view explains this and keeps **Resume state** disabled. Start a new state
+instead.
 
 ## Visualize the Deck
 

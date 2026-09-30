@@ -28,8 +28,6 @@ from cubos_api.models.state import (
     CapContainerView,
     CapStateResponse,
     ContainerView,
-    CorrectContainerRequest,
-    CorrectContainerResponse,
     CreateFluidStateRequest,
     FluidStateDetailResponse,
     FluidStateSummaryResponse,
@@ -381,34 +379,5 @@ def resolve_reconciliation(
             status=resolved["status"],
             detail=resolved["detail"],
         )
-    finally:
-        store.close()
-
-
-@router.patch(
-    "/{fluid_state_id}/containers/{labware_key}",
-    response_model=CorrectContainerResponse,
-)
-def correct_container(
-    fluid_state_id: int,
-    labware_key: str,
-    body: CorrectContainerRequest,
-    location_id: str = "",
-) -> CorrectContainerResponse:
-    detail = f"[{body.operator.strip()}] {body.reason.strip()}"
-    target = f"{labware_key}.{location_id}" if location_id else labware_key
-    store = _open_store()
-    try:
-        try:
-            result = store.correct_fluid_container(
-                fluid_state_id,
-                target,
-                body.new_volume_ul,
-                expected_version=body.version,
-                detail=detail,
-            )
-        except _STATE_EXCEPTIONS as exc:
-            raise map_state_exception(exc) from exc
-        return CorrectContainerResponse(**result)
     finally:
         store.close()

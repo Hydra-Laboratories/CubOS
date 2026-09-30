@@ -328,18 +328,6 @@ export const fluidStateApi = {
       `/fluid-states/${fluidStateId}/reconciliation/resolve`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  correctContainer: (
-    fluidStateId: number,
-    labwareKey: string,
-    locationId: string,
-    body: import("../types").CorrectContainerRequest,
-  ) => {
-    const query = locationId ? `?location_id=${encodeURIComponent(locationId)}` : "";
-    return request<import("../types").CorrectContainerResponse>(
-      `/fluid-states/${fluidStateId}/containers/${encodeURIComponent(labwareKey)}${query}`,
-      { method: "PATCH", body: JSON.stringify(body) },
-    );
-  },
 };
 
 // Settings
