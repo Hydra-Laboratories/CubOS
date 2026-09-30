@@ -19,6 +19,7 @@ from cubos.gantry.session import (
     InterruptFeedHoldTimeoutError,
     MovementOutOfBoundsError,
 )
+from cubos.gantry.errors import MillConnectionError
 
 
 GANTRY_YAML = """\
@@ -352,6 +353,47 @@ def test_position_uses_controller_observed_cache_while_operation_lock_is_held(tm
 
     assert (snapshot.x, snapshot.y, snapshot.z) == (42.5, 18.0, 7.25)
     assert snapshot.status == "Run"
+
+
+def test_position_falls_back_when_controller_cache_read_fails(tmp_path):
+    class CacheFailingGantry(FakeGantry):
+        def get_cached_position_info(self):
+            raise RuntimeError("cache unavailable")
+
+    session = GantrySession(gantry_factory=CacheFailingGantry, sleep=lambda _seconds: None)
+    session.connect(_write_gantry(tmp_path), filename="gantry.yaml")
+    fake = CacheFailingGantry.instances[-1]
+    fake.status = "Run"
+    session.operation_lock.acquire()
+    try:
+        snapshot = session.position()
+    finally:
+        session.operation_lock.release()
+
+    assert snapshot.x == 10.0
+    assert snapshot.status == "Run"
+
+
+def test_position_propagates_connection_error_from_controller_cache(tmp_path):
+    error = MillConnectionError("serial port disappeared")
+
+    class CacheDisconnectingGantry(FakeGantry):
+        def get_cached_position_info(self):
+            raise error
+
+    session = GantrySession(
+        gantry_factory=CacheDisconnectingGantry,
+        sleep=lambda _seconds: None,
+    )
+    session.connect(_write_gantry(tmp_path), filename="gantry.yaml")
+    session.operation_lock.acquire()
+    try:
+        with pytest.raises(MillConnectionError) as exc_info:
+            session.position()
+    finally:
+        session.operation_lock.release()
+
+    assert exc_info.value is error
 
 
 def test_position_uses_alarm_status_when_read_raises_alarm(tmp_path):

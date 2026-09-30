@@ -15,6 +15,7 @@ from typing import Any, Callable, Optional
 import yaml
 
 from cubos.data import DataStore, create_campaign_for_protocol_run
+from cubos.gantry.errors import MillConnectionError
 from cubos.gantry.gantry import Gantry
 from cubos.gantry.grbl_settings import normalize_expected_grbl_settings
 from cubos.gantry.limit_recovery import (
@@ -265,6 +266,8 @@ class GantrySession:
             if cached_reader is not None:
                 try:
                     cached = cached_reader()
+                except MillConnectionError:
+                    raise
                 except Exception:
                     cached = None
                 if cached is not None:

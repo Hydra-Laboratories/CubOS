@@ -316,6 +316,49 @@ class TestGantry(unittest.TestCase):
             gantry.get_position_info()
 
     @patch("cubos.gantry.gantry.Mill")
+    def test_get_cached_position_info_returns_observed_position_without_serial_io(
+        self, mock_mill_cls
+    ):
+        mock_mill = mock_mill_cls.return_value
+        mock_mill.cached_coordinates.return_value = Coordinates(12.5, 4.0, 8.25)
+        mock_mill.last_status = "<Run|WPos:12.5,4.0,8.25|FS:0,0>"
+        gantry = Gantry(config=self.config)
+
+        position = gantry.get_cached_position_info()
+
+        self.assertEqual(
+            position,
+            {
+                "coords": {"x": 12.5, "y": 4.0, "z": 8.25},
+                "work_pos": {"x": 12.5, "y": 4.0, "z": 8.25},
+                "status": "Run",
+            },
+        )
+        mock_mill.current_coordinates.assert_not_called()
+
+    @patch("cubos.gantry.gantry.Mill")
+    def test_get_cached_position_info_returns_none_before_any_status_frame(
+        self, mock_mill_cls
+    ):
+        mock_mill_cls.return_value.cached_coordinates.return_value = None
+        gantry = Gantry(config=self.config)
+
+        self.assertIsNone(gantry.get_cached_position_info())
+
+    def test_get_cached_position_info_returns_offline_coordinates(self):
+        gantry = Gantry(config=self.config, offline=True)
+        gantry.move_to(1.0, 2.0, 3.0)
+
+        self.assertEqual(
+            gantry.get_cached_position_info(),
+            {
+                "coords": {"x": 1.0, "y": 2.0, "z": 3.0},
+                "work_pos": {"x": 1.0, "y": 2.0, "z": 3.0},
+                "status": "Idle",
+            },
+        )
+
+    @patch("cubos.gantry.gantry.Mill")
     def test_extract_status_returns_idle_from_grbl_string(self, mock_mill_cls):
         mock_mill = mock_mill_cls.return_value
         mock_mill.last_status = "<Idle|WPos:0,0,0|FS:0,0>"
