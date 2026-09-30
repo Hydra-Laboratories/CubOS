@@ -20,6 +20,7 @@ from cubos_api.routers import (
     gantry,
     instruments,
     protocol,
+    presentation,
     raw,
     runs,
     settings,
@@ -171,6 +172,7 @@ def create_app() -> FastAPI:
     app.include_router(system.router)
     app.include_router(runs.router)
     app.include_router(campaigns.router)
+    app.include_router(presentation.router)
     app.include_router(fluid_states.router)
 
     if FRONTEND_DIST.is_dir():
