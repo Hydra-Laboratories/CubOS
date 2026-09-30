@@ -51,6 +51,8 @@ describe("DemoPresentation", () => {
     expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/v1/campaigns/demo-7/presentation/export.zip");
     const best = screen.getByRole("img", { name: "Best so far A4" });
     expect(best.querySelector("image")).toHaveAttribute("href", "/api/v1/campaigns/demo-7/presentation/assets/raw-2");
+    expect(screen.getByRole("img", { name: "Best color difference over visible attempts" }).querySelector(".demo-trace-line")?.getAttribute("d"))
+      .toMatch(/^M0\.00,14\.00 L100\.00,/);
   });
 
   it("scrubs without exposing later attempts", async () => {

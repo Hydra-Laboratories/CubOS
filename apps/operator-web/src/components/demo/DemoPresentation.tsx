@@ -136,7 +136,7 @@ function BestTrace({ attempts }: { attempts: DemoAttempt[] }) {
   const max = Math.max(...points.map((point) => point.value), 1);
   const path = points.map((point, index) => {
     const x = (point.index / Math.max(attempts.length - 1, 1)) * 100;
-    const y = 92 - (1 - point.value / max) * 78;
+    const y = 14 + (1 - point.value / max) * 78;
     return `${index ? "L" : "M"}${x.toFixed(2)},${y.toFixed(2)}`;
   }).join(" ");
   return (
@@ -298,10 +298,10 @@ export default function DemoPresentation() {
                   ));
                 }} /> : latestRecordedAttempt ? (
                 <div className="demo-recorded-well">
-                  <WellImage campaignId={presentation.data.campaign_id} rawAssetId={latestRecordedAttempt.raw_image_asset_id}
-                    fallbackAssetId={latestRecordedAttempt.image_asset_id} measurement={latestRecordedAttempt.measurement}
-                    alt={`Recorded well camera ${latestRecordedAttempt.well ?? ""}`} />
-                  <span>Recorded well camera · {latestRecordedAttempt.well ?? "measured sample"}</span>
+                  <AssetImage campaignId={presentation.data.campaign_id}
+                    assetId={latestRecordedAttempt.raw_image_asset_id ?? latestRecordedAttempt.image_asset_id}
+                    alt={`Recorded plate camera ${latestRecordedAttempt.well ?? ""}`} />
+                  <span>Recorded plate camera · {latestRecordedAttempt.well ?? "measured sample"}</span>
                 </div>
               ) : (
                 <div className="demo-camera-placeholder">
