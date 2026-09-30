@@ -299,6 +299,20 @@ def test_browser_asset_rejects_float_tiff_instead_of_coercing_pixels(tmp_path, m
         service.browser_asset("campaign-1", asset_id)
 
 
+def test_asset_route_returns_native_browser_image_file(tmp_path, monkeypatch):
+    from fastapi.responses import FileResponse
+    from cubos_api.routers import presentation as routes
+
+    image = tmp_path / "well.png"
+    image.write_bytes(b"png")
+    service = SimpleNamespace(browser_asset=lambda campaign_id, asset_id: (image, "image/png"))
+    monkeypatch.setattr(routes, "_service", lambda: service)
+    response = routes.get_asset("campaign-1", "a" * 32)
+    assert isinstance(response, FileResponse)
+    assert Path(response.path) == image
+    assert response.media_type == "image/png"
+
+
 def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
     record = campaign(tmp_path, [])
     record.spec.target_mode = "camera"
