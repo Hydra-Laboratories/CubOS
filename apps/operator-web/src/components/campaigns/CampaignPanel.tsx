@@ -797,6 +797,19 @@ export default function CampaignPanel(props: CampaignPanelProps) {
     setTargetRgbError(null);
   };
   const invalidateTargetEvidence = () => targetMode === "rgb" ? invalidateRgbTarget() : invalidateCameraTarget();
+  const adoptCurrentSetup = () => {
+    if (!gantryFile || !deckFile) {
+      setPresetError("Select a gantry and deck before adopting the current setup.");
+      return;
+    }
+    setPresetExpectedFiles(null);
+    setCampaignNeedsBuild(true);
+    setPresetNeedsFreshTarget(false);
+    setValidated(false);
+    setValidation([]);
+    setPresetError(null);
+    setPresetMessage(`Using current gantry ${gantryFile} and deck ${deckFile}. CubOS will verify the accepted target against this setup when you build.`);
+  };
   const localErrors = () => {
     const issues: string[] = [];
     if (!spec.name.trim()) issues.push("Campaign name is required.");
@@ -1334,7 +1347,11 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       </div>
       {presetMessage && <div className="campaign-banner campaign-success" role="status">{presetMessage}</div>}
       {presetError && <div className="campaign-banner campaign-error" role="alert">{presetError}</div>}
-      {presetConfigMismatch && presetExpectedFiles && <div className="campaign-banner campaign-error" role="alert">This setup requires gantry <code>{presetExpectedFiles.gantry}</code> and deck <code>{presetExpectedFiles.deck}</code>. Select those files before capturing a fresh target. Current selection: <code>{gantryFile ?? "none"}</code> · <code>{deckFile ?? "none"}</code>.</div>}
+      {presetConfigMismatch && presetExpectedFiles && <div className="campaign-banner campaign-error" role="alert">
+        <div>This setup requires gantry <code>{presetExpectedFiles.gantry}</code> and deck <code>{presetExpectedFiles.deck}</code>. Current selection: <code>{gantryFile ?? "none"}</code> · <code>{deckFile ?? "none"}</code>.</div>
+        <button type="button" style={theme.btn.secondary} onClick={adoptCurrentSetup} disabled={!gantryFile || !deckFile}>Use current setup</button>
+        <div className="campaign-note">This keeps the accepted target image. CubOS will verify its saved deck fingerprint before generating the campaign.</div>
+      </div>}
       <div className="campaign-card campaign-essentials">
         <div className="campaign-step-heading"><span>1</span><div><h4>Experiment</h4><p>Name the draft and state what result the campaign should optimize.</p></div></div>
         <div className="campaign-fields">
@@ -1456,7 +1473,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         <div className="campaign-actions">
           {visibleTargetLab && <span className="campaign-target-chip"><span className="campaign-swatch" style={{ backgroundColor: `lab(${visibleTargetLab[0]}% ${visibleTargetLab[1]} ${visibleTargetLab[2]})` }} />Target Lab {visibleTargetLab.map((value) => value.toFixed(2)).join(", ")}</span>}
           {targetStatus && <span className="campaign-note">{targetStatus}</span>}
-          {targetReady && <button type="button" aria-label="Build campaign from accepted target" style={theme.btn.primary} onClick={() => void buildFromAcceptedTarget()} disabled={targetBusy || batchError !== null || countConsistencyMessage !== null || sourceProtocolMismatch || !sourceProtocolFile || !protocolFile || (!spec.mock_mode && spec.fluid_state_id === null)}>Build campaign</button>}
+          {targetReady && <button type="button" aria-label="Build campaign from accepted target" style={theme.btn.primary} onClick={() => void buildFromAcceptedTarget()} disabled={targetBusy || presetConfigMismatch || batchError !== null || countConsistencyMessage !== null || sourceProtocolMismatch || !sourceProtocolFile || !protocolFile || (!spec.mock_mode && spec.fluid_state_id === null)}>Build campaign</button>}
         </div>
         {(targetRun || targetError) && (
           <div className="campaign-target-run" role="status">

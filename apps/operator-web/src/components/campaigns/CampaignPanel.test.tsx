@@ -335,6 +335,52 @@ it("lets an accepted camera target be changed or retaken without keeping stale b
   expect(screen.getByRole("button", { name: "Capture plate.C6 target for review" })).toBeEnabled();
 });
 
+it("adopts the currently selected setup without clearing accepted target evidence", async () => {
+  localStorage.setItem("cubos.active-learning.target-review", JSON.stringify({
+    runId: "accepted-c6-run",
+    measurement: {
+      measurement_status: "accepted", lab: [31, 8, -5], analysis_revision: 1,
+      processing_profile: { id: "profile-c6", calibration_status: "uncalibrated" },
+    },
+    selectedCenter: { x: 0.5, y: 0.5 }, targetWell: "plate.C6", cameraInstrument: "camera",
+    roiFraction: 0.5, captureImageHeight: "", selectionNeedsAnalysis: false,
+  }));
+  localStorage.setItem("cubos.active-learning.preset-workspace", JSON.stringify({
+    needsFreshTarget: false,
+    expectedFiles: { gantry: "picus120.yaml", deck: "9-23-26-deck.yaml" },
+    targetWell: "plate.C6", sourceProtocolFile: "p.yaml", batchSize: 6,
+    candidateText: "plate.D3, plate.D4, plate.D5, plate.D6, plate.D7, plate.D8",
+    targetMode: "camera",
+  }));
+  let setupBody: Record<string, unknown> | null = null;
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = String(input);
+    if (path.endsWith("/color-setup")) {
+      setupBody = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({
+        ...record().spec, gantry_file: "current-gantry.yaml", deck_file: "cub_deck.yaml",
+        protocol_file: "generated.yaml", source_protocol_file: "p.yaml", batch_size: 6,
+      }), { status: 200 });
+    }
+    return new Response("[]", { status: 200 });
+  });
+
+  render(<CampaignPanel gantryFile="current-gantry.yaml" deckFile="cub_deck.yaml" protocolFile="p.yaml" />);
+  expect(screen.getByRole("button", { name: "Use current setup" }).closest('[role="alert"]')).toHaveTextContent("9-23-26-deck.yaml");
+  expect(screen.getByRole("button", { name: "Build campaign from accepted target" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Use current setup" }));
+  expect(screen.queryByRole("button", { name: "Use current setup" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Change target well" })).toBeInTheDocument();
+  const build = screen.getByRole("button", { name: "Build campaign from accepted target" });
+  expect(build).toBeEnabled();
+  fireEvent.click(build);
+  await waitFor(() => expect(setupBody).toMatchObject({
+    gantry_file: "current-gantry.yaml", deck_file: "cub_deck.yaml",
+    target_well: "plate.C6", target_run_id: "accepted-c6-run", target_analysis_revision: 1,
+    reference_processing_profile_id: "profile-c6",
+  }));
+});
+
 it("keeps a failed target preflight visible beside the capture action", async () => {
   const selectedRun = vi.fn();
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
