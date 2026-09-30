@@ -1,6 +1,7 @@
 import React, { useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CampaignPanel from "./components/campaigns/CampaignPanel";
+import DemoPresentation from "./components/demo/DemoPresentation";
 import { campaignApi } from "./components/campaigns/api";
 import AppLayout from "./components/layout/AppLayout";
 import DeckVisualization from "./components/deck/DeckVisualization";
@@ -103,7 +104,7 @@ const WORKING_DECK_FILENAME = "cub_deck.yaml";
 
 type SavedMark = { filename: string; at: Date } | null;
 
-export default function App() {
+function OperatorApp() {
   const qc = useQueryClient();
   const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
@@ -752,6 +753,12 @@ export default function App() {
             {view}
           </button>
         ))}
+        <a
+          href="?view=demo"
+          style={{ ...viewToggleButtonStyle, color: theme.color.textMuted, textDecoration: "none" }}
+        >
+          Demo
+        </a>
       </div>
       <div style={{ flex: "1 1 auto" }} />
       {protocolRunActive && (
@@ -1178,6 +1185,11 @@ export default function App() {
       {confirmDialog}
     </>
   );
+}
+
+export default function App() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("view") === "demo" ? <DemoPresentation /> : <OperatorApp />;
 }
 
 function ConfigNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
