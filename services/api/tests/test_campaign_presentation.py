@@ -279,6 +279,26 @@ def test_browser_asset_rejects_unsupported_format(tmp_path, monkeypatch):
         service.browser_asset("campaign-1", asset_id)
 
 
+def test_browser_asset_rejects_float_tiff_instead_of_coercing_pixels(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+    import cubos_api.services.campaign_presentation as module
+
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    source = image_root / "float-well.tiff"
+    pixels = np.array([[0.25, 0.75], [1.5, 2.0]], dtype=np.float32)
+    assert cv2.imwrite(str(source), pixels)
+    monkeypatch.setattr(module, "default_images_dir", lambda: image_root)
+    record = campaign(tmp_path, [trial(0, 2.0, measurement={"image_path": str(source)})])
+    service = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    )
+    asset_id = service.project("campaign-1").attempts[0]["raw_image_asset_id"]
+    with pytest.raises(module.AssetPreviewError, match="losslessly"):
+        service.browser_asset("campaign-1", asset_id)
+
+
 def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
     record = campaign(tmp_path, [])
     record.spec.target_mode = "camera"

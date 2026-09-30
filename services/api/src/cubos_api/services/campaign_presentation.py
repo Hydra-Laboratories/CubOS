@@ -273,10 +273,27 @@ class CampaignPresentationService:
         height, width = frame.shape[:2]
         if width <= 0 or height <= 0 or width * height > MAX_BROWSER_PIXELS:
             raise AssetPreviewError("Presentation image dimensions exceed the preview limit")
+        channels = 1 if frame.ndim == 2 else frame.shape[2]
+        if frame.dtype not in {np.dtype("uint8"), np.dtype("uint16")} or channels not in {1, 3, 4}:
+            raise AssetPreviewError(
+                f"TIFF dtype/channels cannot be represented losslessly as PNG: "
+                f"{frame.dtype}/{channels}"
+            )
         encoded, payload = cv2.imencode(".png", frame)
         if not encoded:
             raise AssetPreviewError("Presentation TIFF could not be encoded as PNG")
-        return payload.tobytes(), "image/png"
+        rendered = payload.tobytes()
+        verified = cv2.imdecode(
+            np.frombuffer(rendered, dtype=np.uint8), cv2.IMREAD_UNCHANGED,
+        )
+        if (
+            verified is None
+            or verified.shape != frame.shape
+            or verified.dtype != frame.dtype
+            or not np.array_equal(verified, frame)
+        ):
+            raise AssetPreviewError("TIFF cannot be represented losslessly as PNG")
+        return rendered, "image/png"
 
     def project(self, campaign_id: str) -> PresentationResponse:
         record = self.campaigns.get(campaign_id)
