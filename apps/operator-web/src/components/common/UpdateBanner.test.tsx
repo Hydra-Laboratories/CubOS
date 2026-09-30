@@ -20,6 +20,8 @@ const update = {
   checked_at: 1,
   summary: ["2222222 update"],
   error: null,
+  current_tag: null,
+  latest_tag: null,
 };
 
 describe("UpdateBanner", () => {
@@ -50,6 +52,20 @@ describe("UpdateBanner", () => {
     render(<UpdateBanner requestConfirm={vi.fn()} />);
 
     expect(await screen.findByText(/1111111 → 2222222, 2 commits/)).toBeInTheDocument();
+  });
+
+  it("prefers release tag names over SHAs when in tag mode", async () => {
+    vi.mocked(systemApi.getUpdateStatus).mockResolvedValue({
+      ...update,
+      current_tag: "v2026.08.03",
+      latest_tag: "v2026.08.10",
+    });
+
+    render(<UpdateBanner requestConfirm={vi.fn()} />);
+
+    expect(
+      await screen.findByText(/v2026\.08\.03 → v2026\.08\.10, 2 commits/),
+    ).toBeInTheDocument();
   });
 
   it("applies the update after confirmation", async () => {

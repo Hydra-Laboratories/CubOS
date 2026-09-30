@@ -62,6 +62,16 @@ export interface VialGridConfig {
   [key: string]: unknown;
 }
 
+// Mirrors TipRackYamlEntry: tip positions derive from a two-point XY
+// calibration + pitch offsets; every tip's Z comes from pickup_z, so
+// calibration points carry no meaningful z.
+export interface TipRackCalibration {
+  a1: Coordinate2D | Coordinate3D | null;
+  a2: Coordinate2D | Coordinate3D;
+}
+
+// Core fields are optional because a raw-YAML entry may use load_name and
+// provide only calibration + pickup_z; the definition supplies the rest.
 export interface TipRackConfig {
   type: "tip_rack";
   name: string;
@@ -69,16 +79,17 @@ export interface TipRackConfig {
   load_name?: string;
   rows?: number;
   columns?: number;
-  calibration?: CalibrationPoints;
   pickup_z?: number;
   drop_z?: number | null;
   tip_length?: number;
+  calibration?: TipRackCalibration;
   x_offset?: number;
   y_offset?: number;
-  z_pickup?: number;
-  z_drop?: number;
-  tips?: Record<string, WellPosition>;
   tip_present?: Record<string, boolean>;
+  location?: Coordinate3D | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
   [key: string]: unknown;
 }
 
@@ -136,16 +147,23 @@ export interface TipDisposalConfig {
   name: string;
   model_name?: string;
   location?: Coordinate3D;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
   [key: string]: unknown;
 }
 
 export type UnsupportedDeckConfig =
-  | TipRackConfig
   | WellPlateHolderConfig
-  | VialHolderConfig
-  | TipDisposalConfig;
+  | VialHolderConfig;
 
-export type LabwareConfig = WellPlateConfig | VialConfig | VialGridConfig | UnsupportedDeckConfig;
+export type LabwareConfig =
+  | WellPlateConfig
+  | VialConfig
+  | VialGridConfig
+  | TipRackConfig
+  | TipDisposalConfig
+  | UnsupportedDeckConfig;
 
 export interface WellPosition {
   x: number;

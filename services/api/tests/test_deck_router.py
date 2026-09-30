@@ -243,6 +243,53 @@ def test_preview_wells_uses_public_derive_wells_preview(monkeypatch):
     assert calls[0][1] == 30.0
 
 
+def _preview_tip_rack_body() -> dict:
+    return {
+        "type": "tip_rack",
+        "name": "Preview Rack",
+        "rows": 2,
+        "columns": 2,
+        "pickup_z": 43.0,
+        "tip_length": 59.3,
+        "calibration": {
+            "a1": {"x": 168.0, "y": 58.0},
+            "a2": {"x": 177.0, "y": 58.0},
+        },
+        "x_offset": 9.0,
+        "y_offset": 9.0,
+    }
+
+
+def test_preview_wells_derives_tip_rack_positions_at_pickup_z():
+    response = api_request(
+        create_app(),
+        "POST",
+        "/api/v1/deck/preview-wells",
+        json=_preview_tip_rack_body(),
+    )
+
+    assert response.status_code == 200
+    tips = response.json()
+    assert tips["A1"] == {"x": 168.0, "y": 58.0, "z": 43.0}
+    assert tips["B2"] == {"x": 177.0, "y": 49.0, "z": 43.0}
+    assert len(tips) == 4
+
+
+def test_preview_wells_rejects_invalid_tip_rack():
+    body = _preview_tip_rack_body()
+    del body["pickup_z"]
+
+    response = api_request(
+        create_app(),
+        "POST",
+        "/api/v1/deck/preview-wells",
+        json=body,
+    )
+
+    assert response.status_code == 400
+    assert "pickup_z" in response.json()["detail"]
+
+
 def test_preview_wells_requires_a1_z():
     body = _preview_well_plate_body()
     del body["calibration"]["a1"]["z"]

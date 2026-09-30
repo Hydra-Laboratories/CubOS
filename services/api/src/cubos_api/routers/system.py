@@ -61,6 +61,8 @@ class UpdateStatusResponse(BaseModel):
     checked_at: float
     summary: List[str]
     error: str | None
+    current_tag: str | None = None
+    latest_tag: str | None = None
 
 
 class ApplyUpdateRequest(BaseModel):

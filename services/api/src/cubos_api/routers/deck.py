@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 from cubos.deck import LABWARE_YAML_ENTRY_MODELS, derive_wells_preview, load_deck_from_yaml, resolve_load_names
 from cubos.deck.labware.well_plate import WellPlate
 from cubos.deck.errors import DeckLoaderError
-from cubos.deck.yaml_schema import WellPlateYamlEntry
+from cubos.deck.yaml_schema import TipRackYamlEntry, WellPlateYamlEntry
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
@@ -102,13 +102,18 @@ def get_deck(filename: str) -> DeckResponse:
 
 @router.post("/preview-wells")
 def preview_wells(body: dict) -> Dict[str, WellPosition]:
-    """Compute well positions from a well plate config using CubOS's
+    """Compute well/tip positions from a calibrated grid config using CubOS's
     calibration logic, without requiring the config to be saved first."""
     try:
-        entry = WellPlateYamlEntry.model_validate(body)
-        resolved_z = entry.a1_point.z
-        if resolved_z is None:
-            raise ValueError("Calibration A1 must include z for preview.")
+        if isinstance(body, dict) and body.get("type") == "tip_rack":
+            tip_rack = TipRackYamlEntry.model_validate(body)
+            entry, resolved_z = tip_rack, tip_rack.pickup_z
+        else:
+            plate = WellPlateYamlEntry.model_validate(body)
+            resolved_z = plate.a1_point.z
+            if resolved_z is None:
+                raise ValueError("Calibration A1 must include z for preview.")
+            entry = plate
         wells = derive_wells_preview(entry, resolved_z=resolved_z)
         return {
             wid: WellPosition(x=round(c.x, 3), y=round(c.y, 3), z=round(c.z, 3))

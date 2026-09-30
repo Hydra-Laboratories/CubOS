@@ -12,6 +12,8 @@ export type UpdateStatus = {
   checked_at: number;
   summary: string[];
   error: string | null;
+  current_tag: string | null;
+  latest_tag: string | null;
 };
 
 export class ApiError extends Error {
@@ -72,7 +74,7 @@ export const deckApi = {
     }),
   delete: (filename: string) =>
     request<{ status: string; filename: string }>(`/deck/${filename}`, { method: "DELETE" }),
-  previewWells: (config: import("../types").WellPlateConfig) =>
+  previewWells: (config: import("../types").WellPlateConfig | import("../types").TipRackConfig) =>
     request<Record<string, import("../types").WellPosition>>("/deck/preview-wells", {
       method: "POST",
       body: JSON.stringify(config),
