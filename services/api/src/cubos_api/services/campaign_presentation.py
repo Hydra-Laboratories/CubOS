@@ -18,7 +18,7 @@ from cubos_api.models.presentation import DemoMarker, DemoMarkerRequest, Present
 from cubos_api.services.campaign_manager import CampaignManager
 from cubos_api.services.run_manager import RunManager
 
-SCHEMA_VERSION = "cubos.campaign-presentation.v1"
+SCHEMA_VERSION = "1"
 EXPORT_SCHEMA_VERSION = "cubos.campaign-presentation-export.v1"
 MAX_EXPORT_BYTES = 128 * 1024 * 1024
 MAX_ASSETS = 256
@@ -200,14 +200,29 @@ class CampaignPresentationService:
             or (first_measurement.get("reference_processing_profile_id") if first_measurement else None)
         )
         target = {
+            "source": (
+                "selected_srgb" if record.spec.target_mode == "rgb"
+                else "accepted_camera_measurement"
+            ),
             "mode": record.spec.target_mode,
             "well": getattr(record.spec, "target_well", None),
             "run_id": getattr(record.spec, "target_run_id", None),
             "analysis_revision": getattr(record.spec, "target_analysis_revision", None),
-            "rgb": target_rgb,
-            "lab": target_lab,
+            "measurement": {
+                "rgb": target_rgb,
+                "lab": target_lab,
+                "delta_e": 0.0,
+                "quality": None,
+                "profile": (
+                    {"id": profile_id} if isinstance(profile_id, str) else profile_id
+                ),
+            },
             "processing_profile_id": profile_id,
             "accepted": bool(target_lab),
+            "image_asset_id": (
+                target_assets.get("target_annotated")
+                or target_assets.get("target_raw")
+            ),
             "assets": target_assets,
         }
         if record.spec.target_mode == "camera" and "target_raw" not in target_assets:
@@ -236,11 +251,13 @@ class CampaignPresentationService:
                 "measurement": ({
                     "rgb": measurement.get("rgb"),
                     "lab": measurement.get("lab"),
+                    "delta_e": trial.objective,
                     "reference_rgb": measurement.get("reference_rgb"),
                     "reference_lab": measurement.get("reference_lab"),
                     "quality": _measurement_quality(measurement),
                     "profile": _profile(measurement),
                 } if measurement else None),
+                "image_asset_id": assets.get("annotated") or assets.get("raw"),
                 "assets": assets,
                 "started_at": run.started_at if run else None,
                 "completed_at": run.finished_at if run else None,

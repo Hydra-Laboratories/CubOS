@@ -4,7 +4,11 @@ from pathlib import Path
 import pytest
 import yaml
 
-from cubos_api.models.campaigns import ColorCampaignSetup
+from cubos_api.models.campaigns import (
+    CampaignPresetDocument,
+    ColorCampaignPresetDraft,
+    ColorCampaignSetup,
+)
 from cubos_api.services.campaign_templates import compile_trial, extract_result_objective
 from cubos_api.services.color_campaign import (
     _four_component_initial_points,
@@ -104,6 +108,48 @@ def test_builder_writes_complete_protocol_and_campaign(tmp_path: Path):
     }
     assert spec.sequences[0].values == [f"plate.A{index}" for index in range(2, 8)]
     assert spec.sequences[1].values[:2] == ["tips.A1", "tips.A4"]
+
+
+def test_builder_persists_validated_camera_target_provenance(tmp_path: Path):
+    spec = build_color_campaign(
+        setup(
+            target_run_id="color-target-frozen",
+            target_analysis_revision=3,
+            target_well="plate.C7",
+        ),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+    )
+    restored = type(spec).model_validate_json(spec.model_dump_json())
+    assert restored.target_run_id == "color-target-frozen"
+    assert restored.target_analysis_revision == 3
+    assert restored.target_well == "plate.C7"
+    assert restored.target_lab == (42.0, 12.0, 18.0)
+    assert restored.reference_processing_profile_id == "profile-v1"
+
+    preset = CampaignPresetDocument(
+        name="physical target",
+        spec=restored.model_copy(update={"fluid_state_id": None}),
+        color_setup=ColorCampaignPresetDraft(
+            source_protocol_file="source.yaml",
+            target_mode="camera",
+            target_well="plate.C7",
+            candidate_wells=[f"plate.A{index}" for index in range(2, 8)],
+        ),
+    )
+    preset_roundtrip = CampaignPresetDocument.model_validate_json(
+        preset.model_dump_json()
+    )
+    assert preset_roundtrip.spec.target_run_id == "color-target-frozen"
+    assert preset_roundtrip.spec.target_analysis_revision == 3
+
+
+def test_campaign_spec_rejects_incomplete_camera_target_link(tmp_path: Path):
+    spec = build_color_campaign(setup(), tmp_path, source_protocol_yaml=SOURCE_PROTOCOL)
+    document = spec.model_dump()
+    document["target_run_id"] = "target-without-revision"
+    with pytest.raises(ValueError, match="both run and revision"):
+        type(spec).model_validate(document)
 
 
 def test_builder_allocates_each_trial_from_durable_available_tip_order(tmp_path: Path):

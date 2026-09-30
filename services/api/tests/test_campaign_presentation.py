@@ -143,6 +143,49 @@ def test_asset_catalog_rejects_outside_paths_and_symlink_escape(tmp_path, monkey
     assert service.resolve_asset("campaign-1", "../secret") is None
 
 
+def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
+    record = campaign(tmp_path, [])
+    record.spec.target_mode = "camera"
+    record.spec.target_rgb = None
+    record.spec.target_run_id = "selected-target"
+    record.spec.target_analysis_revision = 2
+    record.spec.target_well = "plate.C7"
+    record.spec.target_lab = (42.0, 12.0, 18.0)
+    record.spec.reference_processing_profile_id = "profile-v1"
+    records = {}
+    for run_id in ("selected-target", "other-target"):
+        run_dir = tmp_path / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "color-target-source.tiff").write_bytes(run_id.encode())
+        (run_dir / "color-target-analysis-2.png").write_bytes(b"annotated")
+        records[run_id] = SimpleNamespace(
+            metadata={"color_target_source_artifact": "color-target-source.tiff"},
+            started_at=None, finished_at=None,
+        )
+    service = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record),
+        FakeRuns(tmp_path / "runs", records=records),
+    )
+    projection = service.project("campaign-1")
+    assert set(projection.target["assets"]) == {"target_raw", "target_annotated"}
+    selected_ids = set(projection.target["assets"].values())
+    other_path = tmp_path / "runs" / "other-target" / "color-target-source.tiff"
+    unlinked_id = service._asset_id("campaign-1", "target", "raw", other_path)
+    assert unlinked_id not in selected_ids
+    assert service.resolve_asset("campaign-1", unlinked_id) is None
+
+    with zipfile.ZipFile(io.BytesIO(service.export_zip("campaign-1"))) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        roles = {item["role"] for item in manifest["assets"]}
+        assert roles == {"target_raw", "target_annotated"}
+        archived = {
+            item["role"]: archive.read(item["file"])
+            for item in manifest["assets"]
+        }
+        assert archived["target_raw"] == b"selected-target"
+        assert archived["target_annotated"] == b"annotated"
+
+
 def test_export_contains_projection_snapshots_assets_and_explicit_missing(tmp_path, monkeypatch):
     import cubos_api.services.campaign_presentation as module
 

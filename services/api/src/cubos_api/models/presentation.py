@@ -35,7 +35,7 @@ class DemoMarker(PresentationModel):
 
 
 class PresentationResponse(PresentationModel):
-    schema_version: str = "cubos.campaign-presentation.v1"
+    schema_version: str = "1"
     campaign_id: str
     status: str
     target: dict[str, Any]

@@ -82,8 +82,17 @@ class CampaignSpec(CampaignModel):
     source_protocol_file: str | None = Field(default=None, min_length=1, max_length=255)
     target_mode: Literal["camera", "rgb"] = "camera"
     target_rgb: tuple[float, float, float] | None = None
+    # Immutable target provenance for presentation/export. Optional so records
+    # written before this evidence link existed remain readable.
+    target_run_id: str | None = Field(default=None, min_length=1, max_length=160)
+    target_analysis_revision: int | None = Field(default=None, ge=0)
+    target_well: str | None = Field(default=None, min_length=1, max_length=160)
+    target_lab: tuple[float, float, float] | None = None
+    reference_processing_profile_id: str | None = Field(
+        default=None, min_length=1, max_length=128,
+    )
 
-    @field_validator("target_rgb", mode="before")
+    @field_validator("target_rgb", "target_lab", mode="before")
     @classmethod
     def accept_json_target_rgb(cls, value):
         return tuple(value) if isinstance(value, list) else value
@@ -111,6 +120,24 @@ class CampaignSpec(CampaignModel):
             raise ValueError("target_rgb values must be between 0 and 255")
         if self.target_mode == "rgb" and self.target_rgb is None:
             raise ValueError("RGB campaigns require target_rgb")
+        if self.target_mode == "rgb" and any((
+            self.target_run_id is not None,
+            self.target_analysis_revision is not None,
+            self.target_lab is not None,
+            self.reference_processing_profile_id is not None,
+        )):
+            raise ValueError("RGB campaigns cannot include camera-target provenance")
+        linked_target = (self.target_run_id, self.target_analysis_revision)
+        if self.target_mode == "camera" and any(
+            value is not None for value in linked_target
+        ) and not all(value is not None for value in linked_target):
+            raise ValueError(
+                "Camera-target provenance must include both run and revision"
+            )
+        if self.target_mode == "camera" and self.target_run_id is not None and (
+            self.target_lab is None or self.reference_processing_profile_id is None
+        ):
+            raise ValueError("Linked camera targets require Lab and processing profile")
         return self
 
 
