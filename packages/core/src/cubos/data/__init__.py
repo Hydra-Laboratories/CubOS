@@ -12,6 +12,7 @@ from .cap_state import (
 )
 from .data_reader import DataReader
 from .data_store import DATA_DB_PATH_ENV, DataStore, default_database_path
+from .download import export_campaign_data_zip
 from .exports import (
     CampaignNotFoundError,
     CampaignSummary,
@@ -20,8 +21,6 @@ from .exports import (
     DataSchemaError,
     MeasurementDataError,
     MeasurementExportNotFoundError,
-    export_campaign_asmi_zip,
-    export_campaign_measurements_zip,
     export_campaign_results_csvs,
     list_campaign_summaries,
 )
@@ -75,8 +74,7 @@ __all__ = [
     "DataSchemaError",
     "MeasurementDataError",
     "MeasurementExportNotFoundError",
-    "export_campaign_asmi_zip",
-    "export_campaign_measurements_zip",
+    "export_campaign_data_zip",
     "export_campaign_results_csvs",
     "list_campaign_summaries",
     "FLUID_STATE_API_VERSION",

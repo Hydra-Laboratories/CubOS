@@ -50,7 +50,8 @@ After schema/config changes: focused tests, then `packages/core/src/cubos/tools/
   `protocol_engine.is_measurement_result`.
 - Gantry YAML keeps `type` + `vendor`; `registry.py` resolves the concrete class, merges installed `cubos.instrument_registries` entry points, and then merges `CUBOS_INSTRUMENT_REGISTRY_PATHS` overlays.
 - `packages/core/src/cubos/protocol_engine/measurements.py`, `packages/core/src/cubos/data/data_store.py` - persisted measurements.
-- `packages/core/src/cubos/data/protocol_runs.py`, `packages/core/src/cubos/data/exports.py` - campaign creation for CubOS-owned protocol sessions and CubOS-compatible result summaries/ZIP exports.
+- `packages/core/src/cubos/data/protocol_runs.py`, `packages/core/src/cubos/data/exports.py` - campaign creation for CubOS-owned protocol sessions and CubOS-compatible result summaries/CSV exports.
+- `packages/core/src/cubos/data/download.py` - the Operator "Download Data" ZIP: raw recorded data as plain CSVs, no analysis.
 - Tests: `packages/core/tests/instruments/`, `packages/core/tests/protocol_engine/`, `packages/core/tests/data/`.
 
 ## Calibration scripts
