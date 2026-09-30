@@ -13,9 +13,14 @@ import type {
   ProtocolResponse,
   ProtocolRunResponse,
   InstrumentMeasurementMethods,
+  InstrumentMethodParams,
+  InstrumentMethodParamField,
 } from "../../types";
-import { CoordinateField, NumberField, TextField, UnsavedNotice } from "./fields";
-import ImportFromFile from "./ImportFromFile";
+import { CoordinateField, NumberField, OptionalNumberField, SaveTargetHint, SavedStatus, TextField, UnsavedNotice } from "./fields";
+import { useSaveShortcut } from "./saveHelpers";
+import ConfigFilePicker from "./ConfigFilePicker";
+import { normalizeYamlFilename } from "./field-utils";
+import RawYamlPanel from "./RawYamlPanel";
 import { useConfirm } from "../common/useConfirm";
 import {
   createCompositionRow,
@@ -32,10 +37,16 @@ interface Props {
   selectedFile: string | null;
   onSelectFile: (f: string) => void;
   onImportFile: (f: string) => void;
+  onNewFile?: () => void;
+  onDeleteFile?: (f: string) => void;
+  deleteDisabledReason?: string | null;
+  /** Last successful save on this tab, shown as a "Saved" acknowledgement. */
+  lastSaved?: { filename: string; at: Date } | null;
   commands: CommandInfo[];
   deck: DeckResponse;
   gantry: GantryResponse;
   instrumentMethods?: InstrumentMeasurementMethods;
+  instrumentMethodParams?: InstrumentMethodParams;
   steps: ProtocolStep[] | null;
   positions?: Record<string, number[]> | null;
   /** The last-saved (server-loaded) protocol, used to reset local edits
@@ -82,14 +93,17 @@ const COMMAND_COLORS: Record<string, string> = {
   pick_up_tip: theme.color.success,
   drop_tip: theme.color.success,
   scan: theme.categorical.violet,
+  cure: theme.categorical.amber,
 };
 
 type ProtocolChoices = {
   instruments: string[];
   plates: string[];
   positions: string[];
+  vials: string[];
   instrumentTypes: Record<string, string>;
   instrumentMethods: InstrumentMeasurementMethods;
+  instrumentMethodParams: InstrumentMethodParams;
 };
 
 type EditablePosition = {
@@ -103,7 +117,7 @@ type EditablePosition = {
 function defaultArgsForCommand(cmd: CommandInfo, choices: ProtocolChoices): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   for (const a of cmd.args) {
-    const contextual = defaultArgValue(a.name, choices, args);
+    const contextual = defaultArgValue(a.name, choices, args, cmd.name);
     if (contextual !== undefined) {
       args[a.name] = contextual;
     } else if (a.required) {
@@ -119,6 +133,11 @@ function defaultArgsForCommand(cmd: CommandInfo, choices: ProtocolChoices): Reco
       baseline_samples: 10,
       measure_with_return: false,
     };
+  } else {
+    const params = methodParamsForStep(args, choices);
+    if (params.length > 0) {
+      args.method_kwargs = defaultMethodKwargs(params);
+    }
   }
   return args;
 }
@@ -128,10 +147,15 @@ export default function ProtocolEditor({
   selectedFile,
   onSelectFile,
   onImportFile,
+  onNewFile,
+  onDeleteFile,
+  deleteDisabledReason,
+  lastSaved,
   commands,
   deck,
   gantry,
   instrumentMethods = {},
+  instrumentMethodParams = {},
   steps: loadedSteps,
   positions,
   baseline,
@@ -168,7 +192,7 @@ export default function ProtocolEditor({
   const [requestConfirm, confirmDialog] = useConfirm();
 
   const commandsByName = Object.fromEntries(commands.map((c) => [c.name, c]));
-  const choices = buildProtocolChoices(deck, gantry, positionRows, instrumentMethods);
+  const choices = buildProtocolChoices(deck, gantry, positionRows, instrumentMethods, instrumentMethodParams);
   const positionErrors = validatePositionRows(positionRows);
   const hasPositionErrors = positionErrors.length > 0;
 
@@ -204,11 +228,29 @@ export default function ProtocolEditor({
 
   const updateStepArg = (i: number, argName: string, value: unknown) => {
     const next = [...steps];
-    const updatedArgs = { ...next[i].args, [argName]: value };
-    if (argName === "instrument") {
+    const updatedArgs = { ...next[i].args };
+    if (value === null) {
+      // Optional field cleared by the operator: omit the argument rather
+      // than saving an empty string or a stale number.
+      delete updatedArgs[argName];
+    } else {
+      updatedArgs[argName] = value;
+    }
+    const declaresMethod = commandsByName[next[i].command]?.args.some((a) => a.name === "method") ?? false;
+    if (argName === "instrument" && declaresMethod) {
       const methods = measurementMethodsForInstrument(String(value), choices);
       if (methods.length > 0 && !methods.includes(String(updatedArgs.method ?? ""))) {
         updatedArgs.method = methods[0];
+      }
+    }
+    if (argName === "brightness" && value !== null) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) updatedArgs.brightness = parsed;
+    }
+    if (argName === "channel") {
+      const levels = LIGHTING_LEVELS[String(value)];
+      if (levels && !levels.includes(Number(updatedArgs.brightness))) {
+        updatedArgs.brightness = 0;
       }
     }
     if ((argName === "instrument" || argName === "method") && isAsmiIndentationStep(updatedArgs, choices)) {
@@ -222,7 +264,12 @@ export default function ProtocolEditor({
     }
     if ((argName === "instrument" || argName === "method") && !isAsmiIndentationStep(updatedArgs, choices)) {
       delete updatedArgs.indentation_limit_height;
-      delete updatedArgs.method_kwargs;
+      const params = methodParamsForStep(updatedArgs, choices);
+      if (params.length > 0) {
+        updatedArgs.method_kwargs = defaultMethodKwargs(params);
+      } else {
+        delete updatedArgs.method_kwargs;
+      }
     }
     next[i] = { ...next[i], args: updatedArgs };
     commit(next);
@@ -284,10 +331,21 @@ export default function ProtocolEditor({
 
   const handleValidate = () => onValidate(buildConfig());
 
+  const saveAsFilename = normalizeYamlFilename(saveAs);
+  const saveAsExists = !!saveAsFilename && configs.includes(saveAsFilename);
+
   const handleSave = async () => {
-    const filename = saveAs.trim() || selectedFile || "";
-    if (!filename || saving || hasPositionErrors) return;
-    const normalized = filename.endsWith(".yaml") ? filename : filename + ".yaml";
+    const normalized = saveAsFilename || selectedFile || "";
+    if (!normalized || saving || hasPositionErrors) return;
+    if (saveAsExists && normalized !== selectedFile) {
+      const ok = await requestConfirm({
+        title: "Overwrite file?",
+        message: `${normalized} already exists. Overwrite it?`,
+        confirmLabel: "Overwrite",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       await Promise.resolve(onSave(normalized, buildConfig()));
@@ -323,6 +381,7 @@ export default function ProtocolEditor({
   // those configs from here.
   const otherDirty = unsavedConfigs.filter((name) => name !== "Protocol");
   const canSave = hasSteps && (!!saveAs.trim() || !!selectedFile) && !saving && !hasPositionErrors;
+  useSaveShortcut(handleSave, canSave);
   // "new"/"resume" both need an explicit, complete choice before Run is
   // enabled — resume specifically needs a picked state id. "none" (the
   // default) never blocks Run, so every pre-Feature-07 flow is unaffected.
@@ -383,191 +442,223 @@ export default function ProtocolEditor({
   return (
     <div>
       <div style={protocolPickerStyle}>
-        <ImportFromFile configs={configs} onSelectFile={onImportFile} label="Import protocol config" />
+        <ConfigFilePicker
+          kind="Protocol"
+          configs={configs}
+          selectedFile={selectedFile}
+          onSelectFile={onImportFile}
+          onNew={onNewFile}
+          onDelete={onDeleteFile}
+          deleteDisabledReason={deleteDisabledReason}
+        />
       </div>
 
       {!hasSteps && (
-        <div style={emptyProtocolStyle}>
-          Load a protocol or add steps.
-        </div>
-      )}
+            <div style={emptyProtocolStyle}>
+              Load a protocol or add steps.
+            </div>
+          )}
 
-      <div style={namedPositionsStyle}>
-        <div style={namedPositionsHeaderStyle}>
-          <div>
-            <h3 style={sectionTitleStyle}>Named Positions</h3>
-            <p style={sectionSubtextStyle}>Protocol-level targets such as park_position.</p>
-          </div>
-          <button onClick={addPosition} style={addBtnStyle}>
-            Add Position
-          </button>
-        </div>
-
-        {positionRows.length === 0 ? (
-          <div style={emptyNamedPositionsStyle}>No named positions.</div>
-        ) : (
-          <div style={positionRowsStyle}>
-            {positionRows.map((position, i) => (
-              <div key={position.id} style={positionRowStyle}>
-                <label style={positionNameFieldStyle}>
-                  <span style={theme.fieldLabel}>Name</span>
-                  <input
-                    id={`pos-${i}-name`}
-                    name={`pos_${i}_name`}
-                    aria-label={`Position ${i + 1} name`}
-                    type="text"
-                    value={position.name}
-                    onChange={(event) => updatePosition(position.id, { name: event.target.value })}
-                    style={inputStyle}
-                  />
-                </label>
-                <CoordinateField
-                  id={`pos-${i}-coord`}
-                  name={`pos_${i}_coord`}
-                  label={`${position.name.trim() || `Position ${i + 1}`} coordinates`}
-                  value={{ x: position.x, y: position.y, z: position.z }}
-                  onChange={(value) => updatePosition(position.id, value)}
-                />
-                <button
-                  onClick={() => removePosition(position.id)}
-                  style={removeBtnStyle}
-                  aria-label={`Remove ${position.name.trim() || `position ${i + 1}`}`}
-                  title="Remove position"
-                >
-                  Remove
-                </button>
+          <div style={namedPositionsStyle}>
+            <div style={namedPositionsHeaderStyle}>
+              <div>
+                <h3 style={sectionTitleStyle}>Named Positions</h3>
+                <p style={sectionSubtextStyle}>Protocol-level targets such as park_position.</p>
               </div>
-            ))}
-          </div>
-        )}
-
-        {positionErrors.length > 0 && (
-          <div style={positionErrorStyle}>
-            {positionErrors.map((error) => (
-              <div key={error}>{error}</div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {steps.map((step, i) => {
-        const cmd = commandsByName[step.command];
-        const color = COMMAND_COLORS[step.command] ?? theme.color.textMuted;
-
-        return (
-          <div key={i} style={{ ...cardStyle, borderLeft: `3px solid ${color}` }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <h4 style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
-                <span style={stepBadgeStyle}>Step {i + 1}:</span>{" "}
-                <span style={{ color, fontWeight: 600 }}>{step.command}</span>
-              </h4>
-              <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => moveStep(i, -1)} disabled={i === 0} style={reorderBtnStyle} title="Move up">
-                  ↑
-                </button>
-                <button onClick={() => moveStep(i, 1)} disabled={i === steps.length - 1} style={reorderBtnStyle} title="Move down">
-                  ↓
-                </button>
-                <button onClick={() => removeStep(i)} style={removeBtnStyle}>
-                  ✕
-                </button>
-              </div>
+              <button onClick={addPosition} style={addBtnStyle}>
+                Add Position
+              </button>
             </div>
 
-            {cmd ? (
-              <div style={stepArgsGridStyle}>
-                {cmd.args.map((arg) => {
-                  if (isHiddenArgForStep(arg.name, step.args, choices)) {
-                    return null;
-                  }
-                  const val = step.args[arg.name];
-                  const contextualOptions = optionsForArg(arg.name, step.args, choices);
-                  const argOptions = contextualOptions.length > 0
-                    ? includeCurrentOption(contextualOptions, val)
-                    : [];
-                  if (argOptions.length > 0) {
-                    return (
-                      <SmartSelectField
-                        key={arg.name}
-                        id={`step-${i}-${arg.name}`}
-                        name={`step_${i}_${arg.name}`}
-                        label={argLabel(arg.name)}
-                        value={String(val ?? "")}
-                        options={argOptions}
-                        onChange={(v) => updateStepArg(i, arg.name, v)}
-                        required={arg.required}
-                      />
-                    );
-                  }
-                  if (arg.name === "method_kwargs") {
-                    return (
-                      <MethodOptionsField
-                        key={arg.name}
-                        idPrefix={`step-${i}-method`}
-                        namePrefix={`step_${i}_method`}
-                        value={val}
-                        asmiIndentation={isAsmiIndentationStep(step.args, choices)}
-                        onChange={(v) => updateStepArg(i, arg.name, v)}
-                      />
-                    );
-                  }
-                  if (isNumericType(arg.type)) {
-                    return (
-                      <NumberField
-                        key={arg.name}
-                        id={`step-${i}-${arg.name}`}
-                        name={`step_${i}_${arg.name}`}
-                        label={argLabel(arg.name)}
-                        value={Number(val ?? 0)}
-                        onChange={(v) => updateStepArg(i, arg.name, v)}
-                        required={arg.required}
-                      />
-                    );
-                  }
-                  return (
-                    <TextField
-                      key={arg.name}
-                      id={`step-${i}-${arg.name}`}
-                      name={`step_${i}_${arg.name}`}
-                      label={argLabel(arg.name)}
-                      value={String(val ?? "")}
-                      onChange={(v) => updateStepArg(i, arg.name, v)}
-                      required={arg.required}
-                    />
-                  );
-                })}
-              </div>
+            {positionRows.length === 0 ? (
+              <div style={emptyNamedPositionsStyle}>No named positions.</div>
             ) : (
-              <p style={{ color: theme.color.danger, fontSize: 12, margin: 0 }}>Unknown command: {step.command}</p>
+              <div style={positionRowsStyle}>
+                {positionRows.map((position, i) => (
+                  <div key={position.id} style={positionRowStyle}>
+                    <label style={positionNameFieldStyle}>
+                      <span style={theme.fieldLabel}>Name</span>
+                      <input
+                        id={`pos-${i}-name`}
+                        name={`pos_${i}_name`}
+                        aria-label={`Position ${i + 1} name`}
+                        type="text"
+                        value={position.name}
+                        onChange={(event) => updatePosition(position.id, { name: event.target.value })}
+                        style={inputStyle}
+                      />
+                    </label>
+                    <CoordinateField
+                      id={`pos-${i}-coord`}
+                      name={`pos_${i}_coord`}
+                      label={`${position.name.trim() || `Position ${i + 1}`} coordinates`}
+                      value={{ x: position.x, y: position.y, z: position.z }}
+                      onChange={(value) => updatePosition(position.id, value)}
+                    />
+                    <button
+                      onClick={() => removePosition(position.id)}
+                      style={removeBtnStyle}
+                      aria-label={`Remove ${position.name.trim() || `position ${i + 1}`}`}
+                      title="Remove position"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
             )}
 
-            {validationErrors &&
-              validationErrors
-                .filter((e) => stepErrorPattern(i).test(e))
-                .map((e, j) => (
-                  <p key={j} style={{ color: theme.color.danger, fontSize: 11, margin: "4px 0 0" }}>
-                    {displayStepError(e)}
-                  </p>
+            {positionErrors.length > 0 && (
+              <div style={positionErrorStyle}>
+                {positionErrors.map((error) => (
+                  <div key={error}>{error}</div>
                 ))}
+              </div>
+            )}
           </div>
-        );
-      })}
 
-      <div style={addStepPanelStyle}>
-        <label style={toolbarFieldStyle}>
-          <span style={toolbarLabelStyle}>Add step</span>
-          <select value={addCommand} onChange={(e) => setAddCommand(e.target.value)} style={selectStyle}>
-            {commands.map((c) => (
-              <option key={c.name} value={c.name}>
-                {commandLabel(c.name)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button onClick={addStep} style={addBtnStyle}>
-          Add
-        </button>
-      </div>
+          {steps.map((step, i) => {
+            const cmd = commandsByName[step.command];
+            const color = COMMAND_COLORS[step.command] ?? theme.color.textMuted;
+
+            return (
+              <div key={i} style={{ ...cardStyle, borderLeft: `3px solid ${color}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <h4 style={{ margin: 0, fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={stepBadgeStyle}>Step {i + 1}:</span>{" "}
+                    <span style={{ color, fontWeight: 600 }}>{step.command}</span>
+                  </h4>
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <button onClick={() => moveStep(i, -1)} disabled={i === 0} style={reorderBtnStyle} title="Move up">
+                      ↑
+                    </button>
+                    <button onClick={() => moveStep(i, 1)} disabled={i === steps.length - 1} style={reorderBtnStyle} title="Move down">
+                      ↓
+                    </button>
+                    <button onClick={() => removeStep(i)} style={removeBtnStyle}>
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                {cmd ? (
+                  <div style={stepArgsGridStyle}>
+                    {cmd.args.map((arg) => {
+                      if (isHiddenArgForStep(arg.name, step.args, choices)) {
+                        return null;
+                      }
+                      const val = step.args[arg.name];
+                      const contextualOptions = optionsForArg(arg.name, step.args, choices, step.command);
+                      const argOptions = contextualOptions.length > 0
+                        ? includeCurrentOption(contextualOptions, val)
+                        : [];
+                      if (argOptions.length > 0) {
+                        return (
+                          <SmartSelectField
+                            key={arg.name}
+                            id={`step-${i}-${arg.name}`}
+                            name={`step_${i}_${arg.name}`}
+                            label={argLabel(arg.name)}
+                            value={String(val ?? "")}
+                            options={argOptions}
+                            onChange={(v) => updateStepArg(i, arg.name, v)}
+                            required={arg.required}
+                          />
+                        );
+                      }
+                      if (arg.name === "method_kwargs") {
+                        if (isAsmiIndentationStep(step.args, choices)) {
+                          return (
+                            <MethodOptionsField
+                              key={arg.name}
+                              idPrefix={`step-${i}-method`}
+                              namePrefix={`step_${i}_method`}
+                              value={val}
+                              asmiIndentation
+                              onChange={(v) => updateStepArg(i, arg.name, v)}
+                            />
+                          );
+                        }
+                        return (
+                          <MethodParamsFields
+                            key={arg.name}
+                            idPrefix={`step-${i}-method`}
+                            namePrefix={`step_${i}_method`}
+                            params={methodParamsForStep(step.args, choices)}
+                            value={val}
+                            onChange={(v) => updateStepArg(i, arg.name, v)}
+                          />
+                        );
+                      }
+                      if (isNumericType(arg.type)) {
+                        if (!arg.required) {
+                          return (
+                            <OptionalNumberField
+                              key={arg.name}
+                              id={`step-${i}-${arg.name}`}
+                              name={`step_${i}_${arg.name}`}
+                              label={argLabel(arg.name)}
+                              value={typeof val === "number" ? val : null}
+                              onChange={(v) => updateStepArg(i, arg.name, v)}
+                            />
+                          );
+                        }
+                        return (
+                          <NumberField
+                            key={arg.name}
+                            id={`step-${i}-${arg.name}`}
+                            name={`step_${i}_${arg.name}`}
+                            label={argLabel(arg.name)}
+                            value={Number(val ?? 0)}
+                            onChange={(v) => updateStepArg(i, arg.name, v)}
+                            required={arg.required}
+                          />
+                        );
+                      }
+                      return (
+                        <TextField
+                          key={arg.name}
+                          id={`step-${i}-${arg.name}`}
+                          name={`step_${i}_${arg.name}`}
+                          label={argLabel(arg.name)}
+                          value={String(val ?? "")}
+                          onChange={(v) => updateStepArg(i, arg.name, v)}
+                          required={arg.required}
+                        />
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p style={{ color: theme.color.danger, fontSize: 12, margin: 0 }}>Unknown command: {step.command}</p>
+                )}
+
+                {validationErrors &&
+                  validationErrors
+                    .filter((e) => stepErrorPattern(i).test(e))
+                    .map((e, j) => (
+                      <p key={j} style={{ color: theme.color.danger, fontSize: 11, margin: "4px 0 0" }}>
+                        {displayStepError(e)}
+                      </p>
+                    ))}
+              </div>
+            );
+          })}
+
+          <div style={addStepPanelStyle}>
+            <label style={toolbarFieldStyle}>
+              <span style={toolbarLabelStyle}>Add step</span>
+              <select value={addCommand} onChange={(e) => setAddCommand(e.target.value)} style={selectStyle}>
+                {commands.map((c) => (
+                  <option key={c.name} value={c.name}>
+                    {commandLabel(c.name)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button onClick={addStep} style={addBtnStyle}>
+              Add
+            </button>
+          </div>
 
       <div style={{ marginTop: 12 }}>
         {onFluidStateChoiceChange && (
@@ -739,6 +830,55 @@ export default function ProtocolEditor({
             )}
           </div>
         )}
+        <RawYamlPanel
+          value={(() => {
+            const doc: Record<string, unknown> = {};
+            const rawPositions = rowsToPositions(positionRows);
+            if (rawPositions) doc.positions = rawPositions;
+            doc.protocol = steps.map((s) => (
+              { [s.command]: Object.keys(s.args).length ? s.args : null }
+            ));
+            return doc;
+          })()}
+          onApply={(parsed) => {
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+              return "Top level must be a mapping with a `protocol:` list.";
+            }
+            const doc = parsed as { protocol?: unknown; positions?: unknown };
+            if (!Array.isArray(doc.protocol)) {
+              return "`protocol:` must be a list of steps.";
+            }
+            const nextSteps: ProtocolStep[] = [];
+            for (const [i, item] of doc.protocol.entries()) {
+              if (typeof item === "string") {
+                nextSteps.push({ command: item, args: {} });
+                continue;
+              }
+              if (!item || typeof item !== "object" || Array.isArray(item)) {
+                return `Step ${i + 1} must be a single-command mapping.`;
+              }
+              const keys = Object.keys(item);
+              if (keys.length !== 1) {
+                return `Step ${i + 1} must have exactly one command key, got ${keys.length}.`;
+              }
+              const command = keys[0];
+              const args = (item as Record<string, unknown>)[command];
+              if (args !== null && args !== undefined && (typeof args !== "object" || Array.isArray(args))) {
+                return `Step ${i + 1} (${command}) args must be a mapping.`;
+              }
+              nextSteps.push({ command, args: { ...((args ?? {}) as Record<string, unknown>) } });
+            }
+            if (doc.positions !== undefined && doc.positions !== null
+                && (typeof doc.positions !== "object" || Array.isArray(doc.positions))) {
+              return "`positions:` must be a mapping of named points.";
+            }
+            commit(nextSteps);
+            commitPositions(positionsToRows(
+              (doc.positions ?? null) as Record<string, number[]> | null,
+            ));
+            return null;
+          }}
+        />
         {hasUnsaved && (
           <UnsavedNotice>
             <strong>Unsaved changes.</strong>{" "}
@@ -755,6 +895,7 @@ export default function ProtocolEditor({
         )}
         <div style={protocolActionBarStyle}>
           <input
+            aria-label="Save as filename"
             value={saveAs}
             onChange={(e) => setSaveAs(e.target.value)}
             placeholder={selectedFile ?? "my_protocol.yaml"}
@@ -775,6 +916,7 @@ export default function ProtocolEditor({
             {protocolDirty && (
               <button onClick={handleDiscard} style={discardBtnStyle}>Discard changes</button>
             )}
+            {lastSaved && !protocolDirty && <SavedStatus filename={lastSaved.filename} at={lastSaved.at} />}
             {isRunning && (
               <button
                 onClick={onCancelRun}
@@ -794,6 +936,7 @@ export default function ProtocolEditor({
             </button>
           </div>
         </div>
+        <SaveTargetHint saveAs={saveAsFilename} selectedFile={selectedFile} exists={saveAsExists} />
 
         {!hasSteps && (
           <p style={hintTextStyle}>Add at least one step before saving.</p>
@@ -825,7 +968,9 @@ export default function ProtocolEditor({
   );
 }
 
-function defaultArgValue(name: string, choices: ProtocolChoices, current: Record<string, unknown>): unknown {
+function defaultArgValue(name: string, choices: ProtocolChoices, current: Record<string, unknown>, command?: string): unknown {
+  if (command === "rinse" && name === "instrument") return choices.instruments.find((instrument) => choices.instrumentTypes[instrument] === "potentiostat") ?? "";
+  if (command === "rinse" && name === "vial") return choices.vials[0] ?? "";
   if (name === "instrument") return choices.instruments[0] ?? "";
   if (name === "plate") return choices.plates[0] ?? "";
   if (isPositionArg(name)) return choices.positions[0] ?? "";
@@ -833,6 +978,7 @@ function defaultArgValue(name: string, choices: ProtocolChoices, current: Record
     const instrument = String(current.instrument ?? choices.instruments[0] ?? "");
     return measurementMethodsForInstrument(instrument, choices)[0] ?? "measure";
   }
+  if (name === "light") return "white";
   return undefined;
 }
 
@@ -892,6 +1038,7 @@ function buildProtocolChoices(
   gantry: GantryResponse,
   protocolPositions: EditablePosition[],
   instrumentMethods: InstrumentMeasurementMethods,
+  instrumentMethodParams: InstrumentMethodParams,
 ): ProtocolChoices {
   const instruments = Object.keys(gantry.config.instruments);
   const instrumentTypes = Object.fromEntries(
@@ -904,7 +1051,10 @@ function buildProtocolChoices(
     ...deck.labware.flatMap(targetsForLabware),
     ...protocolPositions.map((position) => position.name.trim()),
   ]);
-  return { instruments, plates, positions, instrumentTypes, instrumentMethods };
+  const vials = uniqueStrings(deck.labware
+    .filter((item) => ["vial", "vial_grid", "vial_holder"].includes(item.config.type))
+    .flatMap(targetsForLabware));
+  return { instruments, plates, positions, vials, instrumentTypes, instrumentMethods, instrumentMethodParams };
 }
 
 function targetsForLabware(item: LabwareResponse): string[] {
@@ -948,18 +1098,68 @@ function optionsForArg(
   name: string,
   args: Record<string, unknown>,
   choices: ProtocolChoices,
+  command?: string,
 ): string[] {
+  if (command === "rinse" && name === "instrument") return choices.instruments.filter((instrument) => choices.instrumentTypes[instrument] === "potentiostat");
+  if (command === "rinse" && name === "vial") return choices.vials;
   if (name === "instrument") return choices.instruments;
   if (name === "plate") return choices.plates;
   if (isPositionArg(name)) return choices.positions;
   if (name === "method") return measurementMethodsForInstrument(String(args.instrument ?? ""), choices);
+  if (name === "channel") return Object.keys(LIGHTING_LEVELS);
+  if (name === "light") return ["off", ...Object.keys(LIGHTING_LEVELS)];
+  if (name === "brightness") {
+    // set_lights carries `channel`; image_well carries `light` (falling
+    // back to its mode default: standard→white, curvature→contact).
+    const channel = String(
+      args.channel
+      ?? (args.light && args.light !== "off" ? args.light : undefined)
+      ?? (args.mode === "curvature" ? "contact" : "white"),
+    );
+    const levels = LIGHTING_LEVELS[channel];
+    return levels ? levels.map(String) : [];
+  }
   return [];
 }
+
+// Pawduino imaging lights expose discrete brightness levels per channel
+// ("contact" = the red+blue LED pair); anything else is rejected by the
+// driver, so the editor offers only the supported values. 0 = channel off.
+// Mirrors cubos.instruments.lighting.vendors.pawduino._LEVELS — the sole
+// lighting vendor today; introspect from the backend if a second appears.
+const LIGHTING_LEVELS: Record<string, number[]> = {
+  white: [0, 5, 10, 15, 25, 50, 100],
+  contact: [0, 5, 10, 20, 30, 50],
+};
 
 function includeCurrentOption(options: string[], current: unknown): string[] {
   const value = String(current ?? "");
   if (!value || options.includes(value)) return options;
   return [value, ...options];
+}
+
+function methodParamsForStep(args: Record<string, unknown>, choices: ProtocolChoices): InstrumentMethodParamField[] {
+  const type = inferInstrumentType(String(args.instrument ?? ""), choices);
+  return choices.instrumentMethodParams[type]?.[String(args.method ?? "")] ?? [];
+}
+
+// Seed method_kwargs with each parameter's declared defaults so optional
+// values show up prefilled; required fields without defaults stay absent
+// (the engine rejects the step pre-motion with the field list if unfilled).
+function defaultMethodKwargs(params: InstrumentMethodParamField[]): Record<string, unknown> {
+  const kwargs: Record<string, unknown> = {};
+  for (const param of params) {
+    if (param.fields) {
+      const nested: Record<string, unknown> = {};
+      for (const field of param.fields) {
+        if (!field.required && field.default != null) nested[field.name] = field.default;
+      }
+      kwargs[param.name] = nested;
+    } else if (!param.required && param.default != null) {
+      kwargs[param.name] = param.default;
+    }
+  }
+  return kwargs;
 }
 
 function measurementMethodsForInstrument(instrument: string, choices: ProtocolChoices): string[] {
@@ -1014,6 +1214,7 @@ function isHiddenArgForStep(
   args: Record<string, unknown>,
   choices: ProtocolChoices,
 ): boolean {
+  if (argName === "brightness" && String(args.light ?? "") === "off") return true;
   return argName === "indentation_limit_height" && !isAsmiIndentationStep(args, choices);
 }
 
@@ -1024,7 +1225,9 @@ function uniqueStrings(items: string[]): string[] {
 function argLabel(name: string): string {
   const labels: Record<string, string> = {
     delay_s: "Delay (s)",
+    exposure_time: "Cure time (s)",
     indentation_limit_height: "Indentation limit height",
+    intensity: "Intensity (%)",
     interwell_scan_height: "Interwell scan height",
     measurement_height: "Measurement height",
     method: "Measurement",
@@ -1205,6 +1408,114 @@ function MethodOptionsField({
         {detectSurface
           ? "Indentation limit height is measured from the detected surface (must be 0 or below)."
           : "Enable Detect surface to configure the surface-search parameters."}
+      </div>
+    </div>
+  );
+}
+
+function MethodParamsFields({
+  idPrefix,
+  namePrefix,
+  params,
+  value,
+  onChange,
+}: {
+  idPrefix: string;
+  namePrefix: string;
+  params: InstrumentMethodParamField[];
+  value: unknown;
+  onChange: (value: Record<string, unknown>) => void;
+}) {
+  if (params.length === 0) return null;
+  const kwargs = isRecord(value) ? value : {};
+
+  const renderField = (
+    field: InstrumentMethodParamField,
+    fieldValue: unknown,
+    setValue: (v: unknown) => void,
+    keyPrefix: string,
+  ) => {
+    const id = `${idPrefix}-${keyPrefix}${field.name}`;
+    const name = `${namePrefix}_${keyPrefix}${field.name}`;
+    const label = `${argLabel(field.name)}${field.required ? " *" : ""}`;
+    // Optional params surface as e.g. "float | None" — match the base type.
+    const isInt = /\bint\b/.test(field.type);
+    if (isInt || /\bfloat\b/.test(field.type)) {
+      return (
+        <OptionalNumberField
+          key={id}
+          id={id}
+          name={name}
+          label={label}
+          value={typeof fieldValue === "number" ? fieldValue : null}
+          onChange={(v) => setValue(v === null ? null : (isInt ? Math.round(v) : v))}
+        />
+      );
+    }
+    if (/\bbool\b/.test(field.type)) {
+      return (
+        <SmartSelectField
+          key={id}
+          id={id}
+          name={name}
+          label={label}
+          value={String(Boolean(fieldValue ?? field.default ?? false))}
+          options={["false", "true"]}
+          onChange={(v) => setValue(v === "true")}
+        />
+      );
+    }
+    return (
+      <TextField
+        key={id}
+        id={id}
+        name={name}
+        label={label}
+        value={String(fieldValue ?? "")}
+        onChange={(v) => setValue(v === "" ? null : v)}
+      />
+    );
+  };
+
+  return (
+    <div style={methodOptionsStyle}>
+      <div style={methodOptionsTitleStyle}>Method parameters</div>
+      {params.map((param) => {
+        if (param.fields) {
+          const nested = isRecord(kwargs[param.name]) ? kwargs[param.name] as Record<string, unknown> : {};
+          const setNested = (fieldName: string, v: unknown) => {
+            const nextNested = { ...nested };
+            if (v === null) {
+              delete nextNested[fieldName];
+            } else {
+              nextNested[fieldName] = v;
+            }
+            onChange({ ...kwargs, [param.name]: nextNested });
+          };
+          return (
+            <div key={param.name} style={methodOptionsGridStyle}>
+              {param.fields.map((field) =>
+                renderField(field, nested[field.name], (v) => setNested(field.name, v), `${param.name}-`))}
+            </div>
+          );
+        }
+        const setTop = (v: unknown) => {
+          const next = { ...kwargs };
+          if (v === null) {
+            delete next[param.name];
+          } else {
+            next[param.name] = v;
+          }
+          onChange(next);
+        };
+        return (
+          <div key={param.name} style={methodOptionsGridStyle}>
+            {renderField(param, kwargs[param.name], setTop, "")}
+          </div>
+        );
+      })}
+      <div style={methodOptionsHintStyle}>
+        Fields marked * are required by the selected method.
       </div>
     </div>
   );

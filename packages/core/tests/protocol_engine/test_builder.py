@@ -2,40 +2,11 @@
 
 from __future__ import annotations
 
-import importlib
 
 import pytest
 from cubos.protocol_engine.builder import ProtocolBuilder, wells
 from cubos.protocol_engine.compiler import CommandCall, compile_protocol
 from cubos.protocol_engine.protocol import ProtocolSetup
-from cubos.protocol_engine.registry import CommandRegistry
-
-
-@pytest.fixture(autouse=True)
-def _ensure_commands_registered():
-    required_commands = {
-        "home",
-        "measure",
-        "move",
-        "pause",
-        "scan",
-        "transfer",
-        "serial_transfer",
-    }
-    if required_commands.issubset(set(CommandRegistry.instance().command_names)):
-        return
-
-    modules = [
-        importlib.import_module("cubos.protocol_engine.commands.home"),
-        importlib.import_module("cubos.protocol_engine.commands.measure"),
-        importlib.import_module("cubos.protocol_engine.commands.move"),
-        importlib.import_module("cubos.protocol_engine.commands.pause"),
-        importlib.import_module("cubos.protocol_engine.commands.pipette"),
-        importlib.import_module("cubos.protocol_engine.commands.scan"),
-    ]
-    CommandRegistry.reset()
-    for module in modules:
-        importlib.reload(module)
 
 
 def _step_signature(protocol):

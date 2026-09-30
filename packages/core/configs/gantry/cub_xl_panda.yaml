@@ -10,6 +10,7 @@ serial_port: /dev/ttyUSB0
 gantry_type: cub_xl
 
 cnc:
+  default_feed_rate_mm_min: 3000.0
   factory_z_travel_mm: 100.0
   y_axis_motion: head
   # Absolute deck-frame Z used for inter-labware travel and the entry

@@ -1,4 +1,4 @@
-"""Campaign result summaries and ZIP exports for CubOS runtime data."""
+"""Campaign result summaries and CSV export helpers for CubOS runtime data."""
 
 from __future__ import annotations
 
@@ -97,12 +97,19 @@ def export_campaign_results_csvs(
         if campaign is None:
             raise CampaignNotFoundError(f"Campaign {campaign_id} not found")
 
+        campaign_dict = dict(campaign)
+
+        if campaign_dict.get("created_at"):
+            campaign_dict["created_at"] = _export_timestamp(
+                campaign_dict["created_at"]
+            )
+
         run_dir = output_root / _result_dir_name(campaign)
         run_dir.mkdir(parents=True, exist_ok=True)
 
         written.append(_write_csv_path(
             run_dir / "campaign.csv",
-            _rows_csv(list(campaign.keys()), [campaign]),
+            _rows_csv(list(campaign_dict.keys()), [campaign_dict])
         ))
         written.append(_write_csv_path(
             run_dir / "experiments.csv",
@@ -186,107 +193,33 @@ def list_campaign_summaries(db_path: str | Path) -> list[CampaignSummary]:
     return summaries
 
 
-def export_campaign_measurements_zip(db_path: str | Path, campaign_id: int) -> bytes:
-    """Export non-empty instrument measurement tables for a campaign as CSV."""
-    path = Path(db_path).expanduser().resolve()
-    if not path.is_file():
-        raise DataDatabaseNotFoundError(f"Data database not found: {path}")
+def _add_camera_images(
+    zip_handle: zipfile.ZipFile, rows: list[sqlite3.Row], folder: str = "images",
+) -> list[dict[str, Any]]:
+    """Bundle each camera measurement's image file into the archive.
 
-    archive = io.BytesIO()
-    with closing(_connect(path)) as conn:
-        _ensure_tables(conn, ("campaigns", "experiments"))
-        if not _campaign_exists(conn, campaign_id):
-            raise CampaignNotFoundError(f"Campaign {campaign_id} not found")
-
-        present_tables = _present_tables(conn)
-        table_exports = [
-            (table, _measurement_table_rows(conn, table, campaign_id))
-            for table in MEASUREMENT_TABLES
-            if table.table in present_tables
-        ]
-        table_exports = [
-            (table, rows) for table, rows in table_exports
-            if len(rows) > 0
-        ]
-        measurement_count = sum(len(rows) for _, rows in table_exports)
-        if measurement_count == 0:
-            raise MeasurementExportNotFoundError(
-                f"No instrument measurements found for campaign {campaign_id}"
-            )
-
-        with zipfile.ZipFile(
-            archive, mode="w", compression=zipfile.ZIP_DEFLATED,
-        ) as zip_handle:
-            manifest_rows = []
-            for table, rows in table_exports:
-                filename = f"measurements/{table.table}.csv"
-                zip_handle.writestr(
-                    filename,
-                    _measurement_table_csv(conn, table.table, rows),
-                )
-                manifest_rows.append(
-                    {
-                        "instrument": table.instrument,
-                        "table": table.table,
-                        "row_count": len(rows),
-                        "file": filename,
-                    }
-                )
-            zip_handle.writestr("manifest.csv", _manifest_csv(manifest_rows))
-            zip_handle.writestr(
-                "experiments.csv",
-                _experiments_csv(conn, campaign_id),
-            )
-    return archive.getvalue()
-
-
-def export_campaign_asmi_zip(db_path: str | Path, campaign_id: int) -> bytes:
-    """Export a campaign's ASMI measurements as raw CSV files plus metadata."""
-    path = Path(db_path).expanduser().resolve()
-    if not path.is_file():
-        raise DataDatabaseNotFoundError(f"Data database not found: {path}")
-
-    with closing(_connect(path)) as conn:
-        _ensure_tables(conn, ("experiments", "asmi_measurements"))
-        rows = conn.execute(
-            """
-            SELECT
-                m.id AS measurement_id,
-                m.sample_timestamps,
-                m.z_positions,
-                m.raw_forces,
-                m.corrected_forces,
-                m.directions,
-                m.baseline_avg,
-                m.baseline_std,
-                m.force_exceeded,
-                m.data_points,
-                m.step_size_mm,
-                m.z_target_mm,
-                m.force_limit_n,
-                m.timestamp,
-                e.well_id
-            FROM asmi_measurements m
-            JOIN experiments e ON e.id = m.experiment_id
-            WHERE e.campaign_id = ?
-            ORDER BY m.id
-            """,
-            (campaign_id,),
-        ).fetchall()
-
-    if not rows:
-        raise MeasurementExportNotFoundError(
-            f"No ASMI measurement found for campaign {campaign_id}"
-        )
-
-    archive = io.BytesIO()
-    with zipfile.ZipFile(
-        archive, mode="w", compression=zipfile.ZIP_DEFLATED,
-    ) as zip_handle:
-        zip_handle.writestr("metadata.csv", _metadata_csv(rows))
-        for row in rows:
-            zip_handle.writestr(_filename_for_row(row), _raw_samples_csv(row))
-    return archive.getvalue()
+    ``camera_measurements.image_path`` is a server-local filesystem path;
+    the zip is the only artifact that leaves the machine, so the referenced
+    files must travel inside it. A missing source file is recorded in the
+    returned manifest rows instead of failing the whole export.
+    """
+    manifest: list[dict[str, Any]] = []
+    for row in rows:
+        source = Path(str(row["image_path"]))
+        entry = {
+            "measurement_id": row["id"],
+            "image_path": str(source),
+        }
+        if source.is_file():
+            arcname = f"{folder}/camera_{row['id']}_{source.name}"
+            zip_handle.write(source, arcname)
+            entry["file"] = arcname
+            entry["status"] = "included"
+        else:
+            entry["file"] = ""
+            entry["status"] = "missing on server"
+        manifest.append(entry)
+    return manifest
 
 
 def _connect(path: Path) -> sqlite3.Connection:
@@ -374,11 +307,15 @@ def _measurement_table_rows(
     table: MeasurementTable,
     campaign_id: int,
 ) -> list[sqlite3.Row]:
+    labware_key = (
+        "e.labware_key" if "labware_key" in _table_columns(conn, "experiments")
+        else "e.labware_name"
+    )
     return conn.execute(
         f"""
         SELECT
             m.*,
-            e.labware_key AS experiment_labware_key,
+            {labware_key} AS experiment_labware_key,
             e.labware_name AS experiment_labware_name,
             e.well_id AS experiment_well_id,
             e.contents AS experiment_contents,
@@ -392,25 +329,9 @@ def _measurement_table_rows(
     ).fetchall()
 
 
-def _measurement_table_csv(
-    conn: sqlite3.Connection,
-    table_name: str,
-    rows: list[sqlite3.Row],
-) -> str:
-    table_columns = _table_columns(conn, table_name)
-    columns = [
-        *table_columns,
-        "experiment_labware_key",
-        "experiment_labware_name",
-        "experiment_well_id",
-        "experiment_contents",
-        "experiment_created_at",
-    ]
-    return _rows_csv(columns, rows)
-
-
 def _experiments_csv(conn: sqlite3.Connection, campaign_id: int) -> str:
     columns = _table_columns(conn, "experiments")
+
     rows = conn.execute(
         """
         SELECT *
@@ -420,7 +341,20 @@ def _experiments_csv(conn: sqlite3.Connection, campaign_id: int) -> str:
         """,
         (campaign_id,),
     ).fetchall()
-    return _rows_csv(columns, rows)
+
+    export_rows = []
+
+    for row in rows:
+        row_dict = dict(row)
+
+        if row_dict.get("created_at"):
+            row_dict["created_at"] = _export_timestamp(
+                row_dict["created_at"]
+            )
+
+        export_rows.append(row_dict)
+
+    return _dict_rows_csv(columns, export_rows)
 
 
 def _table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
@@ -429,8 +363,10 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> list[str]:
         for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
     ]
 
-
-def _rows_csv(columns: list[str], rows: list[sqlite3.Row]) -> str:
+def _rows_csv(
+    columns: list[str],
+    rows: list[sqlite3.Row | dict[str, Any]],
+) -> str:
     handle = io.StringIO()
     writer = csv.writer(handle, lineterminator="\n")
     writer.writerow(columns)
@@ -501,8 +437,8 @@ def _common_result_fields(row: sqlite3.Row) -> dict[str, Any]:
         "labware_key": row["experiment_labware_key"],
         "labware_name": row["experiment_labware_name"],
         "well_id": row["experiment_well_id"] or "",
-        "measurement_timestamp": row["timestamp"],
-        "experiment_created_at": row["experiment_created_at"],
+        "measurement_timestamp": _export_timestamp(row["timestamp"]),
+        "experiment_created_at": _export_timestamp(row["experiment_created_at"]),
     }
 
 
@@ -645,8 +581,8 @@ def _potentiostat_results_csv(rows: list[sqlite3.Row]) -> str:
                 "vendor": row["vendor"],
                 "device_id": row["device_id"],
                 "channel": row["channel"],
-                "started_at": row["started_at"],
-                "stopped_at": row["stopped_at"],
+                "started_at": _export_timestamp(row["started_at"]),
+                "stopped_at": _export_timestamp(row["stopped_at"]),
                 "aborted": "" if row["aborted"] is None else bool(row["aborted"]),
                 "stop_reason": row["stop_reason"],
             })
@@ -680,15 +616,6 @@ def _dict_rows_csv(columns: list[str], rows: list[dict[str, Any]]) -> str:
     writer.writeheader()
     for row in rows:
         writer.writerow({column: _format_cell(row.get(column)) for column in columns})
-    return handle.getvalue()
-
-
-def _manifest_csv(rows: list[dict[str, Any]]) -> str:
-    columns = ["instrument", "table", "row_count", "file"]
-    handle = io.StringIO()
-    writer = csv.DictWriter(handle, columns, lineterminator="\n")
-    writer.writeheader()
-    writer.writerows(rows)
     return handle.getvalue()
 
 
@@ -772,7 +699,7 @@ def _metadata_csv(rows: list[sqlite3.Row]) -> str:
             [
                 _filename_for_row(row),
                 row["measurement_id"],
-                row["timestamp"],
+                _export_timestamp(row["timestamp"]),
                 row["well_id"] or "",
                 _format_optional(row["z_target_mm"], 3),
                 _format_optional(row["step_size_mm"], 3),
@@ -819,6 +746,21 @@ def _timestamp_suffix(timestamp: str) -> str:
         safe = re.sub(r"[^0-9A-Za-z]+", "_", timestamp).strip("_")
         return safe or "unknown_time"
     return "".join(match.groups()[:3]) + "_" + "".join(match.groups()[3:])
+
+
+def _export_timestamp(timestamp: str | None) -> str:
+    if not timestamp:
+        return ""
+
+    timestamp = str(timestamp)
+
+    if " " in timestamp:
+        timestamp = timestamp.replace(" ", "T")
+
+    if not timestamp.endswith("Z"):
+        timestamp += "Z"
+
+    return timestamp
 
 
 def _json_array(value: Any, field_name: str) -> list[Any]:

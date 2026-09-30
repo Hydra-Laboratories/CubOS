@@ -30,3 +30,14 @@ export function useSaveDeck() {
     },
   });
 }
+
+export function useDeleteDeck() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => deckApi.delete(filename),
+    onSuccess: (_data, filename) => {
+      qc.removeQueries({ queryKey: ["deck", filename] });
+      qc.invalidateQueries({ queryKey: ["deck", "configs"] });
+    },
+  });
+}

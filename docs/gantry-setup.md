@@ -51,8 +51,8 @@ instruments:
 - **Set `offline: true`** on an instrument to run without that hardware
   attached.
 
-Supported types: `asmi`, `capper`, `filmetrics`, `pipette`, `potentiostat`,
-`uv_curing`, `uvvis_ccs`, `camera`, `mounted_tool`.
+Supported types: `asmi`, `capper`, `filmetrics`, `lighting`, `pipette`,
+`potentiostat`, `uv_curing`, `uvvis_ccs`, `camera`, `mounted_tool`.
 
 Every instrument entry accepts these shared fields:
 
@@ -127,6 +127,40 @@ instruments:
     depth: 0.0
 ```
 
+**`pipette` / `sartorius`** — Sartorius Picus 2 electronic pipette over USB
+serial. Unlike the Opentrons vendor (a CubOS-driven stepper on a bare pipette
+body), the Picus owns its own piston, so there is no plunger geometry to
+calibrate — volumes are commanded directly:
+
+```yaml
+instruments:
+  pipette:
+    type: pipette
+    vendor: sartorius
+    pipette_model: picus2_1ch_1000   # or picus2_1ch_10, picus2_1ch_120, picus2_1ch_5000
+    port: "/dev/ttyACM0"
+    offline: true
+    offset_x: 180.0
+    offset_y: -25.0
+    depth: 0.0
+    # Optional, shown with defaults:
+    # min_battery_percent: 20.0      # refuse to start below this charge
+    # verify_model: true             # fail closed if the device is a different model
+    # blowout_delay_ms: 3000
+    # whole_microlitres_only: false  # force integer uL on the wire
+```
+
+The pipette asks for on-screen confirmation before accepting host motor
+control; the driver satisfies that during `connect()` and, if it times out,
+fails with a message naming the softkey to press.
+
+Releasing motor control and the piston initialisation on connect both sweep
+the piston, which expels whatever is in the tip. If a run fails between an
+aspirate and its dispense, the driver therefore keeps the session open and
+armed instead of releasing it, and refuses to home, until the liquid has been
+dispensed or blown out (a one-step `blowout` protocol at a vial or the tip
+disposal works). The warning is logged as `Pipette still holds N uL`.
+
 **`potentiostat` / `admiral`** — Admiral SquidStat, addressed by serial port and
 channel number:
 
@@ -191,6 +225,48 @@ instruments:
     depth: 32.0
 ```
 
+**`camera` / `flir`** (or `opencv`) — an acquiring camera for the `capture`
+and `image_well` protocol commands (see [Protocol YAML: Lighting and imaging
+commands](protocol-yaml.md#lighting-and-imaging-commands)). `flir` drives a
+FLIR camera through the proprietary Spinnaker/PySpin SDK (manual install
+from https://www.flir.com/products/spinnaker-sdk/); `opencv` drives a
+plain USB webcam (`camera_id: -1` auto-detects the first responsive index).
+Offline, both write placeholder PNGs so dry runs exercise the full
+capture/persistence path:
+
+```yaml
+instruments:
+  camera:
+    type: camera
+    vendor: flir
+    camera_id: 0
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    depth: 32.0
+```
+
+**`lighting` / `pawduino`** — the PANDA imaging lights (`white` ring +
+`contact` red/blue), driven by the `set_lights` protocol command and
+`image_well`. Calibration skips lighting instruments: they are co-mounted
+with the camera, so the calibrated camera offsets are copied onto them
+automatically. The capper and
+pipette share this Arduino — give every Pawduino-backed instrument the
+**same** `port`; the shared serial link opens it once and closes it when
+the last instrument disconnects:
+
+```yaml
+instruments:
+  lights:
+    type: lighting
+    vendor: pawduino
+    port: "COM8"
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    depth: 0.0
+```
+
 **`capper` / `pawduino`** — an electromagnet-actuated vial capper/decapper
 over the same Arduino serial link family as the `pipette`/`opentrons`
 driver (see [Protocol YAML: Capper commands](protocol-yaml.md#capper-commands)
@@ -208,12 +284,15 @@ instruments:
     offset_y: 5.1
     depth: 61.5
     engage_depth_mm: -15.0
-    park_position: [-10.0, -10.0]
     capture_retries: 2
     capture_settle_s: 1.0
 ```
 
-`engage_depth_mm`/`park_position`/`capture_retries`/`capture_settle_s` are
+`park_position` is retired: `decap`/`cap` leave the tool at `safe_z` above
+the vial and the next command lifts before it travels. A config that still
+carries the key loads with a warning and the key is ignored; delete it.
+
+`engage_depth_mm`/`capture_retries`/`capture_settle_s` are
 required, not driver defaults — every capper's decap/cap motion sequence
 comes entirely from this config, never hardcoded. `vendor: mock` is an
 offline-only in-memory simulation useful for dry runs without any Arduino

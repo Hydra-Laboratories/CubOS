@@ -59,7 +59,7 @@ CUB_XL_RIGHT_X_MAX_RAIL = FixedStructureBox(
     y_min=0.0,
     y_max=300.0,
     z_min=0.0,
-    z_max=100.0,
+    z_max=80.0,
 )
 
 _FIXED_STRUCTURES_BY_GANTRY_TYPE: dict[GantryType, tuple[FixedStructureBox, ...]] = {

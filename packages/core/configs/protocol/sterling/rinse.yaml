@@ -1,0 +1,7 @@
+# Example only: verify the station calibration, uncapped vial, liquid level,
+# bottom clearance, and immersion depth before a physical run.
+protocol:
+  - rinse:
+      instrument: potentiostat
+      vial: vial_holder.vial_1
+      measurement_height: -5.0

@@ -52,6 +52,7 @@ def setup_protocol(
     data_store: Any | None = None,
     campaign_id: int | None = None,
     fluid_state_id: int | None = None,
+    step_observer: Any | None = None,
 ) -> Tuple[Protocol, ProtocolContext]:
     """Load all configs, validate bounds, and return a ready-to-run protocol.
 
@@ -74,6 +75,9 @@ def setup_protocol(
         data_store: Optional persistence store attached to the runtime context.
         campaign_id: Optional campaign ID used with ``data_store``.
         fluid_state_id: Optional durable deck-bound fluid-state session ID.
+        step_observer: Optional :class:`~cubos.protocol_engine.observer.
+            StepObserver` notified as each step and substep runs. Advisory
+            only -- observer errors are swallowed and never affect the run.
 
     Returns:
         Tuple of (Protocol, ProtocolContext) ready for ``protocol.execute(context)``.
@@ -137,6 +141,7 @@ def setup_protocol(
         data_store=data_store,
         campaign_id=campaign_id,
         fluid_state_id=fluid_state_id,
+        step_observer=step_observer,
     )
     return protocol, context
 

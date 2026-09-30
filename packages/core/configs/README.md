@@ -65,6 +65,11 @@ python -m cubos.tools.validate_setup \
 - `gantry/cub_xl_panda.yaml` - PANDA estimate with placeholder camera/capper
   instrument entries; those placeholders parse as config data but will not
   instantiate until real instrument drivers are registered.
+- `gantry/cub_xl_panda_imaging.yaml` - PANDA with the imaging stack live:
+  FLIR camera (`camera/flir`) and Pawduino lights (`lighting/pawduino`) as
+  offline-by-default instruments; pairs with
+  `protocol/panda/imaging_demo.yaml` (move -> set_lights -> capture,
+  plus a one-step `image_well`).
 - `deck/asmi_deck.yaml`, `deck/sterling_deck.yaml`,
   `deck/filmetrics_deck.yaml`, `deck/panda_deck.yaml`,
   `deck/sharc_uv_deck.yaml`.

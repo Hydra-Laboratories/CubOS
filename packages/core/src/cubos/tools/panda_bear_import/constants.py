@@ -78,13 +78,12 @@ ROUND_NDIGITS = 3  # 0.001mm determinism, matches cubos.deck.loader rounding.
 # upgrades it in place to the real `capper`/`pawduino` type+vendor (see
 # cubos.instruments.capper) so the generated gantry config drives real
 # decap/cap motion instead of being a calibration-only placeholder.
-# `engage_depth_mm`/`park_position`/`capture_retries`/`capture_settle_s` are
+# `engage_depth_mm`/`capture_retries`/`capture_settle_s` are
 # PLACEHOLDER values -- they parameterize the decap/cap motion sequence
 # (cubos.protocol_engine.commands.capper) but were never measured against
 # real PANDA hardware; confirm/recalibrate before trusting physical motion.
 CAPPER_INSTRUMENT_KEY = "vial_capper_decapper"
 CAPPER_ENGAGE_DEPTH_MM = -15.0
-CAPPER_PARK_POSITION = [-10.0, -10.0]
 CAPPER_CAPTURE_RETRIES = 2
 CAPPER_CAPTURE_SETTLE_S = 1.0
 

@@ -14,8 +14,12 @@ For installation, local setup, and project orientation, start with
   change.
 - Explain the problem, the approach, and any user-facing behavior changes.
 - Add or update tests for the behavior you changed.
-- Keep documentation in sync when you change public CLI behavior, YAML schema,
-  protocol semantics, hardware setup, calibration, or cross-repo interfaces.
+- Keep documentation in sync when you change public CLI behavior, YAML schema
+  or configuration choices, protocol semantics, hardware setup, calibration,
+  or cross-repo interfaces. Adding, removing, or renaming a public catalog
+  choice (for example, an instrument model or labware definition) counts as a
+  configuration change even when the YAML schema is unchanged; update any
+  docs or examples that enumerate the available choices.
 - Do not include unrelated formatting, generated files, or cleanup in the same
   PR unless the PR is specifically for that work.
 
@@ -31,6 +35,29 @@ locally before pushing:
 python -m pytest packages/core/tests --cov=packages/core/src/cubos --cov-report=xml -q
 diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
 ```
+
+## Code Comments
+
+Default to no comment. Code should explain itself through naming and
+structure; if a change needs a paragraph of comments to be understood, make
+the code clearer instead.
+
+Write a comment only to state something the code cannot: a non-obvious
+constraint, a hardware or vendor quirk, or why the obvious approach is wrong.
+Keep it to one or two lines.
+
+Do not write comments that:
+
+- Narrate what the next line does.
+- Restate what a name, type, prop, or parameter already says.
+- Justify the change to a reviewer ("differs from X because...", "this keeps
+  working when..."). That reasoning belongs in the PR description or commit
+  message, not the source.
+- Recount history ("previously...", "moved from...") — that is what git is
+  for.
+
+Reviewers should treat comment bloat like any other defect and ask for it to
+be removed.
 
 ## Hardware-Facing Changes
 
@@ -169,5 +196,6 @@ for hardware-facing PRs, and use the relevant parts for all other PRs:
 ## Abstractions
 - [ ] Instrument/vendor boundaries are preserved
 - [ ] Optional vendor dependencies remain optional
-- [ ] Public docs/config examples were updated, if needed
+- [ ] Public docs/config examples reflect every added, removed, or renamed
+      config/catalog choice (including changes that do not alter the schema)
 ```

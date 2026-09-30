@@ -27,6 +27,7 @@ from cubos.instruments.pipette.models import PIPETTE_MODELS
 from cubos.instruments.registry import (
     config_fields,
     list_measurement_methods,
+    list_measurement_method_params,
     get_supported_types,
     get_supported_vendors,
 )
@@ -34,7 +35,7 @@ from pydantic import BaseModel, ValidationError, model_validator
 
 from cubos_api.config import get_settings
 from cubos_api.models.gantry import GantryPosition, GantryResponse
-from cubos_api.services.yaml_io import list_configs, read_yaml, resolve_config_path, write_yaml
+from cubos_api.services.yaml_io import delete_config, list_configs, read_yaml, resolve_config_path, write_yaml
 
 router = APIRouter(prefix="/api/v1/gantry", tags=["gantry"])
 
@@ -355,6 +356,15 @@ def get_instrument_methods() -> Dict[str, List[str]]:
     }
 
 
+@router.get("/instrument-method-params")
+def get_instrument_method_params() -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """Per instrument type, each measurement method's method_kwargs schema."""
+    return {
+        type_key: list_measurement_method_params(type_key)
+        for type_key in get_supported_types()
+    }
+
+
 @router.get("/position")
 def get_position() -> GantryPosition:
     session = current_session()
@@ -637,6 +647,11 @@ def connect(body: Optional[ConnectRequest] = None) -> GantryPosition:
     session = _get_or_create_session()
     if session.connected:
         raise HTTPException(409, "Gantry already connected; disconnect first")
+    # Manually connected instruments belong to the previous config; the
+    # import is deferred to avoid a circular import at module load.
+    from cubos_api.routers.instruments import reset_manual_instruments
+
+    reset_manual_instruments()
     try:
         filename, path = _selected_gantry_path(body.filename if body else None)
         snapshot = session.connect(path, filename=filename)
@@ -651,6 +666,9 @@ def connect(body: Optional[ConnectRequest] = None) -> GantryPosition:
 
 @router.post("/disconnect")
 def disconnect() -> GantryPosition:
+    from cubos_api.routers.instruments import reset_manual_instruments
+
+    reset_manual_instruments()
     session = current_session()
     if session is None:
         return GantryPosition(connected=False, status="Disconnected")
@@ -689,6 +707,22 @@ def put_gantry(filename: str, body: dict) -> GantryResponse:
     if session is not None:
         session.refresh_connected_config(filename, config_dict)
     return get_gantry(filename)
+
+
+@router.delete("/{filename}")
+def delete_gantry(filename: str) -> dict:
+    if run_active():
+        raise HTTPException(409, "Cannot delete a gantry config while a protocol run is active")
+    session = current_session()
+    if session is not None and session.connected_gantry_filename == filename:
+        raise HTTPException(409, f"{filename} is the connected gantry config; disconnect before deleting it")
+    try:
+        delete_config(get_settings().configs_dir, "gantry", filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except FileNotFoundError:
+        raise HTTPException(404, f"Config not found: {filename}")
+    return {"status": "deleted", "filename": filename}
 
 
 def request_feed_hold_interrupt() -> None:

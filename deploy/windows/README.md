@@ -63,7 +63,7 @@ the window shuts down the API process. No terminal or browser window is shown.
    opens without a terminal or browser window.
 4. Confirm the private venv imports `cubos` and `cubos_api`.
 5. Confirm generic config seeds are copied on first launch.
-6. If ASMI support was selected, confirm `godirect` imports.
+6. Confirm `godirect` imports (all bundled public drivers install by default).
 7. Close CubOS and confirm its hidden Python child process exits.
 8. Export diagnostics and inspect the archive.
 

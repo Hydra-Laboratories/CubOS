@@ -3,20 +3,60 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Any, Callable, Dict, Type, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, create_model
 
+logger = logging.getLogger(__name__)
+
+_FALLBACK_MAX_LEN = 80
+
+
+def _fallback_summary(args: Dict[str, Any]) -> str:
+    if not args:
+        return ""
+    rendered = ", ".join(f"{key}={value}" for key, value in args.items())
+    if len(rendered) <= _FALLBACK_MAX_LEN:
+        return rendered
+    return rendered[: _FALLBACK_MAX_LEN - 1] + "\u2026"
+
 
 class RegisteredCommand:
-    """A registered command: its name, handler callable, and Pydantic schema."""
+    """A registered command: name, handler, Pydantic schema, display summary."""
 
-    __slots__ = ("name", "handler", "schema")
+    __slots__ = ("name", "handler", "schema", "summary")
 
-    def __init__(self, name: str, handler: Callable, schema: Type[BaseModel]) -> None:
+    def __init__(
+        self,
+        name: str,
+        handler: Callable,
+        schema: Type[BaseModel],
+        summary: Callable[[Dict[str, Any]], str] | None = None,
+    ) -> None:
         self.name = name
         self.handler = handler
         self.schema = schema
+        self.summary = summary
+
+    def describe(self, args: Dict[str, Any]) -> str:
+        """Return a one-line, operator-readable summary of *args*.
+
+        Uses the command's registered ``summary`` formatter when it has one.
+        Formatters live next to the command precisely so display logic does
+        not accumulate in UI code; a command without one (or whose formatter
+        raises on unusual args) falls back to a generic key=value rendering
+        rather than failing the caller.
+        """
+        if self.summary is not None:
+            try:
+                return self.summary(args)
+            except Exception:  # noqa: BLE001 - display must never break a run
+                logger.debug(
+                    "summary formatter for %r failed; using fallback",
+                    self.name, exc_info=True,
+                )
+        return _fallback_summary(args)
 
 
 class CommandRegistry:
@@ -38,11 +78,17 @@ class CommandRegistry:
         """Reset the singleton for test isolation."""
         cls._instance = None
 
-    def register(self, name: str, handler: Callable, schema: Type[BaseModel]) -> None:
+    def register(
+        self,
+        name: str,
+        handler: Callable,
+        schema: Type[BaseModel],
+        summary: Callable[[Dict[str, Any]], str] | None = None,
+    ) -> None:
         if name in self._commands:
             raise ValueError(f"Protocol command '{name}' is already registered.")
         self._commands[name] = RegisteredCommand(
-            name=name, handler=handler, schema=schema,
+            name=name, handler=handler, schema=schema, summary=summary,
         )
 
     def get(self, name: str) -> RegisteredCommand:
@@ -105,7 +151,10 @@ def _build_schema_from_signature(
     return model
 
 
-def protocol_command(name: str | None = None) -> Callable:
+def protocol_command(
+    name: str | None = None,
+    summary: Callable[[Dict[str, Any]], str] | None = None,
+) -> Callable:
     """Decorator that registers a function as a protocol YAML command.
 
     Usage::
@@ -119,11 +168,20 @@ def protocol_command(name: str | None = None) -> Callable:
         @protocol_command()
         def move(context: ProtocolContext, instrument: str, position: str) -> None:
             ...
+
+    ``summary`` is an optional ``args -> str`` formatter used to render this
+    command as one readable line in operator-facing views (the run step list).
+    It receives the step's compiled args and must not raise; a formatter that
+    does is caught and replaced by the generic fallback. Keeping it beside the
+    command means a newly added command ships its own display instead of
+    needing a UI change::
+
+        @protocol_command("transfer", summary=_transfer_summary)
     """
     def decorator(func: Callable) -> Callable:
         cmd_name = name or func.__name__
         schema = _build_schema_from_signature(cmd_name, func)
-        CommandRegistry.instance().register(cmd_name, func, schema)
+        CommandRegistry.instance().register(cmd_name, func, schema, summary)
         func._protocol_command_name = cmd_name  # type: ignore[attr-defined]
         func._protocol_schema = schema  # type: ignore[attr-defined]
         return func

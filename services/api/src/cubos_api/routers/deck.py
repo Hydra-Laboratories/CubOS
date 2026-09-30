@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ValidationError
 
 from cubos_api.config import get_settings
-from cubos_api.services.yaml_io import list_configs, read_yaml, resolve_config_path, write_yaml
+from cubos_api.services.yaml_io import delete_config, list_configs, read_yaml, resolve_config_path, write_yaml
 
 log = logging.getLogger(__name__)
 
@@ -131,6 +131,21 @@ def put_deck(filename: str, body: dict) -> DeckResponse:
         raise HTTPException(400, str(e))
     write_yaml(path, payload)
     return get_deck(filename)
+
+
+@router.delete("/{filename}")
+def delete_deck(filename: str) -> dict:
+    from cubos_api.routers import gantry as gantry_router
+
+    if gantry_router.run_active():
+        raise HTTPException(409, "Cannot delete a deck config while a protocol run is active")
+    try:
+        delete_config(get_settings().configs_dir, "deck", filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except FileNotFoundError:
+        raise HTTPException(404, f"Config not found: {filename}")
+    return {"status": "deleted", "filename": filename}
 
 
 def _validate_deck_payload(payload: dict) -> None:

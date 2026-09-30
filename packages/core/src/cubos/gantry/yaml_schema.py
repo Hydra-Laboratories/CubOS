@@ -44,6 +44,7 @@ class CncYaml(BaseModel):
     calibration_block_height_mm: Optional[float] = None
     y_axis_motion: Literal["head", "bed"] = "head"
     safe_z: Optional[float] = None
+    default_feed_rate_mm_min: Optional[float] = None
 
     @model_validator(mode="after")
     def _validate_cnc_z_values(self) -> "CncYaml":

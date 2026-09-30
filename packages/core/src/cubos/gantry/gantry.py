@@ -56,6 +56,14 @@ class Gantry:
         self._expected_grbl_settings_override: Dict[str, float] | None = None
         self._expected_grbl_settings_source: str | None = None
 
+    def _configured_default_feed_rate(self) -> Optional[float]:
+        """Read cnc.default_feed_rate_mm_min from config, if set."""
+        if isinstance(self.config, dict):
+            cnc = self.config.get("cnc", {})
+            if isinstance(cnc, dict) and "default_feed_rate_mm_min" in cnc:
+                return float(cnc["default_feed_rate_mm_min"])
+        return None
+
     @property
     def factory_z_travel_mm(self) -> Optional[float]:
         """Return configured factory Z travel span, if available."""
@@ -82,6 +90,9 @@ class Gantry:
         if self._offline:
             return
         assert self._mill is not None
+        feed_rate = self._configured_default_feed_rate()
+        if feed_rate is not None:
+            self._mill.default_feed_rate = feed_rate
         try:
             if port is None:
                 self.logger.info("Connecting to gantry via auto-scan")

@@ -21,6 +21,20 @@ labware:
     module: cubos.deck.labware.vial_grid
     class_name: VialGrid
     config: ursa_9_vial_grid/9VialGrid.yaml
+  ursa_12_vial_holder_4ml:
+    module: cubos.deck.labware.vial_holder
+    class_name: VialHolder
+    config: ursa_12_vial_holder_4ml/12VialHolder4mL.yaml
+
+  ursa_12_vial_grid_4ml:
+    module: cubos.deck.labware.vial_grid
+    class_name: VialGrid
+    config: ursa_12_vial_grid_4ml/12VialGrid4mL.yaml
+
+  ursa_13x2_tip_rack:
+    module: cubos.deck.labware.tip_rack
+    class_name: TipRack
+    config: ursa_13x2_tip_rack/TipRack13x2.yaml
 
   ursa_tip_rack:
     module: cubos.deck.labware.tip_rack
@@ -51,3 +65,18 @@ labware:
     module: cubos.deck.labware.well_plate
     class_name: WellPlate
     config: sbs_96_wellplate/SBS96WellPlate.yaml
+
+  sbs_24_wellplate:
+    module: cubos.deck.labware.well_plate
+    class_name: WellPlate
+    config: sbs_24_wellplate/SBS24WellPlate.yaml
+
+  ursa_12_well_plate:
+    module: cubos.deck.labware.well_plate
+    class_name: WellPlate
+    config: ursa_12_well_plate/12WellPlate.yaml
+
+  ursa_20_well_plate:
+    module: cubos.deck.labware.well_plate
+    class_name: WellPlate
+    config: ursa_20_well_plate/20WellPlate.yaml

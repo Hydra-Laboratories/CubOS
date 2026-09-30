@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 _REGISTRY_PATH = Path(__file__).parent / "registry.yaml"
 _ENTRY_POINT_GROUP = "cubos.instrument_registries"
 _OVERLAY_ENV_VAR = "CUBOS_INSTRUMENT_REGISTRY_PATHS"
-_VALID_CALIBRATION_MODES = {"contact", "non_contact"}
+_VALID_CALIBRATION_MODES = {"contact", "non_contact", "follow_camera"}
 _BASE_CONFIG_PARAMS = {"name", "offset_x", "offset_y", "depth", "offline"}
 _PRIMITIVE_CONFIG_TYPES = {str, int, float, bool}
 
@@ -85,7 +85,8 @@ def get_calibration_mode(instrument_type: str) -> str:
 
     ``contact`` instruments touch the shared calibration block. ``non_contact``
     instruments are centered over the block and calibrated from a measured
-    distance above the block top.
+    distance above the block top. ``follow_camera`` instruments are co-mounted
+    with the camera and reuse its calibration without their own step.
     """
     entry = _instrument_entry(instrument_type)
     return entry.get("calibration_mode", "contact")
@@ -201,6 +202,87 @@ def list_measurement_methods(
             if is_measurement_result(annotation):
                 methods.add(method_name)
     return sorted(methods, key=_measurement_method_sort_key)
+
+
+# Parameters the protocol engine injects at dispatch time
+# (cubos.protocol_engine.commands._dispatch.inject_runtime_args) — the UI /
+# YAML never supplies these through method_kwargs.
+_ENGINE_INJECTED_PARAMS = {
+    "gantry", "well_z", "measurement_height", "indentation_limit_height",
+}
+
+
+def _method_param_field(name: str, hint: Any, required: bool, default: Any) -> dict[str, Any]:
+    type_name = getattr(hint, "__name__", None) or (str(hint) if hint is not None else "Any")
+    return {
+        "name": name,
+        "type": type_name,
+        "required": required,
+        "default": default,
+        "fields": None,
+    }
+
+
+def list_measurement_method_params(
+    instrument_type: str,
+    vendor: str | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Per measurement method, the parameters ``method_kwargs`` must supply.
+
+    Engine-injected parameters are excluded. A parameter annotated with a
+    dataclass (e.g. ``run_OCP(params: OCPParams)``) carries its dataclass
+    fields under ``fields`` so a UI can render inputs for them; the engine's
+    dispatch layer coerces the resulting mapping back into the dataclass.
+    When multiple vendors define the same method, the first vendor's
+    signature wins (vendor implementations share the interface's contract).
+    """
+    import dataclasses
+
+    from cubos.protocol_engine.measurements import is_measurement_result
+
+    vendors = [vendor] if vendor is not None else get_supported_vendors(instrument_type)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for vendor_key in vendors:
+        cls = get_instrument_class(instrument_type, vendor_key)
+        for method_name, method in inspect.getmembers(cls, predicate=inspect.isfunction):
+            if method_name.startswith("_") or method_name in out:
+                continue
+            if not is_measurement_result(_return_annotation(method)):
+                continue
+            try:
+                hints = get_type_hints(method)
+            except Exception:
+                hints = {}
+            specs: list[dict[str, Any]] = []
+            for param in inspect.signature(method).parameters.values():
+                if param.name == "self" or param.name in _ENGINE_INJECTED_PARAMS:
+                    continue
+                if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+                    continue
+                hint = hints.get(param.name)
+                required = param.default is inspect.Parameter.empty
+                spec = _method_param_field(
+                    param.name, hint, required,
+                    None if required else param.default,
+                )
+                if hint is not None and dataclasses.is_dataclass(hint) and isinstance(hint, type):
+                    try:
+                        field_hints = get_type_hints(hint)
+                    except Exception:
+                        field_hints = {}
+                    spec["fields"] = [
+                        _method_param_field(
+                            field.name,
+                            field_hints.get(field.name),
+                            field.default is dataclasses.MISSING
+                            and field.default_factory is dataclasses.MISSING,
+                            field.default if field.default is not dataclasses.MISSING else None,
+                        )
+                        for field in dataclasses.fields(hint)
+                    ]
+                specs.append(spec)
+            out[method_name] = specs
+    return {name: out[name] for name in sorted(out, key=_measurement_method_sort_key)}
 
 
 def _instrument_entry(instrument_type: str) -> dict[str, Any]:

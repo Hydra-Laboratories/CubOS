@@ -123,3 +123,36 @@ def test_resolve_config_path_rejects_traversal_filename():
         configs_dir.mkdir(parents=True)
         with pytest.raises(ValueError):
             resolve_config_path(configs_dir, "deck", "..\\..\\evil.yaml")
+
+
+def test_read_yaml_is_safe_under_concurrent_reads(tmp_path):
+    import threading
+
+    from cubos_api.services.yaml_io import read_yaml
+
+    files = []
+    for index in range(3):
+        path = tmp_path / f"config_{index}.yaml"
+        body = "\n".join(
+            f"key_{index}_{n}:\n  nested: value_{index}_{n}\n  items: [{n}, {n + 1}, {n + 2}]"
+            for n in range(200)
+        )
+        path.write_text(body + "\n", encoding="utf-8")
+        files.append(path)
+    expected = {path: dict(read_yaml(path)) for path in files}
+    failures: list[str] = []
+
+    def worker(path):
+        for _ in range(20):
+            try:
+                if dict(read_yaml(path)) != expected[path]:
+                    failures.append(f"mismatch reading {path.name}")
+            except Exception as exc:
+                failures.append(f"{type(exc).__name__} reading {path.name}")
+
+    threads = [threading.Thread(target=worker, args=(path,)) for path in files * 2]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert failures == []

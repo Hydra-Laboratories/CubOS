@@ -53,13 +53,13 @@ describe("DataOutputPanel", () => {
     expect(screen.getByText("No campaigns yet — run a protocol to create one.")).toBeInTheDocument();
   });
 
-  it("disables export buttons when a campaign has no measurements", () => {
+  it("disables Download Data when a campaign has no measurements", () => {
     renderPanel({
       campaigns: [campaign({ measurement_count: 0, asmi_measurement_count: 0 })],
     });
 
-    expect(screen.getByRole("button", { name: "Measurements ZIP" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "ASMI ZIP" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Download Data" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "ASMI ZIP" })).not.toBeInTheDocument();
   });
 
   it("shows export failures and re-enables the export button", async () => {
@@ -73,11 +73,11 @@ describe("DataOutputPanel", () => {
     vi.stubGlobal("fetch", fetchMock);
     renderPanel();
 
-    const exportButton = screen.getByRole("button", { name: "Measurements ZIP" });
+    const exportButton = screen.getByRole("button", { name: "Download Data" });
     await user.click(exportButton);
 
     expect(await screen.findByText("Export failed: zip writer failed")).toBeInTheDocument();
     await waitFor(() => expect(exportButton).toBeEnabled());
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/data/campaigns/1/measurements.zip");
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/data/campaigns/1/data.zip");
   });
 });

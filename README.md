@@ -5,6 +5,8 @@ GRBL gantry motion, mounted instruments, deck labware, YAML protocols, offline
 motion validation, and SQLite-backed experiment data into one operator and
 developer workflow.
 
+Supported by [Ursa Labs](https://ursalabs.ai).
+
 <p align="center">
   <img src="docs/images/cubos-demo.gif" alt="A CubOS-driven gantry running an automated protocol over a 96-well plate" width="360">
 </p>
@@ -158,3 +160,9 @@ python -m cubos.tools.validate_setup \
 ```
 
 Run `mkdocs build --strict` before publishing documentation changes.
+
+## Supported by Ursa Labs
+
+CubOS is built and supported by [Ursa Labs](https://ursalabs.ai). Visit
+[ursalabs.ai](https://ursalabs.ai) to learn more about the platform and the
+hardware it runs on.

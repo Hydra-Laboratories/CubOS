@@ -1,0 +1,17 @@
+# TipRack (deck.labware.tip_rack.TipRack) — PANDA 13-column x 2-row rack.
+#
+# Geometry only: measure and set calibration + pickup_z in each deck YAML.
+# tip_length is the attached-tip extension below the bare Sartorius nozzle,
+# bench-measured 2026-08-24.
+
+type: tip_rack
+name: ursa_13x2_tip_rack
+model_name: panda_13x2_tip_rack
+rows: 2
+columns: 13
+length: 30.0
+width: 140.0
+height: 17.0
+tip_length: 70.0
+x_offset: 10.0
+y_offset: 10.0

@@ -130,7 +130,7 @@ def test_protocols_encode_distinct_tips_and_expected_fluid_math():
     ]
     assert len(tip_slots) == len(set(tip_slots))
     assert [
-        (item["position"], item["volume_ul"], item["repetitions"])
+        (item["position"], item["volume_ul"], item["cycles"])
         for item in mixes
     ] == [
         ("assay_plate.A1", 60.0, 3),

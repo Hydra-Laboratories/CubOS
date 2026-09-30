@@ -225,7 +225,8 @@ connection and has no `--port` flag.
    prompted.
 11. For an RPi camera, center the camera over the same block mark, press Enter,
    then measure and enter the height from the calibration block top to the
-   camera reference point.
+   camera reference point. Lighting instruments have no step of their own —
+   they are co-mounted with the camera and reuse its calibration.
 12. For pipette setups, jog the pipette to the center reference point on the
    block when prompted.
 13. Let the script compute each instrument's offsets.

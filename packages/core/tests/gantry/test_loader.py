@@ -71,6 +71,27 @@ class TestLoadGantryFromYaml:
         finally:
             os.unlink(path)
 
+    def test_loaded_gantry_default_feed_rate_defaults_to_none(self):
+        path = _write_temp_yaml(VALID_GANTRY_YAML)
+        try:
+            config = load_gantry_from_yaml(path)
+            assert config.default_feed_rate_mm_min is None
+        finally:
+            os.unlink(path)
+
+    def test_loaded_gantry_reads_default_feed_rate(self):
+        path = _write_temp_yaml(
+            VALID_GANTRY_YAML.replace(
+                "safe_z: 75.0",
+                "safe_z: 75.0\n  default_feed_rate_mm_min: 4000.0",
+            )
+        )
+        try:
+            config = load_gantry_from_yaml(path)
+            assert config.default_feed_rate_mm_min == 4000.0
+        finally:
+            os.unlink(path)
+
     def test_loaded_gantry_defaults_to_deck_origin_policy(self):
         path = _write_temp_yaml(VALID_GANTRY_YAML)
         try:

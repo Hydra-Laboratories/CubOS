@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from cubos.instruments.base_instrument import BaseInstrument
+from cubos.gantry.errors import LocationNotFound, MillConnectionError
 from cubos.gantry.instrument_mount import InstrumentedGantry
 
 
@@ -78,7 +79,7 @@ class TestInstrumentedGantryConstruction:
 class TestInstrumentedGantryMove:
 
     def test_move_by_name_calls_gantry_move_to(self):
-        gantry = _mock_gantry()
+        gantry = _mock_gantry(x=90.0, y=45.0)
         pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
 
@@ -87,7 +88,7 @@ class TestInstrumentedGantryMove:
         gantry.move_to.assert_called_once_with(90.0, 45.0, 22.0, travel_z=None)
 
     def test_move_by_instance_calls_gantry_move_to(self):
-        gantry = _mock_gantry()
+        gantry = _mock_gantry(x=90.0, y=45.0)
         pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
 
@@ -96,7 +97,7 @@ class TestInstrumentedGantryMove:
         gantry.move_to.assert_called_once_with(90.0, 45.0, 22.0, travel_z=None)
 
     def test_move_zero_offset_passes_position_through(self):
-        gantry = _mock_gantry()
+        gantry = _mock_gantry(x=200.0, y=100.0)
         instr = _mock_instrument("router", offset_x=0.0, offset_y=0.0, depth=0.0)
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"router": instr})
 
@@ -106,7 +107,7 @@ class TestInstrumentedGantryMove:
 
     def test_move_positive_offset(self):
         """Instrument mounted to the right (+x) of the router."""
-        gantry = _mock_gantry()
+        gantry = _mock_gantry(x=35.0, y=20.0)
         instr = _mock_instrument("sensor", offset_x=15.0, offset_y=10.0, depth=3.0)
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"sensor": instr})
 
@@ -120,7 +121,7 @@ class TestInstrumentedGantryMove:
         with pytest.raises(KeyError, match="Unknown instrument 'nope'"):
             instrumented_gantry.move("nope", (0.0, 0.0, 0.0))
 
-    def test_move_does_not_call_other_gantry_methods(self):
+    def test_move_only_reads_position_and_moves(self):
         gantry = _mock_gantry()
         instr = _mock_instrument("pipette")
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": instr})
@@ -128,10 +129,11 @@ class TestInstrumentedGantryMove:
         instrumented_gantry.move("pipette", (0.0, 0.0, 0.0))
 
         gantry.move_to.assert_called_once()
-        gantry.get_coordinates.assert_not_called()
+        gantry.get_coordinates.assert_called_once()
+        assert {c[0] for c in gantry.method_calls} == {"get_coordinates", "move_to"}
 
     def test_move_accepts_labware_object(self):
-        gantry = _mock_gantry()
+        gantry = _mock_gantry(x=140.0, y=70.0)
         instr = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": instr})
         lw = _mock_labware(x=150.0, y=75.0, z=10.0)
@@ -293,6 +295,100 @@ class TestInstrumentedGantryDisconnectInstruments:
         instrumented_gantry.disconnect_instruments()
 
 
+# ─── Raw move lift-before-XY tests ───────────────────────────────────────────
+
+
+class TestRawMoveLiftsBeforeXY:
+    def _ig(self, gantry, depth=0.0, safe_z=60.0, z_max=100.0):
+        if z_max is not None:
+            gantry.config = {"working_volume": {"z_max": z_max}}
+        instr = _mock_instrument("tool", depth=depth)
+        return InstrumentedGantry(controller=gantry, instruments={"tool": instr}, safe_z=safe_z)
+
+    def test_xy_change_without_travel_z_lifts_to_ceiling(self):
+        gantry = _mock_gantry(x=0.0, y=0.0, z=30.0)
+        ig = self._ig(gantry, depth=10.0)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        # tip travel_z = max(safe_z 60, z_max 100 - depth 10) = 90 -> gantry 100
+        gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=100.0)
+
+    def test_deep_safe_z_wins_over_ceiling(self):
+        gantry = _mock_gantry()
+        ig = self._ig(gantry, depth=10.0, safe_z=95.0)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=105.0)
+
+    def test_z_only_move_is_sent_direct(self):
+        gantry = _mock_gantry(x=50.0, y=20.0, z=60.0)
+        ig = self._ig(gantry, depth=10.0)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=None)
+
+    def test_sub_tolerance_xy_jitter_counts_as_same_xy(self):
+        gantry = _mock_gantry(x=50.004, y=19.996, z=60.0)
+        ig = self._ig(gantry)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        assert gantry.move_to.call_args.kwargs == {"travel_z": None}
+
+    def test_explicit_travel_z_is_honored(self):
+        gantry = _mock_gantry()
+        ig = self._ig(gantry, depth=10.0)
+        ig.move("tool", (50.0, 20.0, 15.0), travel_z=30.0)
+        gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=40.0)
+
+    def test_unknown_position_lifts(self):
+        gantry = _mock_gantry(x=50.0, y=20.0)
+        gantry.get_coordinates.side_effect = LocationNotFound("no status")
+        ig = self._ig(gantry)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
+
+    def test_unparseable_position_lifts(self):
+        gantry = MagicMock()
+        ig = self._ig(gantry)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
+
+    def test_position_missing_axis_lifts(self):
+        gantry = _mock_gantry()
+        gantry.get_coordinates.return_value = {"z": 10.0}
+        ig = self._ig(gantry)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
+
+    def test_non_finite_position_lifts(self):
+        gantry = _mock_gantry(x=float("nan"), y=20.0)
+        ig = self._ig(gantry)
+        ig.move("tool", (50.0, 20.0, 15.0))
+        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
+
+    def test_connection_error_propagates(self):
+        gantry = _mock_gantry()
+        gantry.get_coordinates.side_effect = MillConnectionError("serial dropped")
+        ig = self._ig(gantry)
+        with pytest.raises(MillConnectionError):
+            ig.move("tool", (50.0, 20.0, 15.0))
+        gantry.move_to.assert_not_called()
+
+    def test_no_safe_z_and_no_volume_falls_back_to_direct(self, caplog):
+        gantry = _mock_gantry()
+        gantry.config = {}
+        instr = _mock_instrument("tool")
+        ig = InstrumentedGantry(controller=gantry, instruments={"tool": instr})
+        with caplog.at_level("WARNING"):
+            ig.move("tool", (50.0, 20.0, 15.0))
+        gantry.move_to.assert_called_once_with(50.0, 20.0, 15.0, travel_z=None)
+        assert "will not lift" in caplog.text
+
+    def test_multi_tool_safe_travel_z_uses_effective_depth(self):
+        gantry = _mock_gantry()
+        gantry.config = {"working_volume": {"z_max": 100.0}}
+        instr = _mock_instrument("tool", depth=10.0)
+        instr.effective_depth = 40.0
+        ig = InstrumentedGantry(controller=gantry, instruments={"tool": instr}, safe_z=20.0)
+        assert ig.multi_tool_safe_travel_z("tool") == 60.0
+
+
 # ─── move_to_labware tests ───────────────────────────────────────────────────
 #
 # move_to_labware issues one gantry.move_to with travel_z = approach Z.
@@ -374,3 +470,44 @@ class TestInstrumentedGantryMoveToLabware:
         instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"probe": instr})
         with pytest.raises(ValueError, match="non-finite"):
             instrumented_gantry.move("probe", (10.0, 20.0, float("nan")))
+
+
+# ─── Travel-ceiling tests ────────────────────────────────────────────────────
+
+class TestTravelCeiling:
+    def _controller_with_volume(self, z_max=167.848):
+        controller = _mock_gantry()
+        controller.config = {"working_volume": {"z_max": z_max}}
+        return controller
+
+    def test_travel_rides_working_volume_ceiling(self):
+        controller = self._controller_with_volume()
+        instr = _mock_instrument(depth=0.0)
+        ig = InstrumentedGantry(
+            controller=controller, instruments={"pipette": instr}, safe_z=97.848,
+        )
+        ig.move_to_labware("pipette", _mock_labware(z=46.0))
+        args, kwargs = controller.move_to.call_args
+        assert kwargs["travel_z"] == 167.848
+        assert args[2] == 97.848
+
+    def test_deep_instrument_still_travels_at_ceiling(self):
+        controller = self._controller_with_volume()
+        instr = _mock_instrument(depth=70.0)
+        ig = InstrumentedGantry(
+            controller=controller, instruments={"pipette": instr}, safe_z=97.848,
+        )
+        ig.move_to_labware("pipette", _mock_labware())
+        _, kwargs = controller.move_to.call_args
+        assert kwargs["travel_z"] == 167.848
+
+    def test_without_working_volume_falls_back_to_safe_z(self):
+        controller = _mock_gantry()
+        controller.config = {}
+        instr = _mock_instrument(depth=5.0)
+        ig = InstrumentedGantry(
+            controller=controller, instruments={"probe": instr}, safe_z=60.0,
+        )
+        ig.move_to_labware("probe", _mock_labware())
+        _, kwargs = controller.move_to.call_args
+        assert kwargs["travel_z"] == 65.0

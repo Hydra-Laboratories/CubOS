@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import ProtocolEditor from "./ProtocolEditor";
@@ -22,6 +22,7 @@ const COMMANDS: CommandInfo[] = [
       { name: "instrument", type: "str", required: true, default: null },
       { name: "method", type: "str", required: true, default: null },
       { name: "measurement_height", type: "float", required: true, default: null },
+      { name: "indentation_limit_height", type: "float | None", required: false, default: null },
       { name: "method_kwargs", type: "Dict[str, Any] | None", required: false, default: null },
     ],
   },
@@ -118,6 +119,46 @@ function renderProtocol(overrides: Partial<React.ComponentProps<typeof ProtocolE
 }
 
 describe("ProtocolEditor", () => {
+  it("adds Rinse with a potentiostat and vial choices and saves the selected depth", async () => {
+    const user = userEvent.setup();
+    const rinse: CommandInfo = {
+      name: "rinse", description: "Dip the potentiostat three times",
+      args: [
+        { name: "instrument", type: "str", required: true, default: null },
+        { name: "vial", type: "str", required: true, default: null },
+        { name: "measurement_height", type: "float", required: true, default: null },
+      ],
+    };
+    const props = renderProtocol({
+      commands: [...COMMANDS, rinse], steps: [],
+      gantry: { ...GANTRY, config: { ...GANTRY.config, instruments: {
+        ...GANTRY.config.instruments,
+        pstat: { type: "potentiostat", vendor: "mock", offset_x: 0, offset_y: 0 },
+      } } },
+      deck: { ...DECK, labware: [...DECK.labware, {
+        key: "rinse_vial", wells: null,
+        config: { type: "vial", name: "Rinse water", model_name: "4ml", height: 30, diameter: 10, location: { x: 10, y: 10, z: 20 }, capacity_ul: 4000, working_volume_ul: 3000 },
+      }, {
+        key: "holder", wells: null,
+        config: { type: "vial_holder", name: "Rinse holder" },
+        positions: { vial_1: { x: 30, y: 10, z: 20 } },
+      }] },
+    });
+    await user.selectOptions(screen.getByRole("combobox", { name: "Add step" }), "rinse");
+    await user.click(screen.getByRole("button", { name: "Add" }));
+    const instrument = screen.getByRole("combobox", { name: /Instrument/ });
+    expect(instrument).toHaveValue("pstat");
+    expect(instrument.querySelectorAll("option")).toHaveLength(1);
+    const vial = screen.getByRole("combobox", { name: /Vial/ });
+    expect(vial).toHaveValue("rinse_vial");
+    expect(vial.querySelectorAll("option")).toHaveLength(2);
+    await user.selectOptions(vial, "holder.vial_1");
+    fireEvent.change(screen.getByLabelText(/Measurement height/), { target: { value: "-5" } });
+    expect(props.onLocalChange).toHaveBeenLastCalledWith([
+      { command: "rinse", args: { instrument: "pstat", vial: "holder.vial_1", measurement_height: -5 } },
+    ]);
+  });
+
   it("shows the empty state when no steps are loaded", () => {
     renderProtocol({ steps: null });
     expect(screen.getByText("Load a protocol or add steps.")).toBeInTheDocument();
@@ -433,6 +474,118 @@ describe("ProtocolEditor", () => {
     ]);
   });
 
+  it("does not inject a method arg into commands that do not declare one", async () => {
+    const user = userEvent.setup();
+    const decap: CommandInfo = {
+      name: "decap",
+      description: "Decap",
+      args: [
+        { name: "instrument", type: "str", required: true, default: null },
+        { name: "vial", type: "str", required: true, default: null },
+      ],
+    };
+    const props = renderProtocol({
+      commands: [...COMMANDS, decap],
+      gantry: {
+        ...GANTRY,
+        config: {
+          ...GANTRY.config,
+          instruments: {
+            ...GANTRY.config.instruments,
+            capper: { type: "capper", vendor: "pawduino", offset_x: 0, offset_y: 0 },
+          },
+        },
+      },
+      steps: [{ command: "decap", args: { instrument: "asmi", vial: "plate_1.A1" } }],
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: /Instrument/ }), "capper");
+
+    expect(props.onLocalChange).toHaveBeenLastCalledWith([
+      { command: "decap", args: { instrument: "capper", vial: "plate_1.A1" } },
+    ]);
+  });
+
+  it("omits indentation_limit_height instead of saving an empty string when cleared, for measure", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({
+      steps: [
+        {
+          command: "measure",
+          args: {
+            instrument: "asmi",
+            position: "plate_1.A1",
+            method: "indentation",
+            measurement_height: -1,
+            indentation_limit_height: -5,
+            method_kwargs: { force_limit: 10 },
+          },
+        },
+      ],
+    });
+
+    const field = screen.getByLabelText(/Indentation limit height/);
+    expect(field).toHaveValue("-5");
+    await user.clear(field);
+
+    const calls = vi.mocked(props.onLocalChange!).mock.calls;
+    const lastCall = calls[calls.length - 1][0];
+    expect(lastCall[0].args).not.toHaveProperty("indentation_limit_height");
+  });
+
+  it("omits indentation_limit_height instead of saving an empty string when cleared, for scan", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({
+      steps: [
+        {
+          command: "scan",
+          args: {
+            plate: "plate_1",
+            instrument: "asmi",
+            method: "indentation",
+            measurement_height: -1,
+            indentation_limit_height: -5,
+            method_kwargs: { force_limit: 10 },
+          },
+        },
+      ],
+    });
+
+    const field = screen.getByLabelText(/Indentation limit height/);
+    expect(field).toHaveValue("-5");
+    await user.clear(field);
+
+    const calls = vi.mocked(props.onLocalChange!).mock.calls;
+    const lastCall = calls[calls.length - 1][0];
+    expect(lastCall[0].args).not.toHaveProperty("indentation_limit_height");
+  });
+
+  it("saves a newly entered indentation_limit_height as a number", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({
+      steps: [
+        {
+          command: "measure",
+          args: {
+            instrument: "asmi",
+            position: "plate_1.A1",
+            method: "indentation",
+            measurement_height: -1,
+            method_kwargs: { force_limit: 10 },
+          },
+        },
+      ],
+    });
+
+    const field = screen.getByLabelText(/Indentation limit height/);
+    expect(field).toHaveValue("");
+    await user.type(field, "-2.5");
+
+    const calls = vi.mocked(props.onLocalChange!).mock.calls;
+    const lastCall = calls[calls.length - 1][0];
+    expect(lastCall[0].args.indentation_limit_height).toBe(-2.5);
+  });
+
   it("renames a named position and rewrites the steps that reference it", async () => {
     const user = userEvent.setup();
     const props = renderProtocol({
@@ -599,6 +752,98 @@ describe("ProtocolEditor", () => {
     );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run Protocol" })).toBeEnabled();
+  });
+});
+
+describe("ProtocolEditor raw YAML panel", () => {
+  it("shows the current protocol as YAML text alongside the structured form", async () => {
+    const user = userEvent.setup();
+    renderProtocol({
+      steps: STEPS,
+      positions: { park_position: [360, 250, 85] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+
+    const textarea = screen.getByLabelText("Raw YAML") as HTMLTextAreaElement;
+    expect(textarea.value).toContain("move:");
+    expect(textarea.value).toContain("park_position");
+    // The panel is a supplement to the structured form, not a replacement —
+    // both are visible at once.
+    expect(screen.getByText("Named Positions")).toBeInTheDocument();
+    expect(screen.getByText(/Step 1:/)).toBeInTheDocument();
+  });
+
+  it("applies edits from the raw textarea into steps/positions on Apply to form", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({ steps: STEPS, positions: null });
+
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    const textarea = screen.getByLabelText("Raw YAML");
+    const nextYaml = [
+      "positions:",
+      "  park_position:",
+      "    - 360",
+      "    - 250",
+      "    - 85",
+      "protocol:",
+      "  - home: null",
+      "",
+    ].join("\n");
+    // A raw YAML blob (with literal braces/brackets) is entered as one
+    // paste rather than keystroke-by-keystroke — user.type() treats `{`
+    // and `[` as special key-sequence syntax, which a real YAML document
+    // will always contain.
+    fireEvent.change(textarea, { target: { value: nextYaml } });
+    await user.click(screen.getByRole("button", { name: "Apply to form" }));
+
+    expect(props.onLocalChange).toHaveBeenCalledWith([{ command: "home", args: {} }]);
+    expect(props.onPositionsChange).toHaveBeenCalledWith({ park_position: [360, 250, 85] });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalledWith(
+      "move.yaml",
+      expect.objectContaining({
+        positions: { park_position: [360, 250, 85] },
+        protocol: [{ command: "home", args: {} }],
+      }),
+    );
+  });
+
+  it("shows a parse error and does not apply when the YAML doesn't parse", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({ steps: STEPS });
+
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    const textarea = screen.getByLabelText("Raw YAML");
+    fireEvent.change(textarea, { target: { value: "protocol: [unterminated" } });
+    await user.click(screen.getByRole("button", { name: "Apply to form" }));
+
+    expect(screen.getByText(/must be sufficiently indented/i)).toBeInTheDocument();
+    expect(props.onLocalChange).not.toHaveBeenCalled();
+  });
+
+  it("rejects YAML missing a protocol list without applying", async () => {
+    const user = userEvent.setup();
+    const props = renderProtocol({ steps: STEPS });
+
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    const textarea = screen.getByLabelText("Raw YAML");
+    fireEvent.change(textarea, { target: { value: "positions: {}\n" } });
+    await user.click(screen.getByRole("button", { name: "Apply to form" }));
+
+    expect(screen.getByText(/`protocol:` must be a list/i)).toBeInTheDocument();
+    expect(props.onLocalChange).not.toHaveBeenCalled();
+  });
+
+  it("hides the textarea again on Hide raw YAML", async () => {
+    const user = userEvent.setup();
+    renderProtocol({ steps: STEPS });
+
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    await user.click(screen.getByRole("button", { name: "Hide raw YAML" }));
+
+    expect(screen.queryByLabelText("Raw YAML")).not.toBeInTheDocument();
   });
 });
 

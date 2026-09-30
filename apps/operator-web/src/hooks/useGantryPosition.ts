@@ -52,6 +52,14 @@ export function useInstrumentMethods() {
   });
 }
 
+export function useInstrumentMethodParams() {
+  return useQuery({
+    queryKey: ["gantry", "instrument-method-params"],
+    queryFn: gantryApi.getInstrumentMethodParams,
+    staleTime: Infinity,
+  });
+}
+
 export function useGantry(filename: string | null) {
   return useQuery({
     queryKey: ["gantry", filename],
@@ -68,6 +76,17 @@ export function useSaveGantry() {
       qc.setQueryData(["gantry", filename], data);
       qc.invalidateQueries({ queryKey: ["gantry", "configs"] });
       qc.invalidateQueries({ queryKey: ["gantry", filename] });
+    },
+  });
+}
+
+export function useDeleteGantry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => gantryApi.delete(filename),
+    onSuccess: (_data, filename) => {
+      qc.removeQueries({ queryKey: ["gantry", filename] });
+      qc.invalidateQueries({ queryKey: ["gantry", "configs"] });
     },
   });
 }

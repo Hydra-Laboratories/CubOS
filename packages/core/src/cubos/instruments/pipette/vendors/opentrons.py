@@ -1,10 +1,12 @@
 import math
-import threading
-import time
 from typing import Optional
 
-import serial
-
+from cubos.instruments.controllers.pawduino import (
+    PawduinoLink,
+    PawduinoLinkCommandError,
+    PawduinoLinkError,
+    PawduinoLinkTimeoutError,
+)
 from cubos.instruments.pipette.interface import PipetteInstrument
 from cubos.instruments.pipette.exceptions import (
     PipetteCommandError,
@@ -15,9 +17,8 @@ from cubos.instruments.pipette.exceptions import (
 from cubos.instruments.pipette.liquid_class import build_liquid_classes
 from cubos.instruments.pipette.models import (
     AspirateResult,
-    MixResult,
-    PipetteConfig,
     PipetteStatus,
+    PlungerPipetteConfig,
     PIPETTE_MODELS,
 )
 
@@ -26,10 +27,7 @@ _CMD_MOVE_TO = 11
 _CMD_ASPIRATE = 12
 _CMD_DISPENSE = 13
 _CMD_STATUS = 14
-_CMD_MIX = 15
 _CMD_DRIP_STOP = 28
-
-_ARDUINO_SETTLE_TIME = 2.0
 
 # The firmware replies only after a motion completes, and plunger motion is
 # slow: full 55 mm travel at the default velocity takes ~35 s, and a failed
@@ -78,7 +76,7 @@ class OpentronsPipette(PipetteInstrument):
                 f"Unknown pipette model '{pipette_model}'. "
                 f"Available: {', '.join(sorted(PIPETTE_MODELS.keys()))}"
             )
-        self._config: PipetteConfig = PIPETTE_MODELS[pipette_model]
+        self._config: PlungerPipetteConfig = PIPETTE_MODELS[pipette_model]
         # Per-liquid-class stroke-volume correction (multiplier + offset_ul),
         # keyed by an operator-chosen name; empty/disabled unless configured.
         # See cubos.instruments.pipette.liquid_class for the parametric form.
@@ -86,8 +84,7 @@ class OpentronsPipette(PipetteInstrument):
         self._port = port
         self._baud_rate = baud_rate
         self._command_timeout = command_timeout
-        self._serial: Optional[serial.Serial] = None
-        self._lock = threading.Lock()
+        self._link: Optional[PawduinoLink] = None
         self._has_tip = False
         self._attached_tip_extension = 0.0
         self._position_mm = 0.0
@@ -95,7 +92,7 @@ class OpentronsPipette(PipetteInstrument):
         self._is_primed = False
 
     @property
-    def config(self) -> PipetteConfig:
+    def config(self) -> PlungerPipetteConfig:
         return self._config
 
     @property
@@ -128,27 +125,18 @@ class OpentronsPipette(PipetteInstrument):
         if self._offline:
             self.logger.info("Pipette connected (offline)")
             return
+        # The capper and lights share this Arduino via one link per port.
         try:
-            self._serial = serial.Serial(
-                port=self._port,
-                baudrate=self._baud_rate,
-                timeout=self._command_timeout,
-            )
-        except serial.SerialException as exc:
-            raise PipetteConnectionError(
-                f"Cannot open serial port {self._port}: {exc}"
-            ) from exc
-
-        time.sleep(_ARDUINO_SETTLE_TIME)
-        # Opening the port resets the Arduino; discard the boot banner so it
-        # is not mistaken for the first command's response. The banner can
-        # trail the settle sleep, so drain until the line goes quiet.
-        self._drain_input()
+            self._link = PawduinoLink.acquire(self._port, self._baud_rate)
+            self._link.connect(timeout=self._command_timeout)
+        except PawduinoLinkError as exc:
+            self._link = None
+            raise PipetteConnectionError(str(exc)) from exc
 
         try:
             status = self.get_status()
         except (PipetteCommandError, PipetteTimeoutError) as exc:
-            self._close_serial()
+            self._release_link()
             raise PipetteConnectionError(
                 f"Arduino did not respond after connect: {exc}"
             ) from exc
@@ -162,7 +150,7 @@ class OpentronsPipette(PipetteInstrument):
                 self.home()
                 self.prime()
             except (PipetteCommandError, PipetteTimeoutError) as exc:
-                self._close_serial()
+                self._release_link()
                 raise PipetteConnectionError(
                     f"Plunger home/prime after connect failed: {exc}"
                 ) from exc
@@ -175,13 +163,13 @@ class OpentronsPipette(PipetteInstrument):
         if self._offline:
             self.logger.info("Pipette disconnected (offline)")
             return
-        self._close_serial()
+        self._release_link()
         self.logger.info("Disconnected from pipette")
 
     def health_check(self) -> bool:
         if self._offline:
             return True
-        if self._serial is None or not self._serial.is_open:
+        if self._link is None or not self._link.is_open:
             return False
         try:
             self.get_status()
@@ -266,20 +254,6 @@ class OpentronsPipette(PipetteInstrument):
             timeout=_MOTION_TIMEOUT,
         )
 
-    def mix(
-        self, volume_ul: float, repetitions: int = 3, speed: float = 50.0
-    ) -> MixResult:
-        self._validate_volume(volume_ul)
-        if not self._offline:
-            mm_travel = volume_ul * self._config.mm_to_ul
-            self._send_command(
-                _CMD_MIX, mm_travel, repetitions, _FIRMWARE_DEFAULT_SPEED,
-                timeout=_MOTION_TIMEOUT
-            )
-        return MixResult(
-            success=True, volume_ul=volume_ul, repetitions=repetitions
-        )
-
     def pick_up_tip(self, speed: float = 50.0) -> None:
         if not self._offline:
             self._send_command(
@@ -356,18 +330,6 @@ class OpentronsPipette(PipetteInstrument):
 
     # ── Private helpers ───────────────────────────────────────────────────
 
-    def _drain_input(self, quiet_s: float = 0.6, max_s: float = 5.0) -> None:
-        """Discard pending input until the port stays quiet for *quiet_s*."""
-        if self._serial is None:
-            return
-        deadline = time.monotonic() + max_s
-        while time.monotonic() < deadline:
-            if self._serial.in_waiting:
-                self._serial.reset_input_buffer()
-            time.sleep(quiet_s)
-            if not self._serial.in_waiting:
-                return
-
     def _send_command(
         self,
         code: int,
@@ -375,49 +337,17 @@ class OpentronsPipette(PipetteInstrument):
         timeout: Optional[float] = None,
         expect: Optional[str] = None,
     ) -> str:
-        if self._serial is None or not self._serial.is_open:
+        if self._link is None:
             raise PipetteCommandError("Not connected to Arduino")
         wait = self._command_timeout if timeout is None else timeout
-
-        parts = [str(code)] + [str(a) for a in args]
-        message = ",".join(parts) + "\n"
-
-        with self._lock:
-            try:
-                self._serial.write(message.encode())
-                self._serial.flush()
-            except serial.SerialException as exc:
-                raise PipetteCommandError(
-                    f"Failed to send command {code}: {exc}"
-                ) from exc
-
-            deadline = time.monotonic() + wait
-            while time.monotonic() < deadline:
-                try:
-                    line = self._serial.readline().decode().strip()
-                except serial.SerialException as exc:
-                    raise PipetteCommandError(
-                        f"Serial read error for command {code}: {exc}"
-                    ) from exc
-
-                if not line:
-                    continue
-                if line.startswith("OK:"):
-                    if expect is not None and expect not in line:
-                        self.logger.debug(
-                            "Ignoring unexpected response %r to command %d",
-                            line, code,
-                        )
-                        continue
-                    return line
-                if line.startswith("ERR:"):
-                    raise PipetteCommandError(
-                        f"Command {code} failed: {line}"
-                    )
-
-            raise PipetteTimeoutError(
-                f"Timed out ({wait}s) waiting for response to command {code}"
+        try:
+            return self._link.send_command(
+                code, *args, timeout=wait, expect=expect,
             )
+        except PawduinoLinkTimeoutError as exc:
+            raise PipetteTimeoutError(str(exc)) from exc
+        except PawduinoLinkCommandError as exc:
+            raise PipetteCommandError(str(exc)) from exc
 
     @staticmethod
     def _parse_key_value(response: str) -> dict[str, float]:
@@ -446,13 +376,10 @@ class OpentronsPipette(PipetteInstrument):
         parsed = OpentronsPipette._parse_key_value(response)
         return float(parsed.get("pos", 0.0))
 
-    def _close_serial(self) -> None:
-        if self._serial is not None:
-            try:
-                self._serial.close()
-            except serial.SerialException:
-                pass
-            self._serial = None
+    def _release_link(self) -> None:
+        if self._link is not None:
+            self._link.disconnect()
+            self._link = None
 
     def _validate_volume(self, volume_ul: float) -> None:
         if (

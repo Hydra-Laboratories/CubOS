@@ -1,0 +1,58 @@
+# PANDA imaging bring-up: move, shine a light, take a picture.
+#
+# Pair with gantry/cub_xl_panda_imaging.yaml and deck/panda_deck.yaml.
+# Dry-run ready as checked in (all instruments offline: capture writes
+# placeholder PNGs under ~/.cubos/images, set_lights simulates); flip the
+# gantry YAML's offline flags for the real bench.
+#
+#   python -m cubos.tools.run_protocol \
+#     configs/gantry/cub_xl_panda_imaging.yaml \
+#     configs/deck/panda_deck.yaml \
+#     configs/protocol/panda/imaging_demo.yaml \
+#     [--mock]
+#
+# The explicit three-step sequence (move -> set_lights -> capture) and the
+# one-step image_well below produce the same kind of shot; image_well adds
+# the descent to a focus plane (image_height, mm above the well rim) and
+# guaranteed lights-off + retract even on failure. Tune image_height to the
+# camera's focus standoff before trusting the framing.
+
+protocol:
+  - home:
+
+  # -- Explicit form: move, shine a light, take a picture -----------------
+  - move:
+      instrument: camera
+      position: well_plate_holder.plate.A1
+
+  - set_lights:
+      instrument: lights
+      channel: white
+      brightness: 5
+
+  - capture:
+      instrument: camera
+      label: a1_white5
+      position: well_plate_holder.plate.A1
+
+  - set_lights:
+      instrument: lights
+      all_off: true
+
+  # -- Packaged form: same sequence plus focus descent and cleanup --------
+  # lights defaults to the gantry's lighting instrument; pass `lights: none`
+  # to image with ambient light.
+  - image_well:
+      camera: camera
+      well: well_plate_holder.plate.B1
+      image_height: 30.0
+      label: b1_standard
+
+  # Curvature Z-stack (contact red/blue lights at 50%, 11 planes x 0.2 mm):
+  # uncomment when contact-angle imaging is wanted.
+  # - image_well:
+  #     camera: camera
+  #     well: well_plate_holder.plate.B2
+  #     image_height: 30.0
+  #     mode: curvature
+  #     label: b2_curvature

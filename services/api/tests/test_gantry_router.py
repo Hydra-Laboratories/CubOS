@@ -1232,3 +1232,37 @@ def test_instrument_methods_use_public_measurement_method_api(monkeypatch):
     assert response.status_code == 200
     assert response.json() == {"demo": ["measure"]}
     assert calls == ["demo"]
+
+
+def test_delete_gantry_removes_file_and_404s_when_missing(monkeypatch, tmp_path):
+    config_dir = tmp_path / "configs"
+    gantry_dir = config_dir / "gantry"
+    gantry_dir.mkdir(parents=True)
+    (gantry_dir / "old.yaml").write_text("working_volume: {}\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    monkeypatch.setattr(gantry_router, "_session", None)
+    app = create_app()
+
+    response = api_request(app, "DELETE", "/api/v1/gantry/old.yaml")
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "filename": "old.yaml"}
+    assert not (gantry_dir / "old.yaml").exists()
+    assert api_request(app, "DELETE", "/api/v1/gantry/old.yaml").status_code == 404
+
+
+def test_delete_gantry_refused_for_connected_config(monkeypatch, tmp_path):
+    config_dir = tmp_path / "configs"
+    gantry_dir = config_dir / "gantry"
+    gantry_dir.mkdir(parents=True)
+    (gantry_dir / "live.yaml").write_text("working_volume: {}\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    monkeypatch.setattr(
+        gantry_router,
+        "_session",
+        SimpleNamespace(connected_gantry_filename="live.yaml"),
+    )
+
+    response = api_request(create_app(), "DELETE", "/api/v1/gantry/live.yaml")
+    assert response.status_code == 409
+    assert "disconnect" in response.json()["detail"]
+    assert (gantry_dir / "live.yaml").exists()

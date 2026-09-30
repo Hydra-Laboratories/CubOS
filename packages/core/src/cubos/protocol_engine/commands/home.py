@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ..registry import protocol_command
+from . import _summaries
 
 if TYPE_CHECKING:
     from ..runtime import ProtocolContext
 
 
-@protocol_command("home")
+@protocol_command("home", summary=_summaries.home)
 def home(context: "ProtocolContext") -> None:
     """Home the gantry without redefining a calibrated deck-origin WCS.
 

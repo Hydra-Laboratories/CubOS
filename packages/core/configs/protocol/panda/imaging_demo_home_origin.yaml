@@ -1,0 +1,55 @@
+# PANDA imaging bring-up in the home-origin (negative) frame:
+# move, shine a light, take a picture.
+#
+# Pair with gantry/cub_xl_panda_home_origin_imaging.yaml and
+# deck/panda_imported_deck.yaml. Dry-run ready as checked in; flip the
+# gantry YAML's offline flags for the real bench.
+#
+#   python -m cubos.tools.run_protocol \
+#     configs/gantry/cub_xl_panda_home_origin_imaging.yaml \
+#     configs/deck/panda_imported_deck.yaml \
+#     configs/protocol/panda/imaging_demo_home_origin.yaml \
+#     [--mock]
+#
+# image_height is labware-relative (mm above the well rim). Well A1 rim sits
+# at z=-81.8, so image_height 35.0 puts the lens at z=-46.8 — a placeholder
+# in PANDA-BEAR's usual focus range; tune with manual capture before
+# trusting the framing.
+
+protocol:
+  - home:
+
+  # -- Explicit form: move, shine a light, take a picture -----------------
+  - move:
+      instrument: camera
+      position: ito_pama_plate.A1
+
+  - set_lights:
+      instrument: lights
+      channel: white
+      brightness: 5
+
+  - capture:
+      instrument: camera
+      label: a1_white5
+      position: ito_pama_plate.A1
+
+  - set_lights:
+      instrument: lights
+      all_off: true
+
+  # -- Packaged form: lights auto-discovered, focus descent, cleanup ------
+  - image_well:
+      camera: camera
+      well: ito_pama_plate.B1
+      image_height: 35.0
+      label: b1_standard
+
+  # Curvature Z-stack (contact red/blue lights at 50%, 11 planes x 0.2 mm):
+  # uncomment when contact-angle imaging is wanted.
+  # - image_well:
+  #     camera: camera
+  #     well: ito_pama_plate.B2
+  #     image_height: 35.0
+  #     mode: curvature
+  #     label: b2_curvature

@@ -181,7 +181,7 @@ describe("CalibrationWizard alarm recovery", () => {
     expect(document.querySelector('[aria-current="step"]')?.textContent).toContain("Prepare");
   });
 
-  it("warns that soft limits are off during calibration", () => {
+  it("tells the operator to jog in small steps near the edges of travel", () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse(position())));
 
     render(
@@ -194,7 +194,7 @@ describe("CalibrationWizard alarm recovery", () => {
       />,
     );
 
-    expect(screen.getByText(/Soft limits are off during calibration/)).toBeInTheDocument();
+    expect(screen.getByText(/Jog in small steps near the edges of travel/)).toBeInTheDocument();
   });
 
   it("automatically recovers and locks controls when Z jog hits a limit", async () => {
@@ -251,7 +251,7 @@ describe("CalibrationWizard alarm recovery", () => {
     }));
 
     await waitFor(() => expect(screen.queryByText("GANTRY ALARM")).not.toBeInTheDocument());
-    expect(await screen.findByText(/Recovered from limit switch after 1 attempt/)).toBeInTheDocument();
+    expect(await screen.findByText(/Backed off the limit switch/)).toBeInTheDocument();
     expect(zDown).not.toBeDisabled();
   });
 
@@ -324,7 +324,7 @@ describe("CalibrationWizard alarm recovery", () => {
     }));
 
     await waitFor(() => expect(screen.queryByText("GANTRY ALARM")).not.toBeInTheDocument());
-    expect(await screen.findByText(/Recovered from limit switch after 1 attempt/)).toBeInTheDocument();
+    expect(await screen.findByText(/Backed off the limit switch/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Z-" })).not.toBeDisabled();
   });
 
@@ -388,7 +388,7 @@ describe("CalibrationWizard alarm recovery", () => {
 
     restore.resolve(jsonResponse(position()));
 
-    expect(await screen.findByText(/no recent jog direction/i)).toBeInTheDocument();
+    expect(await screen.findByText(/cannot back off on its own/i)).toBeInTheDocument();
     expect(recoverCallCount).toBe(0);
   });
 
@@ -431,7 +431,7 @@ describe("CalibrationWizard alarm recovery", () => {
 
     await user.click(zDown);
 
-    expect(await screen.findByText(/Recovered from limit switch after 2 attempts/)).toBeInTheDocument();
+    expect(await screen.findByText(/Backed off the limit switch/)).toBeInTheDocument();
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/gantry/calibration/recover-limit",
       expect.objectContaining({ method: "POST" }),
@@ -474,7 +474,7 @@ describe("CalibrationWizard alarm recovery", () => {
     await user.click(zDown);
 
     expect(await screen.findByText("GANTRY ALARM")).toBeInTheDocument();
-    expect(await screen.findByText(/Limit recovery did not clear the switch/)).toBeInTheDocument();
+    expect(await screen.findByText(/Could not back off the limit switch/)).toBeInTheDocument();
     expect(await screen.findByText(/Limit recovery failed after jog error/)).toBeInTheDocument();
     expect(zDown).toBeDisabled();
   });

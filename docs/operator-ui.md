@@ -1,13 +1,26 @@
 # Use the Operator UI
 
 The Operator UI is CubOS's browser app. It lets you connect to the gantry,
-move it with on-screen buttons, define where your labware sits on the deck,
-and run protocols — all without touching a terminal or editing YAML by hand.
+move it with on-screen buttons, calibrate the machine and its labware, build
+and run protocols, and download results — all without touching a terminal or
+editing YAML by hand.
 
 Everything in this guide happens in a normal web browser. If you can fill in
 a web form, you can drive CubOS.
 
-![The Operator UI with a gantry connected and a 96-well plate on the deck](images/operator-ui-overview.webp)
+This page covers starting the app and finding your way around it. The
+step-by-step tasks each have their own page:
+
+| Task | Page |
+|---|---|
+| Load a machine config, connect, home, and jog | [Gantry: Connect and Move](operator-ui/gantry.md) |
+| Calibrate the gantry's origin and instruments | [Calibrate the Gantry](operator-ui/calibrate-gantry.md) |
+| Define labware on the deck and calibrate its positions | [Deck and Labware](operator-ui/deck-and-labware.md) |
+| Build, validate, and run a protocol | [Protocols](operator-ui/protocols.md) |
+| Download measurements and inspect liquid state | [Results and State](operator-ui/results-and-state.md) |
+
+Every screenshot in these pages is annotated with numbered markers. The list
+under each picture explains what each marker points at.
 
 ## Start the Operator UI
 
@@ -61,11 +74,6 @@ python -m cubos_api
 Your browser opens automatically at `http://127.0.0.1:8742` after a moment.
 Leave the terminal window running; closing it stops the app.
 
-The **Config Directory** shown in the top-right corner is the folder where
-the UI reads and saves your gantry, deck, and protocol files. Click
-**Browse** to point it at a different folder — for example a USB stick or a
-shared drive with your lab's configs.
-
 ### Running on a Raspberry Pi? Forward the port over SSH
 
 When CubOS runs on a Raspberry Pi (or any other machine without a monitor),
@@ -102,190 +110,43 @@ Two things to remember:
     configuration changes on the Pi, and only someone who can log in over
     SSH can reach the controls.
 
-## The Four Views
+## A Tour of the Screen
 
-The buttons in the top bar switch between four views. You will spend most of
-your time in **Workflow**.
+![The Operator UI with a gantry and deck loaded, annotated](images/operator-ui/overview.webp)
 
-| View | What it shows |
-|---|---|
-| **Workflow** | The three editors — Gantry, Deck, and Protocol — where you set up and run everything. |
-| **Visualize** | A full-screen copy of the deck map. |
-| **State** | Live liquid-handling state: container volumes, tips, and caps. |
-| **Results** | Finished campaigns, with measurement downloads. |
+1. **View switcher.** Switches the left panel between **Workflow** (the
+   editors), **Visualize** (a full-size deck map), **State** (liquid,
+   tip, and cap tracking), and **Results** (finished campaigns). A **Run**
+   view appears here while a protocol is running or once one has run.
+2. **Editor tabs.** Inside the Workflow view, **Gantry**, **Deck**, and
+   **Protocol** each edit one YAML file. The loaded filename shows under the
+   tab name; an amber dot means that tab has unsaved edits. **Protocol** is
+   disabled until both a gantry and a deck file are loaded.
+3. **Config picker.** Each tab starts with a dropdown listing the files of
+   that kind in the config directory, plus **New** and **Delete** buttons.
+4. **Deck Visualization.** A top-down map of the deck. Labware appears as
+   you define it, instruments are drawn at the head, and a crosshair labeled
+   **HEAD** tracks the live gantry position. It is always visible.
+5. **Gantry Control.** Connection status, jog pad, coordinate readout,
+   **Move To**, and the **Calibrate** button. Also always visible.
+6. **Config Directory.** The folder the UI reads and saves gantry, deck, and
+   protocol files in. Click **Browse** to point it at a different folder —
+   for example a USB stick or a shared drive with your lab's configs.
+7. **Theme toggle.** Switches between light and dark mode.
+8. **Last Campaign.** Fills in with the campaign number created by the most
+   recent protocol run. Look it up in the **Results** view.
 
-Two panels are always visible on the right, no matter which view is active:
+The layout is the same in every view: the left panel changes, the two right
+panels stay put. That way the deck map and the live position are always in
+sight while you edit or run.
 
-- **Deck Visualization** — a top-down map of the deck. Labware appears as
-  you define it, and a crosshair labeled **HEAD** tracks the gantry's live
-  position.
-- **Gantry Control** — connection status, jog buttons, and the live
-  coordinate readout.
+## Save Before You Run
 
-## Load Your Machine Configs
-
-Before connecting, tell the UI which machine and deck it is driving:
-
-1. In the **Workflow** view, open the **Gantry** tab and pick your machine's
-   file from the **Gantry** dropdown (for example `cub_seed.yaml`). The
-   editor below fills in with the machine's settings.
-2. Check **Serial port** under **Connection**. Leave it blank to let CubOS
-   scan for the gantry automatically, or enter the port name if you know it
-   (for example `/dev/ttyUSB0` on Linux or `COM3` on Windows).
-3. Open the **Deck** tab and pick your deck file from the **Deck** dropdown,
-   or skip this if you are about to define a new deck from scratch (see
-   [Define Deck Positions](#define-deck-positions-with-the-gantry) below).
-
-![Gantry editor with the connection settings at the top](images/operator-ui-gantry-editor.webp)
-
-If a tab shows an amber dot next to its name, that editor has unsaved
-changes. Protocol runs always use the **saved** file, not what is on screen,
-so save before running.
-
-## Connect and Home the Gantry
-
-!!! warning
-    Homing and jogging move real hardware. Before you connect, clear loose
-    items from the deck, check that cables and fixtures are out of the
-    travel path, and keep the E-stop within reach.
-
-1. Make sure the gantry is powered on and its USB cable is plugged into
-   this computer.
-2. Close Candle, Universal Gcode Sender, or any other program that talks to
-   the gantry — only one program can hold the serial port at a time.
-3. In **Gantry Control** (bottom-right), click **Connect**.
-4. When the "Gantry connected" message appears, click **Home now**. The
-   gantry drives each axis to its end stops to establish a known reference
-   position. Always home after connecting.
-
-![Connected dialog asking whether to home the gantry](images/operator-ui-connect-dialog.webp)
-
-Once homing finishes, the status dot turns green with **Connected**, the
-readout shows real coordinates, and the status line under them reads
-**Idle**:
-
-![Gantry Control after homing, parked at the back-right-top corner](images/operator-ui-homed.webp){ width="520" }
-
-## Move the Gantry
-
-With the gantry connected and homed, **Gantry Control** gives you three ways
-to move it.
-
-![Gantry Control with the jog pad, step sizes, coordinate readout, and Move To](images/operator-ui-gantry-control.webp){ width="520" }
-
-**Jog buttons.** The arrow pad moves the head in X and Y; **Z+** / **Z−**
-move it up and down. Each click moves by the step size in the **XY mm** and
-**Z mm** boxes (0.5 mm by default). Hold a button down to keep moving.
-Directions follow the CubOS deck convention:
-
-- **→** is +X, toward the operator's right
-- **↑** is +Y, away from you, toward the back
-- **Z+** is up, **Z−** is down
-
-**Keyboard.** Click anywhere outside a text box first, then use the arrow
-keys for X/Y and the `X` / `Z` keys for Z up / Z down. Same step sizes as
-the buttons.
-
-**Move To.** Type exact X, Y, Z coordinates and click **Go**. The allowed
-range for each axis is shown in gray inside the box — targets outside the
-machine's working volume are refused, with an explanation.
-
-The readout shows the current position in millimeters. **Idle** in green
-means the gantry is ready; **Jog** or **Run** in blue means it is moving. If
-a red **ALARM** banner appears (for example after hitting a limit switch),
-click **Unlock ($X)** and jog back toward the middle of the deck.
-
-!!! note
-    Start with small steps. 0.5 mm per click is a safe default when you are
-    close to labware; raise **XY mm** to 5–10 for long moves across the
-    deck, and switch back down before your final approach.
-
-## Define Deck Positions with the Gantry
-
-This is how you tell CubOS where a plate or vial physically sits on the
-deck: **drive the gantry to the spot, read the coordinates off the screen,
-and type them into the deck editor.** No measuring tape involved.
-
-Before you start, the gantry must be [calibrated](calibration.md) — deck
-coordinates only mean something once the machine's origin is set — and the
-labware must be seated firmly in a spot where it cannot shift.
-
-For a well plate:
-
-1. Open the **Deck** tab and either pick an existing deck file or click
-   **+ Well Plate** to add a new plate entry.
-2. Give it a **Component ID** — a short name like `plate`. Protocols will
-   address wells as `plate.A1`, `plate.B2`, and so on.
-3. Using the jog buttons, position the instrument tip exactly over the
-   **center of well A1** (the back-left well), at the height where the tip
-   just touches the labware's reference surface. Creep up on it with small
-   steps.
-4. Read the X, Y, Z numbers from the Gantry Control readout and type them
-   into the **Calibration A1** boxes. In the example below the readout
-   shows `70.000, 45.000, 85.000`, so A1 is X `70`, Y `45`, Z `85`.
-5. Jog to the **center of well A2** — the next well along the same row —
-   and enter those numbers as **Calibration A2**. A1 and A2 together tell
-   CubOS which way the plate is oriented on the deck.
-6. Fill in **Rows**, **Columns**, and the well pitch (**Well pitch X/Y**) —
-   for a standard 96-well SBS plate the pitch is `9` mm in both directions.
-7. Type a file name at the bottom and click **Save**.
-
-![Jogging the head over well A1 — the HEAD crosshair sits on the plate corner](images/operator-ui-deck-visualization.webp){ width="520" }
-
-![Deck editor with the A1 coordinates copied from the gantry readout](images/operator-ui-deck-editor.webp)
-
-As soon as you save, the Deck Visualization redraws the plate at its real
-position. A quick sanity check: use **Move To** to send the head to your A1
-coordinates and confirm the **HEAD** crosshair lands on the plate's
-back-left well in the picture — and on the real plate's A1 on the bench.
-
-For a single vial, click **+ Vial** instead: jog to the vial's center, enter
-the readout coordinates as its **Location**, and fill in its height and
-diameter.
-
-!!! note
-    The amber **Unsaved changes** banner means your edits exist only on
-    screen. Protocol runs use the saved file, so always save the deck
-    before running.
-
-For what every field means — orientation rules, vial grids, aliases, and
-volume tracking — see [Set Up Deck and Labware](deck.md).
-
-## Run a Protocol
-
-The **Protocol** tab unlocks once a gantry and a deck config are loaded.
-
-1. Pick a protocol file from the **Protocol** dropdown, or build one on the
-   spot with the **Add step** dropdown — steps appear as numbered cards you
-   can reorder or delete.
-2. Wells are addressed by the Component IDs from your deck file
-   (`plate.A1`); **Named Positions** at the top define reusable targets
-   like a park position.
-3. Click **Validate** to check the protocol against the gantry and deck
-   files without moving anything.
-4. Click **Run Protocol**. The run uses the saved gantry, deck, and
-   protocol files; the header shows a **Protocol running** banner with a
-   **Cancel** button, and manual gantry controls lock until it finishes.
-
-![Protocol editor with home, move, and pause steps](images/operator-ui-protocol-editor.webp)
-
-When the run completes, its measurements appear in the **Results** view as
-a new campaign, and any tracked liquid volumes are in the **State** view.
-See [Run a Protocol with YAML](protocol-yaml.md) for the full command
-reference.
-
-## Calibrate from the UI
-
-The **Calibrate** button in Gantry Control opens a guided calibration
-wizard. It walks through the same procedure described in
-[Calibrate Gantry](calibration.md) — homing, touching a reference of known
-height, setting the origin, and saving a calibrated gantry file — one step
-at a time, with the jog pad built into each step that needs it.
-
-![Calibration wizard on its first step, showing connection and position readouts](images/operator-ui-calibration-wizard.webp)
-
-Run it when you first set up a machine, after any crash or mechanical
-change, or whenever deck positions stop lining up with reality.
+Protocol runs always use the **saved** gantry, deck, and protocol files, not
+whatever is on screen. Every editor shows an amber **Unsaved changes** banner
+and an amber dot on its tab while edits are pending. **Run Protocol** refuses
+to start until you save or discard them, and **Validate** does the same.
+`Ctrl+S` / `Cmd+S` saves the active editor.
 
 ## If Something Goes Wrong
 
@@ -298,5 +159,10 @@ change, or whenever deck positions stop lining up with reality.
   edge and re-home.
 - **Jog buttons are grayed out** — a protocol is running (manual control is
   locked until it ends), or the gantry is not connected.
-- **The deck picture doesn't match the bench** — re-check your calibration
-  points, then see [Troubleshooting & Recovery](troubleshooting.md).
+- **Validate reports a bounds violation** — a target plus the instrument's
+  offset and depth lands outside the working volume. Check the coordinates
+  in the deck or the named position, then see
+  [Troubleshooting & Recovery](troubleshooting.md).
+- **The deck picture doesn't match the bench** — re-check your labware
+  calibration points, then see
+  [Troubleshooting & Recovery](troubleshooting.md).

@@ -10,3 +10,11 @@ export function isFieldEqual(a: unknown, b: unknown): boolean {
   if (typeof a === "string" && typeof b === "number") return a === String(b);
   return false;
 }
+
+/** Trim a user-typed config name and give it a `.yaml` extension unless it
+ * already ends in `.yaml` or `.yml`. Returns "" for blank input. */
+export function normalizeYamlFilename(raw: string): string {
+  const name = raw.trim();
+  if (!name) return "";
+  return /\.ya?ml$/i.test(name) ? name : `${name}.yaml`;
+}

@@ -1,6 +1,5 @@
 """Tests for protocol YAML loading and compilation."""
 
-import importlib
 import tempfile
 from pathlib import Path
 
@@ -75,33 +74,6 @@ def _write_yaml(content: str) -> str:
     f.write(content)
     f.close()
     return f.name
-
-
-@pytest.fixture(autouse=True)
-def _ensure_commands_registered():
-    required_commands = {
-        "home",
-        "measure",
-        "move",
-        "pause",
-        "scan",
-        "transfer",
-        "serial_transfer",
-    }
-    if required_commands.issubset(set(CommandRegistry.instance().command_names)):
-        return
-
-    modules = [
-        importlib.import_module("cubos.protocol_engine.commands.home"),
-        importlib.import_module("cubos.protocol_engine.commands.measure"),
-        importlib.import_module("cubos.protocol_engine.commands.move"),
-        importlib.import_module("cubos.protocol_engine.commands.pause"),
-        importlib.import_module("cubos.protocol_engine.commands.pipette"),
-        importlib.import_module("cubos.protocol_engine.commands.scan"),
-    ]
-    CommandRegistry.reset()
-    for module in modules:
-        importlib.reload(module)
 
 
 # ─── Valid loading ────────────────────────────────────────────────────────────

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Mapping
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Iterator, List, Optional
@@ -16,6 +17,7 @@ from cubos.instruments.pipette.liquid_class import IDENTITY_CORRECTION
 
 from ..errors import ProtocolExecutionError
 from ..registry import protocol_command
+from . import _summaries
 from ._cap_preflight import require_uncapped as _require_uncapped
 from ._liquid_selection import (
     LiquidSelectionError,
@@ -35,6 +37,12 @@ from ._liquid_transfer import (
 from ._movement import engage_at_labware
 
 logger = logging.getLogger(__name__)
+
+# Reason text for steps the durable fluid/tip journal reports as already
+# applied on a resumed run. Deliberately distinct from "never reached": the
+# operator needs to read a resumed run as having done this work, just not in
+# this process.
+_ALREADY_APPLIED = "already applied on a previous run"
 
 if TYPE_CHECKING:
     from ..runtime import ProtocolContext
@@ -56,20 +64,21 @@ def _engage(
     *,
     command_label: str,
     height: float = 0.0,
-) -> float:
+) -> tuple[float, float, float]:
     """Wrap ``engage_at_labware`` so configuration errors surface as
     ``ProtocolExecutionError`` instead of bare ``ValueError``s — matching
     how ``measure`` and ``scan`` handle their command boundary.
 
     Pipette commands default to the resolved labware coordinate
     (``height=0``). ``height`` is a labware-relative
-    offset in the same convention as ``measurement_height`` for measure/scan."""
+    offset in the same convention as ``measurement_height`` for measure/scan.
+    Returns the engaged tip ``(x, y, z)``."""
     try:
-        _, action_z = engage_at_labware(
+        x, y, _, action_z = engage_at_labware(
             context, "pipette", position,
             measurement_height=height, command_label=command_label,
         )
-        return action_z
+        return x, y, action_z
     except ValueError as exc:
         raise ProtocolExecutionError(str(exc)) from exc
 
@@ -162,7 +171,7 @@ def _begin_tracked_mix(
     *,
     position: str,
     volume_ul: float,
-    repetitions: int,
+    cycles: int,
     speed: float,
     height: float,
 ) -> tuple[str, bool]:
@@ -174,7 +183,7 @@ def _begin_tracked_mix(
             operation_key,
             target,
             volume_ul,
-            repetitions,
+            cycles,
             speed,
             height,
             campaign_id=context.campaign_id,
@@ -284,7 +293,7 @@ def _mark_tip_uncertain(
         )
 
 
-@protocol_command("aspirate")
+@protocol_command("aspirate", summary=_summaries.aspirate)
 def aspirate(
     context: ProtocolContext,
     position: str,
@@ -326,7 +335,7 @@ def dispense(
     return pipette.dispense(volume_ul, speed)
 
 
-@protocol_command("blowout")
+@protocol_command("blowout", summary=_summaries.blowout)
 def blowout(
     context: ProtocolContext,
     position: str,
@@ -339,16 +348,17 @@ def blowout(
     pipette.blowout(speed)
 
 
-@protocol_command("mix")
+@protocol_command("mix", summary=_summaries.mix)
 def mix(
     context: ProtocolContext,
     position: str,
     volume_ul: float,
-    repetitions: int = 3,
+    cycles: int = 3,
     speed: float = 50.0,
     height: float = 0.0,
 ) -> Any:
-    """Move pipette to *position*, then mix."""
+    """Move pipette to *position* at *height*, then mix ``cycles`` times
+    between that height and 1 mm above it."""
     tracked = _tracked_fluid_state(context)
     pipette = _get_pipette(context)
     operation_key = None
@@ -357,7 +367,7 @@ def mix(
             context,
             position=position,
             volume_ul=volume_ul,
-            repetitions=repetitions,
+            cycles=cycles,
             speed=speed,
             height=height,
         )
@@ -365,10 +375,13 @@ def mix(
             context.logger.info(
                 "Skipping already-applied fluid operation %s", operation_key,
             )
+            context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
             return None
     try:
-        _engage(context, position, command_label="mix", height=height)
-        result = pipette.mix(volume_ul, repetitions, speed)
+        tip = _engage(context, position, command_label="mix", height=height)
+        result = pipette.mix(
+            volume_ul, cycles, speed, gantry=context.gantry, position=tip,
+        )
     except BaseException as exc:
         if operation_key is not None:
             _mark_transfer_uncertain(context, operation_key, exc)
@@ -386,7 +399,7 @@ def mix(
     return result
 
 
-@protocol_command("pick_up_tip")
+@protocol_command("pick_up_tip", summary=_summaries.pick_up_tip)
 def pick_up_tip(
     context: ProtocolContext,
     position: str,
@@ -441,6 +454,7 @@ def pick_up_tip(
             context.logger.info(
                 "Skipping already-applied tip operation %s", operation_key,
             )
+            context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
             return
         tip_id = resolved_tip_id
         position = f"{rack_key}.{tip_id}"
@@ -479,7 +493,7 @@ def pick_up_tip(
             ) from exc
 
 
-@protocol_command("transfer")
+@protocol_command("transfer", summary=_summaries.transfer)
 def transfer(
     context: ProtocolContext,
     source: str,
@@ -543,6 +557,13 @@ def transfer(
     volume, so tracked container state reflects what was asked for while
     hardware receives whatever correction is calibrated to actually deliver
     it.
+
+    Every transfer runs the pipette's calibrated blow-out motion once,
+    right after the *final* stroke's dispense -- clearing any fluid left in
+    the tip after the transfer is otherwise complete, rather than after
+    every stroke of a multi-stroke transfer. It does not change the
+    tracked dispense volume; a blow-out failure is treated the same as a
+    dispense failure (the stroke is marked ``reconciliation_required``).
     """
     _require_uncapped(context, require_uncapped, command_label="transfer")
 
@@ -685,6 +706,7 @@ def transfer(
                 tracked=tracked,
                 stroke_index=stroke_index,
                 stroke_count=stroke_count,
+                blow_out=stroke_index == stroke_count - 1,
             )
     finally:
         context.active_substep = previous_substep
@@ -706,6 +728,7 @@ def _execute_transfer_stroke(
     tracked: bool,
     stroke_index: int,
     stroke_count: int,
+    blow_out: bool = False,
 ) -> None:
     """Journal, actuate, and commit exactly one transfer stroke.
 
@@ -713,6 +736,10 @@ def _execute_transfer_stroke(
     the resumability rationale). ``correction`` is applied only to the
     volume handed to the pipette driver; the durable state update always
     uses ``stroke_volume_ul`` (the requested, uncorrected amount).
+
+    ``blow_out`` fires the pipette's blow-out motion right after this
+    stroke's dispense -- callers pass this only for the final stroke of a
+    transfer (see ``transfer``'s docstring).
     """
     operation_key = None
     if tracked:
@@ -729,6 +756,13 @@ def _execute_transfer_stroke(
                 "Skipping already-applied fluid operation %s (stroke %d/%d)",
                 operation_key, stroke_index + 1, stroke_count,
             )
+            context.notify_step(
+                "step_skipped",
+                reason=(
+                    f"{_ALREADY_APPLIED} "
+                    f"(stroke {stroke_index + 1}/{stroke_count})"
+                ),
+            )
             return
 
     commanded_volume_ul = correction.apply(stroke_volume_ul)
@@ -743,6 +777,8 @@ def _execute_transfer_stroke(
             height=destination_height,
         )
         pipette.dispense(commanded_volume_ul, speed)
+        if blow_out:
+            pipette.blowout(speed)
     except BaseException as exc:
         if operation_key is not None:
             _mark_transfer_stroke_uncertain(
@@ -769,7 +805,7 @@ def _execute_transfer_stroke(
         _record_transfer_to_store(context, source, destination, stroke_volume_ul)
 
 
-@protocol_command("drop_tip")
+@protocol_command("drop_tip", summary=_summaries.drop_tip)
 def drop_tip(
     context: ProtocolContext,
     position: str,
@@ -804,6 +840,7 @@ def drop_tip(
             context.logger.info(
                 "Skipping already-applied tip operation %s", operation_key,
             )
+            context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
             return
 
     try:
@@ -850,7 +887,7 @@ def _wells_for_axis(plate: WellPlate, axis: str) -> list:
     return sorted(wells, key=lambda w: (w[0], int(w[1:])))
 
 
-@protocol_command("serial_transfer")
+@protocol_command("serial_transfer", summary=_summaries.serial_transfer)
 def serial_transfer(
     context: ProtocolContext,
     source: str,
@@ -934,8 +971,21 @@ def _substep_scope(context: ProtocolContext, suffix: str) -> Iterator[None]:
     """
     previous = context.active_substep
     context.active_substep = f"{previous}:{suffix}" if previous else suffix
+    started = time.monotonic()
+    context.notify_step("step_started")
     try:
         yield
+    except BaseException as exc:
+        context.notify_step(
+            "step_failed",
+            duration_s=time.monotonic() - started,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    else:
+        context.notify_step(
+            "step_completed", duration_s=time.monotonic() - started,
+        )
     finally:
         context.active_substep = previous
 
@@ -989,6 +1039,7 @@ def _transfer_or_skip(context: ProtocolContext, **kwargs: Any) -> None:
     skip.
     """
     if _leg_already_applied(context):
+        context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
         context.logger.info(
             "Skipping already-applied fluid operation %s",
             context.fluid_operation_key("transfer"),
@@ -1102,7 +1153,7 @@ def _resolve_waste_target(
     return position
 
 
-@protocol_command("rinse_well")
+@protocol_command("rinse_well", summary=_summaries.rinse_well)
 def rinse_well(
     context: ProtocolContext,
     well: str,
@@ -1158,7 +1209,7 @@ def rinse_well(
             with _substep_scope(context, f"{cycle_scope}:mix"):
                 mix(
                     context, well, mix_volume_ul or volume_ul,
-                    repetitions=mix_repetitions, speed=speed,
+                    cycles=mix_repetitions, speed=speed,
                     height=well_height or 0.0,
                 )
         resolved_waste = _resolve_waste_target(
@@ -1173,7 +1224,7 @@ def rinse_well(
             )
 
 
-@protocol_command("flush_pipette")
+@protocol_command("flush_pipette", summary=_summaries.flush_pipette)
 def flush_pipette(
     context: ProtocolContext,
     volume_ul: float,
@@ -1217,7 +1268,7 @@ def flush_pipette(
             )
 
 
-@protocol_command("purge_pipette")
+@protocol_command("purge_pipette", summary=_summaries.purge_pipette)
 def purge_pipette(
     context: ProtocolContext,
     volume_ul: float,
@@ -1264,7 +1315,7 @@ def purge_pipette(
         )
 
 
-@protocol_command("clear_well")
+@protocol_command("clear_well", summary=_summaries.clear_well)
 def clear_well(
     context: ProtocolContext,
     well: str,

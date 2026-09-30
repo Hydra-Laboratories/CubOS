@@ -582,11 +582,6 @@ def _print_config_patch(
         reach_name = instrument_name or "reference_tcp"
         output("")
         output(f"  {reach_name}_reachable_z_min: {reachable_z_min_mm:.3f} mm")
-        output(
-            "For a future multi-instrument config, keep one shared deck frame "
-            "and encode this as a per-instrument lower-reach limit instead of "
-            "using one global z_min for every tool."
-        )
 
 
 def _print_dry_run(
@@ -610,11 +605,6 @@ def _print_dry_run(
     )
     for command in commands:
         output(f"  {command}")
-    output("")
-    output(
-        "The gantry YAML cnc.factory_z_travel_mm is preserved as an out-of-box "
-        "safety bound; calibrated Z max comes from the homed readback."
-    )
 
 
 def _commands_for_z_min(
@@ -810,10 +800,7 @@ def _temporarily_disable_soft_limits_for_origin_jog(
     enabled = _read_soft_limits_enabled_if_available(gantry, output=output)
     if enabled is not True:
         return False
-    output(
-        "Temporarily disabling GRBL soft limits ($20=0) for the interactive "
-        "origin jog so stale travel settings cannot block calibration."
-    )
+    output("Temporarily disabling GRBL soft limits ($20=0) for this jog.")
     output("Jog cautiously.")
     if not _set_soft_limits_enabled_if_available(gantry, False):
         output("No GRBL setting writer is available; leaving soft limits unchanged.")
@@ -878,10 +865,7 @@ def _temporarily_enable_hard_limits_for_origin_jog(
     enabled = _read_hard_limits_enabled_if_available(gantry, output=output)
     if enabled is not False:
         return False
-    output(
-        "Enabling GRBL hard limits ($21=1) for the interactive origin jog — "
-        "they are the only motion backstop while soft limits are disabled."
-    )
+    output("Enabling GRBL hard limits ($21=1) for this jog.")
     if not _set_hard_limits_enabled_if_available(gantry, True):
         output("No GRBL setting writer is available; leaving hard limits unchanged.")
         return False

@@ -23,11 +23,34 @@ asmi-vernier = [
 potentiostat-admiral = [
     "SquidstatPyLibrary",
 ]
+# PyPI's hardpotato (<=1.3.13) predates Setup.check_connection; the driver
+# needs the 1.3.14 git build. EmStat4 LR ("emstat4_lr") additionally needs a
+# not-yet-public patch (hardpotato/emstat4_lr.py + potentiostat.py hooks)
+# carried in the PANDA bench venvs — upstream or fork it before relying on a
+# clean install for that model.
+potentiostat-emstat = [
+    "hardpotato @ git+https://github.com/BU-KABlab/hardpotato.git@87584e4cc03773cb7484d99309f86817809047bf",
+]
 asmi = [
     "godirect>=1.0.0",
 ]
 potentiostat = [
     "SquidstatPyLibrary",
+    "hardpotato @ git+https://github.com/BU-KABlab/hardpotato.git@87584e4cc03773cb7484d99309f86817809047bf",
+]
+# camera: OpenCV covers both the `opencv` webcam vendor and image saving for
+# the `flir` vendor. `harvesters` is the pip-installable GenTL client used by
+# the flir vendor's backend="gentl" (talks to the Spinnaker SDK's GenTL
+# producer, Spinnaker_GenTL.cti — a plain shared library, so this works on
+# any CPython version). backend="pyspin" (the default) instead needs
+# PySpin itself, which is proprietary (Spinnaker SDK, manual install from
+# https://www.flir.com/products/spinnaker-sdk/), tied to one CPython ABI per
+# release, and cannot be a pip dependency; the flir driver imports it lazily
+# and raises a clear error with the install pointer when missing.
+camera = [
+    "opencv-python",
+    "numpy",
+    "harvesters",
 ]
 docs = [
     "mkdocs>=1.6",

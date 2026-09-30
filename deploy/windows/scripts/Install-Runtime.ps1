@@ -1,6 +1,5 @@
 param(
-    [string]$InstallDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path,
-    [string[]]$DriverGroups = @()
+    [string]$InstallDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 )
 
 $ErrorActionPreference = "Stop"
@@ -213,15 +212,15 @@ $Wheelhouse = Join-Path $InstallDir "wheelhouse"
 $Requirements = Join-Path $InstallDir "requirements\runtime-requirements.txt"
 $DriverRequirementsDir = Join-Path $InstallDir "requirements\drivers"
 $Marker = Join-Path $InstallDir "runtime-installed.txt"
-$DriverGroupsFile = Join-Path $InstallDir "driver-groups.txt"
-$DriverGroupsExplicitlyProvided = @($DriverGroups | Where-Object { $_ -and $_.Trim() }).Count -gt 0
+
+# TODO: non-pip drivers (e.g. uvvis) aren't covered here -- see
+# packages/core/src/cubos/instruments/README.md "External proprietary drivers".
 $SelectedDriverGroups = @(
-    $DriverGroups |
-        ForEach-Object { $_ -split "," } |
-        Where-Object { $_ -and $_.Trim() } |
-        ForEach-Object { $_.Trim().ToLowerInvariant() } |
-        Where-Object { $_ -ne 'none' } |
-        Select-Object -Unique
+    if (Test-Path $DriverRequirementsDir) {
+        Get-ChildItem -Path $DriverRequirementsDir -Filter "*.txt" |
+            ForEach-Object { $_.BaseName.ToLowerInvariant() } |
+            Sort-Object
+    }
 )
 
 try {
@@ -231,12 +230,7 @@ try {
     Write-Log "Runtime virtual environment: $VenvDir"
     Write-Log "Wheelhouse: $Wheelhouse"
     Write-Log "Requirements: $Requirements"
-    Write-Log "Selected public driver groups: $(if ($SelectedDriverGroups.Count) { $SelectedDriverGroups -join ', ' } else { 'none' })"
-
-    if ($DriverGroupsExplicitlyProvided) {
-        Set-Content -Path $DriverGroupsFile -Value ($SelectedDriverGroups -join ",") -Encoding UTF8
-        Write-Log "Persisted selected driver groups to $DriverGroupsFile"
-    }
+    Write-Log "Installing public driver groups: $(if ($SelectedDriverGroups.Count) { $SelectedDriverGroups -join ', ' } else { 'none' })"
 
     if (-not (Test-Path $Python)) {
         throw "Python runtime not found at $Python"

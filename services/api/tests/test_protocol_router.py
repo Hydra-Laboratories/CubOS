@@ -781,3 +781,32 @@ def test_cancel_endpoint_maps_unexpected_errors(monkeypatch):
 
     assert response.status_code == 500
     assert "Cancel failed" in response.text
+
+
+def test_delete_protocol_removes_file_and_404s_when_missing(monkeypatch, tmp_path):
+    config_dir = tmp_path / "configs"
+    protocol_dir = config_dir / "protocol"
+    protocol_dir.mkdir(parents=True)
+    (protocol_dir / "old.yaml").write_text("protocol:\n  - home:\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    app = create_app()
+
+    response = api_request(app, "DELETE", "/api/v1/protocol/old.yaml")
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "filename": "old.yaml"}
+    assert not (protocol_dir / "old.yaml").exists()
+    assert api_request(app, "DELETE", "/api/v1/protocol/old.yaml").status_code == 404
+
+
+def test_delete_protocol_refused_while_run_active(monkeypatch, tmp_path):
+    from cubos_api.routers import gantry as gantry_router
+
+    config_dir = tmp_path / "configs"
+    protocol_dir = config_dir / "protocol"
+    protocol_dir.mkdir(parents=True)
+    (protocol_dir / "busy.yaml").write_text("protocol:\n  - home:\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    monkeypatch.setattr(gantry_router, "run_active", lambda: True)
+
+    assert api_request(create_app(), "DELETE", "/api/v1/protocol/busy.yaml").status_code == 409
+    assert (protocol_dir / "busy.yaml").exists()

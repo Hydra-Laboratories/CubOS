@@ -14,7 +14,7 @@ class MockCapper(CapperInstrument):
     No serial I/O of any kind -- ``capture_cap``/``release_cap`` flip an
     in-memory flag that ``read_cap_present`` reports back immediately.
     ``actuation_log`` records every call in order, which protocol-command
-    tests use to assert the approach/engage/capture/retract/park sequence
+    tests use to assert the approach/engage/capture/retract sequence
     without needing to inspect gantry internals. Tests that need to inject a
     failure (serial timeout, contradictory sensor, mid-motion failure)
     monkeypatch ``capture_cap``/``release_cap``/``read_cap_present`` directly
@@ -25,7 +25,6 @@ class MockCapper(CapperInstrument):
         self,
         *,
         engage_depth_mm: float,
-        park_position: tuple,
         capture_retries: int = 2,
         capture_settle_s: float = 0.0,
         name: Optional[str] = None,
@@ -37,7 +36,6 @@ class MockCapper(CapperInstrument):
     ):
         super().__init__(
             engage_depth_mm=engage_depth_mm,
-            park_position=park_position,
             capture_retries=capture_retries,
             capture_settle_s=capture_settle_s,
             name=name, offset_x=offset_x, offset_y=offset_y,

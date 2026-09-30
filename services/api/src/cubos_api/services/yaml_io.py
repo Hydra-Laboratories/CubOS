@@ -13,9 +13,16 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 
 log = logging.getLogger(__name__)
-_yaml = YAML(typ="rt")
-_yaml.default_flow_style = False
-_yaml.preserve_quotes = True
+
+
+def _yaml_codec() -> YAML:
+    # ruamel's round-trip YAML object keeps parser state on the instance, so a
+    # module-level singleton corrupts documents when request threads read
+    # different files at the same time.
+    codec = YAML(typ="rt")
+    codec.default_flow_style = False
+    codec.preserve_quotes = True
+    return codec
 
 
 class YamlConfigError(ValueError):
@@ -25,7 +32,7 @@ class YamlConfigError(ValueError):
 def read_yaml(path: Path) -> Dict[str, Any]:
     try:
         with path.open() as f:
-            data = _yaml.load(f)
+            data = _yaml_codec().load(f)
     except YAMLError as exc:
         raise YamlConfigError(f"Invalid YAML in {path.name}: {exc}") from exc
     if data is None:
@@ -46,7 +53,7 @@ def write_yaml(path: Path, data: Dict[str, Any]) -> None:
             delete=False,
         ) as tmp:
             tmp_path = Path(tmp.name)
-            _yaml.dump(data, tmp)
+            _yaml_codec().dump(data, tmp)
             tmp.flush()
             os.fsync(tmp.fileno())
         os.replace(tmp_path, path)
@@ -113,6 +120,15 @@ def resolve_config_path(configs_dir: Path, kind: str, filename: str) -> Path:
     if sub.is_dir():
         return sub / filename
     return configs_dir / filename
+
+
+def delete_config(configs_dir: Path, kind: str, filename: str) -> Path:
+    """Delete a config file and return its path. Raises FileNotFoundError if absent."""
+    path = resolve_config_path(configs_dir, kind, filename)
+    if not path.is_file():
+        raise FileNotFoundError(filename)
+    path.unlink()
+    return path
 
 
 def list_configs(configs_dir: Path, kind: str) -> List[str]:

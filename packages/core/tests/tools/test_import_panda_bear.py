@@ -13,7 +13,6 @@ import pytest
 
 from cubos.data.fluid_state import load_initial_fluids
 from cubos.deck.loader import load_deck_from_yaml
-from cubos.protocol_engine.registry import CommandRegistry
 from cubos.protocol_engine.setup_validator import run_setup_validation
 from cubos.tools.import_panda_bear import main
 from cubos.tools.panda_bear_import import db_reader as db_reader_module
@@ -106,32 +105,6 @@ def write_resolutions_yaml(tmp_path: Path, data: dict, name: str = "resolutions.
 
 def conflicts_by_category(result, category: str) -> list:
     return [c for c in result.conflicts if c.category == category]
-
-
-@pytest.fixture(autouse=True)
-def _ensure_commands_registered():
-    """Other protocol_engine tests reset the singleton registry; restore real
-    commands so `run_setup_validation`/`load_protocol_from_yaml` see `home`,
-    `move`, etc. Mirrors
-    tests/protocol_engine/test_setup_validator.py::_ensure_commands_registered.
-    """
-    required_commands = {"home", "measure", "move", "pause", "scan", "transfer", "serial_transfer"}
-    if required_commands.issubset(set(CommandRegistry.instance().command_names)):
-        return
-
-    import importlib
-
-    modules = [
-        importlib.import_module("cubos.protocol_engine.commands.home"),
-        importlib.import_module("cubos.protocol_engine.commands.measure"),
-        importlib.import_module("cubos.protocol_engine.commands.move"),
-        importlib.import_module("cubos.protocol_engine.commands.pause"),
-        importlib.import_module("cubos.protocol_engine.commands.pipette"),
-        importlib.import_module("cubos.protocol_engine.commands.scan"),
-    ]
-    CommandRegistry.reset()
-    for module in modules:
-        importlib.reload(module)
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +619,7 @@ def test_capper_mount_only_placeholder_upgraded_to_real_instrument(tmp_path):
     # Motion-sequence config is present (parameterizes decap/cap -- see
     # cubos.protocol_engine.commands.capper).
     assert isinstance(entry["engage_depth_mm"], float)
-    assert isinstance(entry["park_position"], list) and len(entry["park_position"]) == 2
+    assert "park_position" not in entry
     assert isinstance(entry["capture_retries"], int)
     assert isinstance(entry["capture_settle_s"], float)
 

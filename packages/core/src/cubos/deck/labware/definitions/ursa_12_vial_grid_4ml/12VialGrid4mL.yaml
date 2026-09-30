@@ -1,0 +1,21 @@
+# Ursa 12-position (2x6) 4 mL vial grid.
+#
+# The definition owns the repeatable layout and vial metadata. Deck YAML owns
+# measured A1/A2 coordinates, including the vial-rim deck-frame Z.
+#
+# x_offset/y_offset are the center-to-center pitches (column axis / row axis).
+# The deck loader requires the taught A1->A2 delta to match x_offset exactly;
+# verify the pitch with calipers before teaching.
+
+type: vial_grid
+name: ursa_12_vial_grid_4ml
+model_name: 12VialHolder4mL
+rows: 2
+columns: 6
+x_offset: 18.0
+y_offset: 18.0
+vial_model_name: 4ml_vial
+vial_height: 45.0
+vial_diameter: 14.5
+capacity_ul: 4000.0
+working_volume_ul: 4000.0

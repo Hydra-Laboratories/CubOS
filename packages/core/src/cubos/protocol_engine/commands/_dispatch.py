@@ -21,14 +21,36 @@ labware-surface anchor.
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import math
+import typing
 from typing import Any, Callable, Dict, TYPE_CHECKING
 
 from ..errors import ProtocolExecutionError
 
 if TYPE_CHECKING:
     from ..runtime import ProtocolContext
+
+
+def _resolve_type_hints(callable_method: Callable[..., Any]) -> Dict[str, Any]:
+    """Best-effort resolved annotations; {} when resolution fails."""
+    try:
+        return typing.get_type_hints(callable_method)
+    except Exception:
+        return {}
+
+
+def _dataclass_field_summary(dc: Any) -> str:
+    parts = []
+    for field in dataclasses.fields(dc):
+        if field.default is not dataclasses.MISSING:
+            parts.append(f"{field.name}={field.default!r}")
+        elif field.default_factory is not dataclasses.MISSING:
+            parts.append(f"{field.name}=<computed default>")
+        else:
+            parts.append(f"{field.name} (required)")
+    return ", ".join(parts)
 
 
 def _assert_finite(value: Any, name: str) -> None:
@@ -151,5 +173,64 @@ def inject_runtime_args(
             "the scan command. Add `indentation_limit_height` (signed "
             "labware-relative offset; negative = below the well surface) "
             "to the scan command."
+        )
+
+    # YAML can only carry plain mappings; methods that take a params
+    # dataclass (e.g. EmstatPotentiostat.run_OCP(params: OCPParams)) would
+    # otherwise be uncallable from a protocol. Coerce a dict supplied for a
+    # dataclass-annotated parameter into that dataclass, so its own
+    # validation (__post_init__) runs and its error messages surface.
+    hints: Dict[str, Any] | None = None
+    for name, value in list(kwargs.items()):
+        if not isinstance(value, dict) or name not in sig.parameters:
+            continue
+        if hints is None:
+            hints = _resolve_type_hints(callable_method)
+        hint = hints.get(name)
+        if hint is None or not (
+            dataclasses.is_dataclass(hint) and isinstance(hint, type)
+        ):
+            continue
+        try:
+            kwargs[name] = hint(**value)
+        except Exception as exc:
+            raise ProtocolExecutionError(
+                f"Method {callable_method.__qualname__!r}: cannot build "
+                f"{hint.__name__} for `{name}` from {value!r}: "
+                f"{type(exc).__name__}: {exc}. Expected fields: "
+                f"{_dataclass_field_summary(hint)}."
+            ) from exc
+
+    # Anything still missing here would TypeError at call time — after the
+    # gantry has already moved. Fail at the command boundary instead, and
+    # spell out the dataclass fields so the YAML fix is obvious.
+    required_kinds = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+    missing = [
+        p.name for p in sig.parameters.values()
+        if p.kind in required_kinds
+        and p.default is inspect.Parameter.empty
+        and p.name not in kwargs
+        and p.name != "self"
+    ]
+    if missing:
+        if hints is None:
+            hints = _resolve_type_hints(callable_method)
+        details = []
+        for name in missing:
+            hint = hints.get(name)
+            if hint is not None and dataclasses.is_dataclass(hint) and isinstance(hint, type):
+                details.append(
+                    f"`{name}` ({hint.__name__}: {_dataclass_field_summary(hint)})"
+                )
+            else:
+                details.append(f"`{name}`")
+        raise ProtocolExecutionError(
+            f"Method {callable_method.__qualname__!r} is missing required "
+            f"argument(s): {', '.join(details)}. Supply them under the "
+            "command's `method_kwargs`."
         )
     return kwargs

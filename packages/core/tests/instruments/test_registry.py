@@ -6,7 +6,7 @@ import cubos.instruments.registry as registry_module
 from cubos.instruments.asmi.models import ASMIStatus, MeasurementResult
 from cubos.instruments.asmi.interface import ASMIInstrument
 from cubos.instruments.base_instrument import BaseInstrument
-from cubos.instruments.pipette.models import AspirateResult, MixResult, PipetteStatus
+from cubos.instruments.pipette.models import AspirateResult, PipetteStatus
 from cubos.instruments.pipette.interface import PipetteInstrument
 from cubos.instruments.registry import (
     FieldSpec,
@@ -16,6 +16,7 @@ from cubos.instruments.registry import (
     get_instrument_interface,
     get_supported_types,
     get_supported_vendors,
+    list_measurement_method_params,
     list_measurement_methods,
     load_registry,
     validate_instrument,
@@ -28,6 +29,7 @@ EXPECTED_TYPES = [
     "camera",
     "capper",
     "filmetrics",
+    "lighting",
     "mounted_tool",
     "pipette",
     "potentiostat",
@@ -115,14 +117,6 @@ class FakeCustomerPipette(PipetteInstrument):
     def blowout(self, speed: float = 50.0) -> None:
         pass
 
-    def mix(
-        self,
-        volume_ul: float,
-        repetitions: int = 3,
-        speed: float = 50.0,
-    ) -> MixResult:
-        return MixResult(success=True, volume_ul=volume_ul, repetitions=repetitions)
-
     def pick_up_tip(self, speed: float = 50.0) -> None:
         pass
 
@@ -193,7 +187,7 @@ class TestLoadRegistry:
         registry = load_registry()
         for type_key, entry in registry["instruments"].items():
             assert "interface" in entry, f"{type_key} missing interface"
-            assert entry.get("calibration_mode") in {"contact", "non_contact"}
+            assert entry.get("calibration_mode") in {"contact", "non_contact", "follow_camera"}
             assert "vendors" in entry, f"{type_key} missing vendors"
             assert len(entry["vendors"]) > 0, f"{type_key} has empty vendors"
             for vendor_key, vendor in entry["vendors"].items():
@@ -433,19 +427,22 @@ class TestGetSupportedVendors:
         assert get_supported_vendors("asmi") == ["vernier"]
 
     def test_camera_vendors(self):
-        assert get_supported_vendors("camera") == ["mount_only", "raspberry_pi"]
+        assert get_supported_vendors("camera") == ["flir", "mount_only", "opencv", "raspberry_pi"]
 
     def test_filmetrics_vendors(self):
         assert get_supported_vendors("filmetrics") == ["kla"]
+
+    def test_lighting_vendors(self):
+        assert get_supported_vendors("lighting") == ["pawduino"]
 
     def test_mounted_tool_vendors(self):
         assert get_supported_vendors("mounted_tool") == ["mount_only"]
 
     def test_pipette_vendors(self):
-        assert get_supported_vendors("pipette") == ["opentrons"]
+        assert get_supported_vendors("pipette") == ["opentrons", "sartorius"]
 
     def test_potentiostat_vendors(self):
-        assert get_supported_vendors("potentiostat") == ["admiral"]
+        assert get_supported_vendors("potentiostat") == ["admiral", "emstat"]
 
     def test_uv_curing_vendors(self):
         assert get_supported_vendors("uv_curing") == ["excelitas"]
@@ -461,6 +458,9 @@ class TestGetSupportedVendors:
 class TestGetCalibrationMode:
     def test_camera_is_non_contact(self):
         assert get_calibration_mode("camera") == "non_contact"
+
+    def test_lighting_follows_camera(self):
+        assert get_calibration_mode("lighting") == "follow_camera"
 
     def test_contact_is_default_for_regular_instruments(self):
         assert get_calibration_mode("asmi") == "contact"
@@ -567,6 +567,7 @@ class TestGetInstrumentClass:
             ("mounted_tool", "mount_only"),
             ("pipette", "opentrons"),
             ("potentiostat", "admiral"),
+            ("potentiostat", "emstat"),
             ("uv_curing", "excelitas"),
             ("uvvis_ccs", "thorlabs"),
         ]
@@ -603,6 +604,10 @@ class TestGetInstrumentClass:
         from cubos.instruments.potentiostat.vendors.admiral import AdmiralPotentiostat
         assert get_instrument_class("potentiostat", "admiral") is AdmiralPotentiostat
 
+    def test_potentiostat_emstat_class(self):
+        from cubos.instruments.potentiostat.vendors.emstat import EmstatPotentiostat
+        assert get_instrument_class("potentiostat", "emstat") is EmstatPotentiostat
+
     def test_uv_curing_class(self):
         from cubos.instruments.uv_curing.vendors.excelitas import ExcelitasUVCuring
         assert get_instrument_class("uv_curing", "excelitas") is ExcelitasUVCuring
@@ -627,6 +632,7 @@ class TestValidateInstrument:
             ("mounted_tool", "mount_only"),
             ("pipette", "opentrons"),
             ("potentiostat", "admiral"),
+            ("potentiostat", "emstat"),
             ("uv_curing", "excelitas"),
             ("uvvis_ccs", "thorlabs"),
         ]
@@ -644,3 +650,52 @@ class TestValidateInstrument:
     def test_wrong_vendor_message_lists_allowed(self):
         with pytest.raises(ValueError, match="thorlabs"):
             validate_instrument("uvvis_ccs", "wrong_vendor")
+
+
+class TestListMeasurementMethodParams:
+
+    def test_dataclass_param_expands_to_its_fields(self):
+        params = list_measurement_method_params("potentiostat", vendor="emstat")
+        ocp = params["run_OCP"]
+        assert ocp == [
+            {
+                "name": "params",
+                "type": "OCPParams",
+                "required": True,
+                "default": None,
+                "fields": [
+                    {
+                        "name": "duration_s",
+                        "type": "float",
+                        "required": True,
+                        "default": None,
+                        "fields": None,
+                    },
+                    {
+                        "name": "sampling_interval_s",
+                        "type": "float",
+                        "required": False,
+                        "default": 0.1,
+                        "fields": None,
+                    },
+                ],
+            }
+        ]
+
+    def test_engine_injected_params_are_excluded(self):
+        params = list_measurement_method_params("asmi")
+        indentation = params["indentation"]
+        names = {spec["name"] for spec in indentation}
+        assert names.isdisjoint(
+            {"gantry", "well_z", "measurement_height", "indentation_limit_height"}
+        )
+        assert {"step_size", "force_limit"} <= names
+
+    def test_filters_by_vendor(self):
+        assert set(list_measurement_method_params("potentiostat", vendor="emstat")) == {
+            "run_CA", "run_CP", "run_CV", "run_OCP",
+        }
+
+    def test_unknown_type_raises(self):
+        with pytest.raises(ValueError, match="Unknown instrument type"):
+            list_measurement_method_params("nonexistent")

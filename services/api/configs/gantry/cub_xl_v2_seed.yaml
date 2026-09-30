@@ -9,6 +9,7 @@
 serial_port: ""
 gantry_type: cub_xl
 cnc:
+  default_feed_rate_mm_min: 3000.0
   factory_z_travel_mm: 80.0
   calibration_block_height_mm: 35.0
   y_axis_motion: head

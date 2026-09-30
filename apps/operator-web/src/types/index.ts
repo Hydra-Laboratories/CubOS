@@ -44,6 +44,24 @@ export interface VialConfig {
   working_volume_ul: number;
 }
 
+export interface VialGridConfig {
+  type: "vial_grid";
+  name: string;
+  model_name: string;
+  rows: number;
+  columns: number;
+  calibration: CalibrationPoints;
+  x_offset: number;
+  y_offset: number;
+  row_direction?: "positive" | "negative" | null;
+  vial_model_name?: string;
+  vial_height?: number | null;
+  vial_diameter?: number | null;
+  capacity_ul: number;
+  working_volume_ul: number;
+  [key: string]: unknown;
+}
+
 export interface TipRackConfig {
   type: "tip_rack";
   name: string;
@@ -51,6 +69,12 @@ export interface TipRackConfig {
   load_name?: string;
   rows?: number;
   columns?: number;
+  calibration?: CalibrationPoints;
+  pickup_z?: number;
+  drop_z?: number | null;
+  tip_length?: number;
+  x_offset?: number;
+  y_offset?: number;
   z_pickup?: number;
   z_drop?: number;
   tips?: Record<string, WellPosition>;
@@ -121,7 +145,7 @@ export type UnsupportedDeckConfig =
   | VialHolderConfig
   | TipDisposalConfig;
 
-export type LabwareConfig = WellPlateConfig | VialConfig | UnsupportedDeckConfig;
+export type LabwareConfig = WellPlateConfig | VialConfig | VialGridConfig | UnsupportedDeckConfig;
 
 export interface WellPosition {
   x: number;
@@ -159,6 +183,7 @@ export interface InstrumentConfig {
   offset_x: number;
   offset_y: number;
   depth?: number;
+  offline?: boolean;
   [key: string]: unknown;
 }
 
@@ -313,6 +338,18 @@ export type InstrumentSchemas = Record<string, Record<string, InstrumentFieldInf
 
 export type InstrumentMeasurementMethods = Record<string, string[]>;
 
+export interface InstrumentMethodParamField {
+  name: string;
+  type: string;
+  required: boolean;
+  default: unknown;
+  fields: InstrumentMethodParamField[] | null;
+}
+
+// type -> method -> ordered method_kwargs parameter specs. A param with
+// non-null `fields` is a dataclass the engine builds from a nested mapping.
+export type InstrumentMethodParams = Record<string, Record<string, InstrumentMethodParamField[]>>;
+
 // Protocol
 
 export interface CommandArg {
@@ -373,6 +410,50 @@ export interface RunRecord {
   error: string | null;
   artifacts: string[];
   fluid_state_id: number | null;
+}
+
+// Step-execution progress. `kind`/`data` are additive on RunEvent: events
+// written before they existed default to "lifecycle"/null, and an unknown
+// future kind must be ignored rather than treated as an error.
+export type RunEventKind = "lifecycle" | "step";
+
+export type StepOutcome = "started" | "completed" | "failed" | "skipped";
+
+export interface StepEventData {
+  index: number;
+  command: string;
+  /** Colon-joined nested scope for compound commands, e.g. "leg2:fill". */
+  substep: string | null;
+  outcome: StepOutcome;
+  duration_s: number | null;
+  error: string | null;
+  reason: string | null;
+}
+
+export interface RunEvent {
+  sequence: number;
+  timestamp: number;
+  state: RunState;
+  message: string;
+  kind: RunEventKind;
+  data: Record<string, unknown> | null;
+}
+
+export interface RunEventsResponse {
+  run_id: string;
+  events: RunEvent[];
+}
+
+export interface PlanStep {
+  index: number;
+  command: string;
+  summary: string;
+  args: Record<string, unknown>;
+}
+
+export interface RunPlanResponse {
+  run_id: string;
+  steps: PlanStep[];
 }
 
 export interface FluidSeedItem {

@@ -30,7 +30,6 @@ UninstallDisplayName=CubOS
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
-Name: "asmi"; Description: "ASMI Go Direct driver support (public godirect package, selected by default)"; GroupDescription: "Optional public hardware drivers:"
 
 [Dirs]
 Name: "{localappdata}\UrsaLabs\CubOS\configs"
@@ -60,16 +59,8 @@ Name: "{autodesktop}\CubOS"; Filename: "{app}\desktop\CubOS.exe"; WorkingDir: "{
 Type: filesandordirs; Name: "{app}\venv"
 Type: filesandordirs; Name: "{app}\Python"
 Type: files; Name: "{app}\runtime-installed.txt"
-Type: files; Name: "{app}\driver-groups.txt"
 
 [Code]
-function GetDriverGroups(Param: String): String;
-begin
-  Result := '';
-  if WizardIsTaskSelected('asmi') then
-    Result := 'asmi';
-end;
-
 procedure RunPowerShellChecked(
   ScriptName: String;
   ScriptArguments: String;
@@ -105,8 +96,6 @@ begin
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  DriverGroups: String;
 begin
   if CurStep <> ssPostInstall then
     exit;
@@ -119,11 +108,9 @@ begin
     'Installing private Python runtime...'
   );
 
-  DriverGroups := GetDriverGroups('');
   RunPowerShellChecked(
     'Install-Runtime.ps1',
-    '-InstallDir "' + ExpandConstant('{app}') +
-      '" -DriverGroups "' + DriverGroups + '"',
+    '-InstallDir "' + ExpandConstant('{app}') + '"',
     'Installing CubOS and CubOS API runtime packages...'
   );
 end;

@@ -57,9 +57,6 @@ instruments:
     offline: true
     offset_x: 62.9
     offset_y: 5.1
-    park_position:
-    - -10.0
-    - -10.0
     port: ''
     type: capper
     vendor: pawduino

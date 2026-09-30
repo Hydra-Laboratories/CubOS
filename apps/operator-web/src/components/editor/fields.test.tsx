@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import { CoordinateField, NumberField, SelectField, TextField, UnsavedNotice } from "./fields";
+import { CoordinateField, NumberField, OptionalNumberField, SelectField, TextField, UnsavedNotice } from "./fields";
 
 describe("fields", () => {
   it("NumberField ignores incomplete input and reverts on blur", async () => {
@@ -20,6 +20,26 @@ describe("fields", () => {
     await user.clear(input);
     await user.tab(); // blur reverts the raw text to the committed value
     expect(input).toHaveValue("3");
+  });
+
+  it("OptionalNumberField reports null (not an empty string) when cleared", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<OptionalNumberField label="Limit" value={-5} onChange={onChange} />);
+    const input = screen.getByLabelText("Limit");
+    expect(input).toHaveValue("-5");
+
+    await user.clear(input);
+    expect(onChange).toHaveBeenLastCalledWith(null);
+    expect(input).toHaveValue("");
+
+    await user.type(input, "-2.5");
+    expect(onChange).toHaveBeenLastCalledWith(-2.5);
+  });
+
+  it("OptionalNumberField starts blank (not 0) when value is unset", () => {
+    render(<OptionalNumberField label="Limit" value={null} onChange={vi.fn()} />);
+    expect(screen.getByLabelText("Limit")).toHaveValue("");
   });
 
   it("TextField flags a blank required value", () => {

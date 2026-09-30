@@ -93,6 +93,66 @@ export function NumberField({ id, name, label, value, onChange, required, disabl
   );
 }
 
+interface OptionalNumberFieldProps {
+  id?: string;
+  name?: string;
+  label: string;
+  /** `null`/`undefined` means unset — distinct from `NumberField`, which
+   * always has a concrete numeric value. */
+  value: number | null | undefined;
+  /** Called with `null` when the field is cleared, so the caller can omit
+   * the argument entirely instead of saving an empty string or a stale
+   * number. */
+  onChange: (v: number | null) => void;
+  disabled?: boolean;
+  /** If set, renders an amber "*" next to the label when true. */
+  dirty?: boolean;
+}
+
+/** Like `NumberField`, but for optional numeric args: clearing the input
+ * reports `null` (omit the argument) instead of being blocked or silently
+ * reverting to the last valid number. */
+export function OptionalNumberField({ id, name, label, value, onChange, disabled, dirty }: OptionalNumberFieldProps) {
+  const normalizedValue = typeof value === "number" && Number.isFinite(value) ? value : null;
+  const [state, setState] = useState({
+    raw: normalizedValue === null ? "" : formatNumberInput(normalizedValue),
+    value: normalizedValue,
+  });
+  if (!Object.is(normalizedValue, state.value)) {
+    setState({ raw: normalizedValue === null ? "" : formatNumberInput(normalizedValue), value: normalizedValue });
+  }
+  const raw = state.raw;
+  const setRaw = (next: string) => setState({ raw: next, value: normalizedValue });
+
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12 }}>
+      <span style={theme.fieldLabel}>
+        {label}
+        {dirty && <DirtyMarker />}
+      </span>
+      <input
+        id={id}
+        name={name}
+        type="text"
+        inputMode="decimal"
+        value={raw}
+        disabled={disabled}
+        onChange={(e) => {
+          setRaw(e.target.value);
+          if (e.target.value.trim() === "") {
+            onChange(null);
+            return;
+          }
+          const n = tryParse(e.target.value);
+          if (n !== null) onChange(n);
+        }}
+        onBlur={() => setRaw(normalizedValue === null ? "" : formatNumberInput(normalizedValue))}
+        style={inputStyle}
+      />
+    </label>
+  );
+}
+
 
 interface TextFieldProps {
   id?: string;
@@ -282,3 +342,46 @@ export function SaveButton({ onClick, disabled }: { onClick: () => void; disable
     </button>
   );
 }
+
+import { formatSavedAt } from "./saveHelpers";
+
+/** "Saved <file> at <time>" acknowledgement shown after a successful save. */
+export function SavedStatus({ filename, at }: { filename: string; at: Date }) {
+  return (
+    <span role="status" style={savedStatusStyle}>
+      ✓ Saved <span style={theme.mono}>{filename}</span> at {formatSavedAt(at)}
+    </span>
+  );
+}
+
+const savedStatusStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: theme.color.successText,
+  whiteSpace: "nowrap",
+};
+
+/** One-line hint under the filename box saying where Save will write. */
+export function SaveTargetHint({ saveAs, selectedFile, exists }: { saveAs: string; selectedFile: string | null; exists: boolean }) {
+  if (saveAs) {
+    return (
+      <span style={saveHintStyle}>
+        Save writes <span style={theme.mono}>{saveAs}</span>
+        {exists && saveAs !== selectedFile ? " — that file already exists and will be overwritten." : " as a new file."}
+      </span>
+    );
+  }
+  if (selectedFile) {
+    return (
+      <span style={saveHintStyle}>
+        Save overwrites <span style={theme.mono}>{selectedFile}</span>. Type a name to save a copy instead.
+      </span>
+    );
+  }
+  return <span style={saveHintStyle}>Type a filename to save this config.</span>;
+}
+
+const saveHintStyle: React.CSSProperties = {
+  fontSize: 11.5,
+  color: theme.color.textMuted,
+  lineHeight: 1.35,
+};

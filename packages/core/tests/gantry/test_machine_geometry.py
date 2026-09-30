@@ -43,7 +43,7 @@ def test_cub_xl_exposes_right_x_max_rail_geometry():
     rail = structures[0]
     assert rail.name == "Cub XL right X-max rail"
     assert rail.contains(500.0, 150.0, 50.0) is True
-    assert rail.contains(500.0, 150.0, 101.0) is False
+    assert rail.contains(500.0, 150.0, 81.0) is False
 
 
 def test_cub_exposes_no_fixed_machine_geometry():
@@ -68,7 +68,7 @@ def test_fixed_structures_for_gantry_deck_origin_matches_type_lookup():
     assert rail.y_min == 0.0
     assert rail.y_max == 300.0
     assert rail.z_min == 0.0
-    assert rail.z_max == 100.0
+    assert rail.z_max == 80.0
 
 
 def test_fixed_structures_for_gantry_home_origin_returns_translated_rail():
@@ -84,7 +84,7 @@ def test_fixed_structures_for_gantry_home_origin_returns_translated_rail():
     assert rail.y_min == -300.0
     assert rail.y_max == 0.0
     assert rail.z_min == -100.0
-    assert rail.z_max == 0.0
+    assert rail.z_max == -20.0
 
 
 def test_fixed_structures_for_gantry_home_origin_uses_calibrated_travel_span():
@@ -109,7 +109,7 @@ def test_fixed_structures_for_gantry_home_origin_uses_calibrated_travel_span():
     assert rail.y_min == -300.0
     assert rail.y_max == 0.0
     assert rail.z_min == -100.0
-    assert rail.z_max == 0.0
+    assert rail.z_max == -20.0
     assert rail.contains(0.0, 0.0, 0.0) is False
 
 

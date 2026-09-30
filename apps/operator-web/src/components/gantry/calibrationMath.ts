@@ -142,6 +142,7 @@ export function buildCalibratedConfig({
   referenceInstrument,
   lowestInstrument,
   cameraBlockDistances,
+  tipLengths,
 }: {
   config: GantryConfig;
   measuredVolume: CapturedPosition;
@@ -154,6 +155,11 @@ export function buildCalibratedConfig({
   referenceInstrument: string;
   lowestInstrument: string;
   cameraBlockDistances?: Record<string, number>;
+  // Pipettes that can't reach the calibration block bare-nozzle are touched
+  // with a tip attached instead; this is the tip length (mm) to subtract so
+  // the stored `depth` still reflects the bare-nozzle TCP, matching
+  // effective_depth = depth + attached_tip_extension at protocol runtime.
+  tipLengths?: Record<string, number>;
 }): GantryConfig {
   const next = structuredClone(config);
   const originPolicy = config.origin_policy ?? "deck_origin";
@@ -208,6 +214,7 @@ export function buildCalibratedConfig({
     for (const name of instruments) {
       const coords = instrumentPositions[name];
       if (!coords || !next.instruments[name]) continue;
+      if (next.instruments[name].type === "lighting") continue;
       if (next.instruments[name].type === "camera") {
         const distance = cameraBlockDistances?.[name];
         if (!Number.isFinite(distance) || distance == null || distance < 0) {
@@ -221,12 +228,34 @@ export function buildCalibratedConfig({
         };
         continue;
       }
+      const tipLength = tipLengths?.[name];
+      const bareNozzleZ = tipLength != null
+        ? requireFinite(coords.z - tipLength, `${name} tip-adjusted touch Z`)
+        : coords.z;
       next.instruments[name] = {
         ...next.instruments[name],
         offset_x: roundMm(requireFinite(reference.x - coords.x, `${name} offset_x`)),
         offset_y: roundMm(requireFinite(reference.y - coords.y, `${name} offset_y`)),
-        depth: roundMm(requireFinite(coords.z - lowest.z, `${name} depth`)),
+        depth: roundMm(requireFinite(bareNozzleZ - lowest.z, `${name} depth`)),
       };
+    }
+    // Lighting is co-mounted with the camera, so it inherits the camera's
+    // calibration instead of getting its own step.
+    const cameraSource = instruments.find(
+      (name) => next.instruments[name]?.type === "camera" && instrumentPositions[name],
+    );
+    if (cameraSource) {
+      const camera = next.instruments[cameraSource];
+      for (const name of instruments) {
+        const entry = next.instruments[name];
+        if (!entry || entry.type !== "lighting") continue;
+        next.instruments[name] = {
+          ...entry,
+          offset_x: camera.offset_x,
+          offset_y: camera.offset_y,
+          depth: camera.depth,
+        };
+      }
     }
   }
 

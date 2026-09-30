@@ -60,3 +60,14 @@ export function useValidateProtocolSetup() {
     mutationFn: (body: ProtocolSetupValidationRequest) => protocolApi.validateSetup(body),
   });
 }
+
+export function useDeleteProtocol() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (filename: string) => protocolApi.delete(filename),
+    onSuccess: (_data, filename) => {
+      qc.removeQueries({ queryKey: ["protocol", filename] });
+      qc.invalidateQueries({ queryKey: ["protocol", "configs"] });
+    },
+  });
+}

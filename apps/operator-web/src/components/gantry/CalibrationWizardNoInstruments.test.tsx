@@ -55,7 +55,7 @@ describe("CalibrationWizard zero-instrument guidance", () => {
     vi.unstubAllGlobals();
   });
 
-  it("explains why Continue is disabled and avoids calling it single-instrument", async () => {
+  it("explains why Continue is disabled", async () => {
     installFetch();
     const config: GantryConfig = noInstrumentsConfig();
 
@@ -72,8 +72,6 @@ describe("CalibrationWizard zero-instrument guidance", () => {
     expect(
       screen.getByText(/Add and save at least one mounted instrument in the Gantry configuration before calibrating\./),
     ).toBeInTheDocument();
-    expect(screen.getByText(/no instruments configured/)).toBeInTheDocument();
-    expect(screen.queryByText(/single-instrument/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Continue" })).toBeDisabled();
   });
 

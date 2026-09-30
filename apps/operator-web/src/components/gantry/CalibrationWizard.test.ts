@@ -392,6 +392,134 @@ describe("buildCalibratedConfig", () => {
     });
   });
 
+  it("subtracts tip length from a pipette touched with a tip attached", () => {
+    const config = gantryConfig();
+    config.instruments.pipette = {
+      type: "pipette",
+      vendor: "opentrons",
+      offset_x: 0,
+      offset_y: 0,
+      depth: 0,
+    };
+
+    const withoutTip = buildCalibratedConfig({
+      config,
+      measuredVolume: { x: 398.5, y: 299.25, z: 96.75 },
+      zMin: 0,
+      zMax: 110,
+      maxTravel: { x: 398.5, y: 299.25, z: 110 },
+      isMulti: true,
+      instruments: ["asmi", "pipette"],
+      instrumentPositions: {
+        asmi: { x: 199, y: 149.5, z: 12.5 },
+        pipette: { x: 205, y: 151, z: 30.5 },
+      },
+      referenceInstrument: "asmi",
+      lowestInstrument: "asmi",
+    });
+    expect(withoutTip.instruments.pipette).toMatchObject({ depth: 18 });
+
+    const withTip = buildCalibratedConfig({
+      config,
+      measuredVolume: { x: 398.5, y: 299.25, z: 96.75 },
+      zMin: 0,
+      zMax: 110,
+      maxTravel: { x: 398.5, y: 299.25, z: 110 },
+      isMulti: true,
+      instruments: ["asmi", "pipette"],
+      instrumentPositions: {
+        asmi: { x: 199, y: 149.5, z: 12.5 },
+        // Same bare-nozzle depth (18mm), but touched with a 22mm tip
+        // attached: the tip hangs further below the carriage, so reaching
+        // the same physical block top requires the carriage 22mm higher
+        // (30.5 + 22 = 52.5) than the bare-nozzle touch would.
+        pipette: { x: 205, y: 151, z: 52.5 },
+      },
+      referenceInstrument: "asmi",
+      lowestInstrument: "asmi",
+      tipLengths: { pipette: 22 },
+    });
+    // Sanity: without correcting for the tip, depth would be 52.5 - 12.5 = 40.
+    // Subtracting the tip length from the touched Z recovers the bare-nozzle 18mm.
+    expect(withTip.instruments.pipette).toMatchObject({ depth: 18 });
+  });
+
+  it("copies the camera calibration onto lighting instruments", () => {
+    const config = gantryConfig();
+    config.instruments.camera = {
+      type: "camera",
+      vendor: "raspberry_pi",
+      offset_x: 0,
+      offset_y: 0,
+      depth: 0,
+      offline: true,
+    };
+    config.instruments.lights = {
+      type: "lighting",
+      vendor: "pawduino",
+      offset_x: 5,
+      offset_y: 6,
+      depth: 7,
+      offline: true,
+    };
+
+    const calibrated = buildCalibratedConfig({
+      config,
+      measuredVolume: { x: 398.5, y: 299.25, z: 96.75 },
+      zMin: 0,
+      zMax: 110,
+      maxTravel: { x: 398.5, y: 299.25, z: 110 },
+      isMulti: true,
+      instruments: ["asmi", "camera", "lights"],
+      instrumentPositions: {
+        asmi: { x: 199, y: 149.5, z: 12.5 },
+        camera: { x: 211, y: 153.5, z: 35.5 },
+      },
+      referenceInstrument: "asmi",
+      lowestInstrument: "asmi",
+      cameraBlockDistances: { camera: 20 },
+    });
+
+    expect(calibrated.instruments.lights).toMatchObject({
+      offset_x: -12,
+      offset_y: -4,
+      depth: 3,
+    });
+  });
+
+  it("keeps lighting offsets untouched when the config has no camera", () => {
+    const config = gantryConfig();
+    config.instruments.lights = {
+      type: "lighting",
+      vendor: "pawduino",
+      offset_x: 5,
+      offset_y: 6,
+      depth: 7,
+      offline: true,
+    };
+
+    const calibrated = buildCalibratedConfig({
+      config,
+      measuredVolume: { x: 398.5, y: 299.25, z: 96.75 },
+      zMin: 0,
+      zMax: 110,
+      maxTravel: { x: 398.5, y: 299.25, z: 110 },
+      isMulti: true,
+      instruments: ["asmi", "lights"],
+      instrumentPositions: {
+        asmi: { x: 199, y: 149.5, z: 12.5 },
+      },
+      referenceInstrument: "asmi",
+      lowestInstrument: "asmi",
+    });
+
+    expect(calibrated.instruments.lights).toMatchObject({
+      offset_x: 5,
+      offset_y: 6,
+      depth: 7,
+    });
+  });
+
   it("requires a camera distance before saving calibrated offsets", () => {
     const config = gantryConfig();
     config.instruments.camera = {

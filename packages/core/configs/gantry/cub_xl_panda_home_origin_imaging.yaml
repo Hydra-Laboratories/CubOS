@@ -1,0 +1,89 @@
+# PANDA home-origin gantry (pre-deck-origin negative frame) with the imaging
+# stack live: FLIR camera + Pawduino lights.
+#
+# Derived from the generated cub_xl_panda_home_origin_full.yaml (same frame,
+# GRBL settings, and instrument offsets — re-derive if that file regenerates):
+# camera switched from mount_only to flir, and a `lights` instrument added.
+# The camera/lens is the zero-offset reference tool (depth 0.0), matching the
+# imported PANDA-BEAR tool table.
+#
+# Dry-run ready as checked in (everything offline). For the bench:
+#   camera: offline: false (needs the Spinnaker SDK + PySpin wheel,
+#           https://www.flir.com/products/spinnaker-sdk/; or vendor: opencv
+#           for a USB webcam).
+#   lights: offline: false and set `port` to the Pawduino serial device —
+#           the SAME port as the capper/pipette; the shared link opens it
+#           once.
+
+cnc:
+  default_feed_rate_mm_min: 3000.0
+  factory_z_travel_mm: 100.0
+  safe_z: -5.0
+  y_axis_motion: head
+gantry_type: cub_xl
+grbl_settings:
+  dir_invert_mask: 1
+  homing_dir_mask: 0
+  homing_enable: true
+  max_travel_x: 401.0
+  max_travel_y: 301.0
+  max_travel_z: 85.0
+  status_report: 0
+  steps_per_mm_x: 400.0
+  steps_per_mm_y: 400.0
+  steps_per_mm_z: 400.0
+instruments:
+  camera:
+    camera_id: 0
+    depth: 0.0
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    type: camera
+    vendor: flir
+  lights:
+    depth: 0.0
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    port: ''
+    type: lighting
+    vendor: pawduino
+  pipette:
+    depth: 100.0
+    offline: true
+    offset_x: 115.9
+    offset_y: 6.1
+    pipette_model: p300_single_gen2
+    port: ''
+    type: pipette
+    vendor: opentrons
+  potentiostat:
+    channel: 0
+    depth: 100.0
+    offline: true
+    offset_x: -56.7
+    offset_y: 3.8
+    port: ''
+    type: potentiostat
+    vendor: admiral
+  vial_capper_decapper:
+    capture_retries: 2
+    capture_settle_s: 1.0
+    depth: 61.5
+    engage_depth_mm: -15.0
+    offline: true
+    offset_x: 62.9
+    offset_y: 5.1
+    port: ''
+    type: capper
+    vendor: pawduino
+origin_policy: home_origin
+serial_port: /dev/ttyUSB0
+working_volume:
+  x_max: 0.0
+  x_min: -401.0
+  y_max: 0.0
+  y_min: -301.0
+  z_max: 0.0
+  z_min: -85.0

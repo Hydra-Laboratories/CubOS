@@ -54,11 +54,38 @@ class RunSubmission(BaseModel):
         return self
 
 
+RunEventKind = Literal["lifecycle", "step"]
+
+StepOutcome = Literal["started", "completed", "failed", "skipped"]
+
+
+class StepEventData(BaseModel):
+    """Payload carried by ``kind="step"`` run events.
+
+    ``substep`` is ``None`` for a protocol step itself and a colon-joined
+    path (``"leg2"``, ``"cycle0:fill"``) for the nested scopes compound
+    commands open, mirroring ``ProtocolContext.active_substep``.
+    """
+
+    index: int
+    command: str
+    substep: str | None = None
+    outcome: StepOutcome
+    duration_s: float | None = None
+    error: str | None = None
+    reason: str | None = None
+
+
 class RunEvent(BaseModel):
     sequence: int
     timestamp: float
     state: RunState
     message: str
+    # `kind` and `data` are additive: events written before they existed
+    # parse with these defaults, and consumers that do not understand a
+    # future kind must ignore it rather than fail.
+    kind: RunEventKind = "lifecycle"
+    data: Dict[str, Any] | None = None
 
 
 class RunRecord(BaseModel):
@@ -79,6 +106,27 @@ class RunRecord(BaseModel):
 class RunEventsResponse(BaseModel):
     run_id: str
     events: List[RunEvent]
+
+
+class PlanStep(BaseModel):
+    """One compiled protocol step, for display before/while it runs."""
+
+    index: int
+    command: str
+    summary: str
+    args: Dict[str, Any] = Field(default_factory=dict)
+
+
+class RunPlanResponse(BaseModel):
+    """The compiled step list for a submitted run.
+
+    Keyed on ``run_id`` rather than a submitted bundle so it stays available
+    after a page reload and after the run finishes -- the run's stored
+    ``protocol.yaml`` is the source, so the plan is deterministic.
+    """
+
+    run_id: str
+    steps: List[PlanStep]
 
 
 class RunArtifactsResponse(BaseModel):

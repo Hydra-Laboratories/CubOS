@@ -445,3 +445,155 @@ def test_run_record_fluid_state_link_survives_restart(monkeypatch):
     reread = api_request(reopened_app, "GET", "/api/v1/runs/state-restart")
     assert reread.status_code == 200
     assert reread.json()["fluid_state_id"] == fluid_state_id
+
+
+STEP_PROTOCOL_YAML = """\
+protocol:
+  - home: null
+  - pause:
+      seconds: 0
+      reason: settling
+  - home: null
+"""
+
+
+def _step_payload(run_id: str = "run-steps") -> dict:
+    return {
+        "run_id": run_id,
+        "gantry_config": GANTRY_YAML,
+        "deck_config": DECK_YAML,
+        "protocol_yaml": STEP_PROTOCOL_YAML,
+    }
+
+
+def test_plan_returns_compiled_steps_with_summaries(monkeypatch):
+    from cubos_api.routers import gantry as gantry_router
+
+    monkeypatch.setattr(gantry_router, "run_protocol_on_session", lambda **_kw: {"ok": True})
+    app = create_app()
+    api_request(app, "POST", "/api/v1/runs", json=_step_payload())
+    _wait_for_state(app, "run-steps", "succeeded")
+
+    _resp = api_request(app, "GET", "/api/v1/runs/run-steps/plan")
+    assert _resp.status_code == 200, _resp.json()
+    plan = _resp.json()
+    assert plan["run_id"] == "run-steps"
+    assert [step["index"] for step in plan["steps"]] == [0, 1, 2]
+    assert [step["command"] for step in plan["steps"]] == ["home", "pause", "home"]
+    # Summaries come from the commands' own formatters, not the UI.
+    assert plan["steps"][0]["summary"] == "all axes"
+    assert "settling" in plan["steps"][1]["summary"]
+
+
+def test_plan_is_available_after_the_run_finishes(monkeypatch):
+    """The step view has to survive a reload and still render a finished run."""
+    from cubos_api.routers import gantry as gantry_router
+
+    monkeypatch.setattr(gantry_router, "run_protocol_on_session", lambda **_kw: {"ok": True})
+    app = create_app()
+    api_request(app, "POST", "/api/v1/runs", json=_step_payload())
+    _wait_for_state(app, "run-steps", "succeeded")
+    first = api_request(app, "GET", "/api/v1/runs/run-steps/plan").json()
+    second = api_request(app, "GET", "/api/v1/runs/run-steps/plan").json()
+    assert first == second
+
+
+def test_plan_404s_for_an_unknown_run():
+    app = create_app()
+    response = api_request(app, "GET", "/api/v1/runs/nope/plan")
+    assert response.status_code == 404
+
+
+def test_plan_422s_on_an_uncompilable_protocol(monkeypatch):
+    from cubos_api.routers import gantry as gantry_router
+
+    monkeypatch.setattr(gantry_router, "run_protocol_on_session", lambda **_kw: {"ok": True})
+    app = create_app()
+    api_request(
+        app,
+        "POST",
+        "/api/v1/runs",
+        json={
+            "run_id": "run-bad",
+            "gantry_config": GANTRY_YAML,
+            "deck_config": DECK_YAML,
+            "protocol_yaml": "protocol:\n  - not_a_real_command: null\n",
+        },
+    )
+    _wait_for_state(app, "run-bad", "failed", "succeeded")
+    response = api_request(app, "GET", "/api/v1/runs/run-bad/plan")
+    assert response.status_code == 422
+    assert "not_a_real_command" in response.json()["detail"]
+
+
+# A mock run really loads the gantry/deck and executes the engine, so it needs
+# a valid (offline) machine config rather than the stub used elsewhere here.
+MOCK_GANTRY_YAML = """\
+serial_port: /dev/null
+gantry_type: cub_xl
+cnc:
+  factory_z_travel_mm: 129.0
+  y_axis_motion: head
+  safe_z: 69.0
+working_volume:
+  x_min: 0.0
+  x_max: 307.0
+  y_min: 0.0
+  y_max: 300.0
+  z_min: 0.0
+  z_max: 129.0
+instruments:
+  camera:
+    type: camera
+    vendor: mount_only
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    depth: 0.0
+"""
+
+
+def test_mock_run_emits_step_events():
+    """A mock run drives the same engine path, so it produces real step events."""
+    app = create_app()
+    payload = _step_payload("run-mock-steps")
+    payload["gantry_config"] = MOCK_GANTRY_YAML
+    payload["mock_mode"] = True
+    api_request(app, "POST", "/api/v1/runs", json=payload)
+    _wait_for_state(app, "run-mock-steps", "succeeded", "failed")
+
+    events = api_request(app, "GET", "/api/v1/runs/run-mock-steps/events").json()["events"]
+    step_events = [event for event in events if event["kind"] == "step"]
+    assert step_events, "expected kind=step events from a mock run"
+
+    started = [e["data"] for e in step_events if e["data"]["outcome"] == "started"]
+    completed = [e["data"] for e in step_events if e["data"]["outcome"] == "completed"]
+    assert [entry["index"] for entry in started] == [0, 1, 2]
+    assert [entry["command"] for entry in started] == ["home", "pause", "home"]
+    assert all(entry["duration_s"] is not None for entry in completed)
+    # Step events report progress within a run, never a state transition.
+    assert {event["state"] for event in step_events} == {"running"}
+    # Sequence numbers stay dense and ordered across both event kinds.
+    assert [event["sequence"] for event in events] == list(range(1, len(events) + 1))
+
+
+def test_lifecycle_events_still_default_to_kind_lifecycle(monkeypatch):
+    from cubos_api.routers import gantry as gantry_router
+
+    monkeypatch.setattr(gantry_router, "run_protocol_on_session", lambda **_kw: {"ok": True})
+    app = create_app()
+    api_request(app, "POST", "/api/v1/runs", json=_payload())
+    _wait_for_state(app, "run-001", "succeeded")
+    events = api_request(app, "GET", "/api/v1/runs/run-001/events").json()["events"]
+    assert {event["kind"] for event in events} == {"lifecycle"}
+    assert all(event["data"] is None for event in events)
+
+
+def test_events_written_before_kind_existed_still_parse(tmp_path):
+    """Backwards compatibility: `kind`/`data` are additive with defaults."""
+    from cubos_api.models.runs import RunEvent
+
+    legacy = '{"sequence":1,"timestamp":1.0,"state":"queued","message":"run accepted"}'
+    event = RunEvent.model_validate_json(legacy)
+    assert event.kind == "lifecycle"
+    assert event.data is None

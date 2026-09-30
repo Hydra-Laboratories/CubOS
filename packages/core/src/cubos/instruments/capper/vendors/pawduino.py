@@ -40,11 +40,14 @@ generically in ``cubos.protocol_engine.commands.capper`` using
 
 from __future__ import annotations
 
-import time
 from typing import Optional
 
-import serial
-
+from cubos.instruments.controllers.pawduino import (
+    PawduinoLink,
+    PawduinoLinkCommandError,
+    PawduinoLinkError,
+    PawduinoLinkTimeoutError,
+)
 from cubos.instruments.capper.exceptions import (
     CapperCommandError,
     CapperConnectionError,
@@ -58,8 +61,6 @@ _CMD_EMAG_ON = 5
 _CMD_EMAG_OFF = 6
 _CMD_LINE_BREAK = 7
 
-_ARDUINO_SETTLE_TIME = 2.0
-
 
 class PawduinoCapper(CapperInstrument):
     """Electromagnet-actuated capper/decapper driven over Arduino serial.
@@ -72,7 +73,6 @@ class PawduinoCapper(CapperInstrument):
         self,
         *,
         engage_depth_mm: float,
-        park_position: tuple,
         capture_retries: int = 2,
         capture_settle_s: float = 1.0,
         port: str = "",
@@ -87,7 +87,6 @@ class PawduinoCapper(CapperInstrument):
     ):
         super().__init__(
             engage_depth_mm=engage_depth_mm,
-            park_position=park_position,
             capture_retries=capture_retries,
             capture_settle_s=capture_settle_s,
             name=name, offset_x=offset_x, offset_y=offset_y,
@@ -96,7 +95,7 @@ class PawduinoCapper(CapperInstrument):
         self._port = port
         self._baud_rate = baud_rate
         self._command_timeout = command_timeout
-        self._serial: Optional[serial.Serial] = None
+        self._link: Optional[PawduinoLink] = None
         self._cap_present = False
 
     # ── BaseInstrument interface ──────────────────────────────────────────
@@ -105,23 +104,18 @@ class PawduinoCapper(CapperInstrument):
         if self._offline:
             self.logger.info("Capper connected (offline)")
             return
+        # The pipette and lights share this Arduino via one link per port.
         try:
-            self._serial = serial.Serial(
-                port=self._port,
-                baudrate=self._baud_rate,
-                timeout=self._command_timeout,
-            )
-        except serial.SerialException as exc:
-            raise CapperConnectionError(
-                f"Cannot open serial port {self._port}: {exc}"
-            ) from exc
-
-        time.sleep(_ARDUINO_SETTLE_TIME)
+            self._link = PawduinoLink.acquire(self._port, self._baud_rate)
+            self._link.connect(timeout=self._command_timeout)
+        except PawduinoLinkError as exc:
+            self._link = None
+            raise CapperConnectionError(str(exc)) from exc
 
         try:
             self.read_cap_present()
         except (CapperCommandError, CapperTimeoutError, CapperSensorFault) as exc:
-            self._close_serial()
+            self._release_link()
             raise CapperConnectionError(
                 f"Arduino did not respond after connect: {exc}"
             ) from exc
@@ -132,13 +126,13 @@ class PawduinoCapper(CapperInstrument):
         if self._offline:
             self.logger.info("Capper disconnected (offline)")
             return
-        self._close_serial()
+        self._release_link()
         self.logger.info("Disconnected from capper")
 
     def health_check(self) -> bool:
         if self._offline:
             return True
-        if self._serial is None or not self._serial.is_open:
+        if self._link is None or not self._link.is_open:
             return False
         try:
             self.read_cap_present()
@@ -172,38 +166,16 @@ class PawduinoCapper(CapperInstrument):
     # ── Private helpers ───────────────────────────────────────────────────
 
     def _send_command(self, code: int, *args: float) -> str:
-        if self._serial is None or not self._serial.is_open:
+        if self._link is None:
             raise CapperCommandError("Not connected to Arduino")
-
-        parts = [str(code)] + [str(a) for a in args]
-        message = ",".join(parts) + "\n"
-
         try:
-            self._serial.write(message.encode())
-            self._serial.flush()
-        except serial.SerialException as exc:
-            raise CapperCommandError(f"Failed to send command {code}: {exc}") from exc
-
-        deadline = time.monotonic() + self._command_timeout
-        while time.monotonic() < deadline:
-            try:
-                line = self._serial.readline().decode().strip()
-            except serial.SerialException as exc:
-                raise CapperCommandError(
-                    f"Serial read error for command {code}: {exc}"
-                ) from exc
-
-            if not line:
-                continue
-            if line.startswith("OK:"):
-                return line
-            if line.startswith("ERR:"):
-                raise CapperCommandError(f"Command {code} failed: {line}")
-
-        raise CapperTimeoutError(
-            f"Timed out ({self._command_timeout}s) waiting for response to "
-            f"command {code}"
-        )
+            return self._link.send_command(
+                code, *args, timeout=self._command_timeout,
+            )
+        except PawduinoLinkTimeoutError as exc:
+            raise CapperTimeoutError(str(exc)) from exc
+        except PawduinoLinkCommandError as exc:
+            raise CapperCommandError(str(exc)) from exc
 
     @staticmethod
     def _parse_line_break_response(response: str) -> bool:
@@ -235,10 +207,7 @@ class PawduinoCapper(CapperInstrument):
             f"No 'value1' field in line-break sensor response {response!r}."
         )
 
-    def _close_serial(self) -> None:
-        if self._serial is not None:
-            try:
-                self._serial.close()
-            except serial.SerialException:
-                pass
-            self._serial = None
+    def _release_link(self) -> None:
+        if self._link is not None:
+            self._link.disconnect()
+            self._link = None

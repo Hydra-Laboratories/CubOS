@@ -4,7 +4,7 @@ Mirrors ``tests/protocol_engine/test_pipette_commands.py``'s style. A
 ``FakeGantry`` test double (not MagicMock) traces every ``move``/
 ``move_to_labware`` call into a shared, ordered list; ``MockCapper``'s own
 ``actuation_log`` is redirected into that same list, so a single trace
-proves the exact approach -> engage -> capture/release -> retract -> park
+proves the exact approach -> engage -> capture/release -> retract
 order across both the motion and the actuation/sensor layers.
 """
 
@@ -92,7 +92,7 @@ labware:
 
 
 def _make_capper(**overrides):
-    kwargs = dict(engage_depth_mm=-8.0, park_position=(1.0, 2.0), capture_settle_s=0.0)
+    kwargs = dict(engage_depth_mm=-8.0, capture_settle_s=0.0)
     kwargs.update(overrides)
     return MockCapper(**kwargs)
 
@@ -128,9 +128,8 @@ class TestDecapSequencing:
             ("approach", Coordinate3D(x=10.0, y=20.0, z=30.0)),
             ("move", (10.0, 20.0, engage_z)),
             "capture_cap",
-            "read_cap_present",
             ("move", (10.0, 20.0, SAFE_Z)),
-            ("move", (1.0, 2.0, SAFE_Z)),
+            "read_cap_present",
         ]
 
     def test_cap_present_after_decap(self):
@@ -151,9 +150,8 @@ class TestCapSequencing:
             ("approach", Coordinate3D(x=10.0, y=20.0, z=30.0)),
             ("move", (10.0, 20.0, engage_z)),
             "release_cap",
-            "read_cap_present",
             ("move", (10.0, 20.0, SAFE_Z)),
-            ("move", (1.0, 2.0, SAFE_Z)),
+            "read_cap_present",
         ]
 
     def test_cap_absent_after_cap(self):
@@ -162,6 +160,39 @@ class TestCapSequencing:
         ctx, gantry = _untracked_context(capper=capper)
         cap(ctx, "capper", "vial_1")
         assert gantry.instruments["capper"].read_cap_present() is False
+
+    def test_release_confirm_reads_after_retract_with_beam_realistic_sensor(self):
+        """Regression: the real line-break sensor reads cap-present at engage
+        depth even after a successful release -- the released cap sits on the
+        vial inside the beam until the tool lifts clear. Confirming before the
+        retract made every hardware `cap` fail its sensor check."""
+        capper = _make_capper(capture_retries=0)
+        capper.capture_cap()  # start holding a cap
+        engage_z = 30.0 + capper.engage_depth_mm
+        current_z = {"z": SAFE_Z}
+
+        class ZTrackingGantry(FakeGantry):
+            def move(self, instrument, position):
+                current_z["z"] = position[2]
+                super().move(instrument, position)
+
+        def beam_read():
+            capper.actuation_log.append("read_cap_present")
+            if current_z["z"] == engage_z:
+                return True  # cap in the beam: held, or sitting on the vial
+            return capper._cap_present
+
+        capper.read_cap_present = beam_read
+        gantry = ZTrackingGantry(capper)
+        ctx = ProtocolContext(
+            gantry=gantry, deck=_SimpleDeck(), logger=logging.getLogger("test_capper"),
+        )
+
+        cap(ctx, "capper", "vial_1")  # must not raise
+
+        retract_index = gantry.trace.index(("move", (10.0, 20.0, SAFE_Z)))
+        read_index = gantry.trace.index("read_cap_present")
+        assert read_index > retract_index
 
 
 # ─── Retry / fail-closed on sensor faults ──────────────────────────────────
@@ -249,21 +280,23 @@ class TestSafeRetractOnMidMotionFailure:
         assert "capture_cap" not in gantry.trace
         assert gantry.trace[-1] == ("move", (10.0, 20.0, SAFE_Z))
 
-    def test_retract_failure_after_successful_capture_raises_distinct_error(self):
+    def test_retract_failure_before_confirm_fails_closed(self):
+        # The retract precedes the sensor confirm, so a retract failure
+        # means the operation was never confirmed -- generic fail-closed path.
         capper = _make_capper()
         ctx, gantry = _untracked_context(capper=capper)
-        gantry.move_raises_on_call = 2  # the retract move, after capture succeeded
-        with pytest.raises(ProtocolExecutionError, match="retract/park failed"):
+        gantry.move_raises_on_call = 2  # the retract move, after actuation
+        with pytest.raises(ProtocolExecutionError, match="decap failed"):
             decap(ctx, "capper", "vial_1")
         assert "capture_cap" in gantry.trace
-        assert "read_cap_present" in gantry.trace
+        assert "read_cap_present" not in gantry.trace
 
-    def test_park_failure_after_successful_capture_raises(self):
-        capper = _make_capper()
-        ctx, gantry = _untracked_context(capper=capper)
-        gantry.move_raises_on_call = 3  # the park move
-        with pytest.raises(ProtocolExecutionError, match="retract/park failed"):
-            decap(ctx, "capper", "vial_1")
+    def test_no_lateral_move_after_confirmed_retract(self):
+        ctx, gantry = _untracked_context()
+        decap(ctx, "capper", "vial_1")
+        moves = [pos for kind, pos in (t for t in gantry.trace if isinstance(t, tuple)) if kind == "move"]
+        assert all(pos[:2] == (10.0, 20.0) for pos in moves)
+        assert moves[-1] == (10.0, 20.0, SAFE_Z)
 
     def test_safe_retract_itself_failing_does_not_mask_original_error(self):
         capper = _make_capper()
@@ -424,3 +457,6 @@ class _FakePipette:
 
     def dispense(self, volume_ul, speed=50.0):
         return type("R", (), {"success": True, "volume_ul": volume_ul})()
+
+    def blowout(self, speed=50.0):
+        return type("R", (), {"success": True})()

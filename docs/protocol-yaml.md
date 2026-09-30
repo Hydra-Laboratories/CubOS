@@ -121,6 +121,7 @@ Commands available in YAML:
 - `home`
 - `move`
 - `measure`
+- `rinse`
 - `scan`
 - `pause`
 - `breakpoint`
@@ -137,12 +138,33 @@ Commands available in YAML:
 - `clear_well`
 - `decap`
 - `cap`
+- `set_lights`
+- `capture`
+- `image_well`
 
 ### `home`
 
 Home the gantry without rewriting the calibrated work-coordinate system —
 whichever `origin_policy` the gantry YAML selects (see [Gantry: Origin
 Policy](gantry.md#origin-policy)). No arguments.
+
+### `rinse`
+
+Dip a potentiostat probe into an uncapped vial three times, withdrawing to
+`safe_z` after each dip.
+
+- `instrument` *(str, required)* — mounted potentiostat name.
+- `vial` *(str, required)* — vial path, including holder or grid positions.
+- `measurement_height` *(float, required)* — negative offset in mm below the
+  calibrated vial rim; choose a depth that reaches the liquid and clears the bottom.
+
+```yaml
+protocol:
+  - rinse:
+      instrument: potentiostat
+      vial: vial_holder.vial_1
+      measurement_height: -5
+```
 
 ### `move`
 
@@ -155,8 +177,10 @@ approach and ends **above** the target (no descent).
   list, or a deck-target string.
 - `travel_z` *(float, default `null`)* — transit Z for literal/named XYZ moves:
   lift/lower to `travel_z` at the current XY, travel XY, then move to `position`.
-  Applies **only** to literal/named targets; supplying it with a deck target is
-  an error.
+  When omitted and the move changes XY, the gantry lifts to the working-volume
+  ceiling (`max(safe_z, z_max - instrument depth)`) before XY travel so every
+  mounted tool clears the deck; a Z-only move is sent as-is. Applies **only**
+  to literal/named targets; supplying it with a deck target is an error.
 
 ### `measure`
 
@@ -213,12 +237,27 @@ All pipette commands require an instrument registered under the name `pipette`.
 The `height`/`source_height`/`destination_height` args follow the labware-relative
 height convention.
 
+**`speed` is a normalized 0–100 percentage** of the instrument's usable speed
+range, not a physical unit — each vendor driver maps it onto its own hardware
+scale, so a protocol stays portable. The `sartorius` driver maps the default
+`50.0` onto the pipette's own mid-scale setting. The `opentrons` driver
+currently ignores `speed` and lets its firmware choose a velocity; honoring it
+would change motion on machines already in service, so that remains a
+deliberate follow-up.
+
 #### `pick_up_tip`
 
 Pick up a tip from a tip-rack slot, record its length, and mark the slot consumed.
 
-- `position` *(str, required)* — tip-rack slot, including the explicit tip slot
-  (e.g. `tips.A1`).
+- `position` *(str, required)* — either an explicit tip slot (e.g. `tips.A1`)
+  or just the rack name (e.g. `tips`), which auto-selects the next available
+  tip in the rack's tip order as the rack is used up. Prefer the rack-only
+  form for protocols that don't need a specific slot; it lets a rack be
+  worked through within a run without manually advancing the slot. Tip
+  consumption only persists across separate runs when durable fluid tracking
+  is active (`context.fluid_state_id`); otherwise it's in-memory for that run
+  only, and a rerun starts from the first tip again — replace or refresh the
+  physical rack between runs in that case.
 - `speed` *(float, default `50.0`)* — approach/pick-up speed.
 
 #### `aspirate`
@@ -240,11 +279,13 @@ Move to a position and blow out.
 
 #### `mix`
 
-Move to a position and mix in place (repeated aspirate/dispense).
+Move to a position and mix between two heights. Each cycle aspirates at
+`height`, rises 1 mm to dispense and aspirate again, then returns to `height`
+to dispense.
 
 - `position` *(str, required)* — deck target.
 - `volume_ul` *(float, required)* — mix volume (µL).
-- `repetitions` *(int, default `3`)* — number of mix cycles.
+- `cycles` *(int, default `3`)* — number of mix cycles.
 - `speed` *(float, default `50.0`)* — mix speed.
 - `height` *(float, default `0.0`)* — engage offset.
 
@@ -291,6 +332,11 @@ applied and a rerun never re-applies committed liquid.
   never runs `decap` itself; a target with no durable cap state at all is
   not constrained by this check.
 
+Every `transfer` runs the pipette's calibrated blow-out motion once, right
+after the final stroke's dispense, to clear any fluid left in the tip. Does
+not change the tracked dispense volume; a blow-out failure is treated the
+same as a dispense failure.
+
 #### `serial_transfer`
 
 Transfer from one source to each well along a plate row or column, with per-well
@@ -333,8 +379,9 @@ Motion is fixed and built entirely from generic gantry primitives, never
 hardcoded per vial: **approach** at `safe_z` → **engage** at the
 instrument's configured `engage_depth_mm` (a labware-relative Z offset) →
 **capture**/**release** (sensor-confirmed, retried up to the instrument's
-`capture_retries`) → **retract** to `safe_z` → **park** at the
-instrument's configured `park_position`. A sensor timeout or a reading
+`capture_retries`) → **retract** to `safe_z`. The tool is left above the
+vial; the next command lifts to the working-volume ceiling before any XY
+travel. A sensor timeout or a reading
 that contradicts the expected post-actuation state after all retries
 fails closed: the tool retracts to `safe_z` on a best-effort basis, the
 command raises, and — when durable fluid/cap tracking is active (see
@@ -353,13 +400,82 @@ must currently be tracked `capped`.
 Replace the cap on `vial`. When durable tracking is active, the vial must
 currently be tracked `uncapped`.
 
+### Lighting and imaging commands
+
+`set_lights` drives a lighting instrument (`type: lighting`); `capture` and
+`image_well` drive a camera instrument (`type: camera`). See [Gantry Setup:
+Define Instruments](gantry-setup.md#define-instruments). At the end of every
+run — completed or aborted — all lighting channels are commanded off
+best-effort, so a failed protocol never leaves lights on over a sample.
+
+#### `set_lights`
+
+Set one lighting channel, or turn everything off. Two mutually exclusive
+forms:
+
+- `instrument` *(str, required)* — lighting instrument registered on the
+  gantry.
+- `channel` *(str)* + `brightness` *(int)* — turn a channel on at that
+  percentage. The level must be one the vendor supports exactly (the
+  Pawduino lights expose `white`: 5/10/15/25/50/100 and `contact`
+  (red+blue): 5/10/20/30/50); `brightness: 0` turns just that channel off.
+- `all_off: true` — turn every channel off. (Named `all_off` because YAML
+  parses a bare `off:` key as a boolean.)
+
+No motion. Lights the protocol turns on stay on until a later step or the
+end-of-run fail-safe turns them off.
+
+#### `capture`
+
+Take one image wherever the gantry currently is and save it under the
+images directory (`~/.cubos/images`, override with `CUBOS_IMAGES_DIR`),
+grouped by campaign. No motion of its own — compose with `move` and
+`set_lights`.
+
+- `instrument` *(str, required)* — camera instrument registered on the
+  gantry.
+- `label` *(str, optional)* — filename label for the saved image.
+- `position` *(str, optional)* — deck target the image belongs to. Used
+  only to record the image against that labware/well in the data store
+  (`camera_measurements`); it does not move the camera. Without it the
+  file is still saved but not recorded.
+
+A capture failure fails the step. Offline camera vendors write a real
+placeholder PNG so dry runs exercise the full file/persistence path.
+
+#### `image_well`
+
+The packaged well-imaging sequence: travel above the well at `safe_z`,
+descend to the imaging plane, light the well, capture, lights off, retract
+to `safe_z` — with lights-off and the retract guaranteed even on failure.
+
+- `camera` *(str, required)* — camera instrument.
+- `well` *(str, required)* — deck target of the well to image.
+- `image_height` *(float, required)* — labware-relative offset in mm above
+  the well's surface Z: the camera's focus standoff. Like every height
+  argument it lives on the command, never on labware or instrument config.
+- `lights` *(str, optional)* — lighting instrument. Defaults to the
+  gantry's lighting instrument when it has exactly one; pass a name to
+  disambiguate, or the literal `none` to image with ambient light.
+- `label` *(str, optional)* — filename label (defaults to the well target).
+- `mode` *(str, default `standard`)* — `standard` is one shot with white
+  lights at 5% (or `brightness`); `curvature` is a contact-angle Z-stack:
+  from `image_height` descend `z_step_mm` per plane for `z_steps` planes
+  (defaults 0.2 mm × 11) with contact lights at 50% (or `brightness`),
+  labeling each image `{label}_z{z}mm_b{brightness}`.
+- `brightness` *(int, optional)* — override the mode's default level.
+
+Capture and lighting failures **log and continue** (an image is never
+worth failing a run over) and the command returns the list of image paths
+actually saved. Motion failures still fail the run.
+
 ### Compound liquid commands
 
 `rinse_well`, `flush_pipette`, `purge_pipette`, and `clear_well` express
 reusable multi-step liquid-handling sequences by composing `transfer`/`mix`
 (they add no new preflight or journaling of their own — every safety guard,
 stroke split, and durable begin/complete step described under `transfer`
-above applies to each transfer they issue). `mix`'s existing `repetitions`
+above applies to each transfer they issue). `mix`'s existing `cycles`
 argument already covers "mix N times"; there is no separate compound mix
 command. Each also accepts `require_uncapped` (same contract as
 `transfer`'s — see [`transfer`](#transfer)), checked once up front before

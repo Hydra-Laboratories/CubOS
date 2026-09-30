@@ -6,6 +6,7 @@ import GantryPositionWidget from "./components/gantry/GantryPositionWidget";
 import EditorTabs from "./components/editor/EditorTabs";
 import DeckEditor from "./components/editor/DeckEditor";
 import GantryEditor from "./components/editor/GantryEditor";
+import { EMPTY_GANTRY } from "./components/editor/gantryDefaults";
 import ProtocolEditor from "./components/editor/ProtocolEditor";
 import DataOutputPanel from "./components/data/DataOutputPanel";
 import StatePanel from "./components/state/StatePanel";
@@ -13,7 +14,7 @@ import { useConfirm } from "./components/common/useConfirm";
 import { ConfigDirDialog } from "./components/common/ConfigDirDialog";
 import { UpdateBanner } from "./components/common/UpdateBanner";
 import { settingsApi, deckApi, protocolApi, gantryApi, runsApi } from "./api/client";
-import { useDeckConfigs, useDeck, useSaveDeck } from "./hooks/useDeck";
+import { useDeckConfigs, useDeck, useSaveDeck, useDeleteDeck } from "./hooks/useDeck";
 import {
   useGantryPosition,
   useGantryConfigs,
@@ -22,11 +23,15 @@ import {
   useInstrumentTypes,
   useInstrumentSchemas,
   useInstrumentMethods,
+  useInstrumentMethodParams,
+  useDeleteGantry,
 } from "./hooks/useGantryPosition";
-import { useProtocolCommands, useProtocolConfigs, useProtocol, useSaveProtocol, useValidateProtocolSetup, useRunStatus } from "./hooks/useProtocol";
+import RunPanel from "./components/run/RunPanel";
+import { useProtocolCommands, useProtocolConfigs, useProtocol, useSaveProtocol, useValidateProtocolSetup, useRunStatus, useDeleteProtocol } from "./hooks/useProtocol";
 import { useExperimentData } from "./hooks/useExperimentData";
 import { useFluidStates } from "./hooks/useFluidState";
 import { buildSeedFluids, validateSeedRows } from "./utils/fluidSeeds";
+import { loadWorkspaceState, saveWorkspaceState } from "./utils/workspaceState";
 import type {
   DeckResponse,
   WellPosition,
@@ -93,9 +98,11 @@ function errorHasStatus(error: unknown, status: number): boolean {
 
 const WORKING_DECK_FILENAME = "cub_deck.yaml";
 
+type SavedMark = { filename: string; at: Date } | null;
+
 export default function App() {
   const qc = useQueryClient();
-  const [activeView, setActiveView] = useState<"Workflow" | "Visualize" | "State" | "Results">("Workflow");
+  const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
   const [uiTheme, setUiTheme] = useState<"light" | "dark">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const [configDir, setConfigDir] = useState<string | null>(null);
@@ -111,6 +118,17 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelingRun, setIsCancelingRun] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [configNotices, setConfigNotices] = useState<{ gantry: string | null; deck: string | null; protocol: string | null }>({
+    gantry: null,
+    deck: null,
+    protocol: null,
+  });
+  const [workspaceRestored, setWorkspaceRestored] = useState(false);
+  const [lastSaved, setLastSaved] = useState<{ gantry: SavedMark; deck: SavedMark; protocol: SavedMark }>({
+    gantry: null,
+    deck: null,
+    protocol: null,
+  });
   // Feature 07: explicit create-new-state vs resume-existing-state choice.
   // "none" (the default) is a stateless run through the unchanged legacy
   // /protocol/run flow; "new"/"resume" route submission through the
@@ -126,9 +144,23 @@ export default function App() {
   const [requestConfirm, confirmDialog] = useConfirm();
 
   // Load the local config directory on mount.
+  const restoreWorkspace = (dir: string) => {
+    const saved = loadWorkspaceState(dir);
+    if (saved.activeTab) setActiveTab(saved.activeTab);
+    setGantryFile(saved.gantryFile);
+    setDeckFile(saved.deckFile);
+    setProtocolFile(saved.protocolFile);
+    setDeckImportedFrom(saved.deckFile === WORKING_DECK_FILENAME ? saved.deckImportedFrom : null);
+    setWorkspaceRestored(true);
+  };
+
   React.useEffect(() => {
     settingsApi.get()
-      .then((s) => setConfigDir(configDirFromSettings(s)))
+      .then((s) => {
+        const dir = configDirFromSettings(s);
+        setConfigDir(dir);
+        restoreWorkspace(dir);
+      })
       .catch((err) => console.error("Failed to load settings:", err));
   }, []);
 
@@ -146,11 +178,10 @@ export default function App() {
     const nextConfigDir = configDirFromSettings(savedSettings);
     setConfigDir(nextConfigDir);
     if (nextConfigDir !== configDir) {
-      setDeckFile(null);
-      setGantryFile(null);
-      setProtocolFile(null);
       setValidationResult(null);
       setImportError(null);
+      setConfigNotices({ gantry: null, deck: null, protocol: null });
+      restoreWorkspace(nextConfigDir);
     }
     refreshAll();
     return true;
@@ -201,18 +232,22 @@ export default function App() {
   const deckConfigs = useDeckConfigs();
   const deckQuery = useDeck(deckFile);
   const saveDeck = useSaveDeck();
+  const deleteDeck = useDeleteDeck();
 
   const gantryConfigs = useGantryConfigs();
   const gantryQuery = useGantry(gantryFile);
   const saveGantry = useSaveGantry();
+  const deleteGantry = useDeleteGantry();
   const instrumentTypes = useInstrumentTypes();
   const instrumentSchemas = useInstrumentSchemas();
   const instrumentMethods = useInstrumentMethods();
+  const instrumentMethodParams = useInstrumentMethodParams();
 
   const protocolCommands = useProtocolCommands();
   const protocolConfigs = useProtocolConfigs();
   const protocolQuery = useProtocol(protocolFile);
   const saveProtocol = useSaveProtocol();
+  const deleteProtocol = useDeleteProtocol();
   const validateProtocolSetup = useValidateProtocolSetup();
   const runStatus = useRunStatus();
   const serverRunActive = runStatus.data?.active ?? false;
@@ -271,21 +306,52 @@ export default function App() {
   // the imported label by only nulling it when deckFile drops back to
   // the working-copy filename without a fresh import.
   React.useEffect(() => {
+    if (deckFile === null) return;
     setLocalDeck(null);
     if (deckFile !== WORKING_DECK_FILENAME) {
       setDeckImportedFrom(null);
     }
   }, [deckFile]);
   React.useEffect(() => {
+    if (gantryFile === null) return;
     setLocalGantry(null);
   }, [gantryFile]);
   React.useEffect(() => {
+    if (protocolFile === null) return;
     setLocalProtocolSteps(null);
     setLocalProtocolPositions(undefined);
     setValidationResult(null);
     setRunResult(null);
     setRunError(null);
   }, [protocolFile]);
+
+  React.useEffect(() => {
+    if (!workspaceRestored || configDir === null) return;
+    saveWorkspaceState(configDir, { activeTab, gantryFile, deckFile, protocolFile, deckImportedFrom });
+  }, [workspaceRestored, configDir, activeTab, gantryFile, deckFile, protocolFile, deckImportedFrom]);
+
+  // A selection whose file vanished on disk (deleted, renamed, restored from
+  // a stale workspace) is cleared with a notice instead of sticking as an
+  // error that survives every reload.
+  React.useEffect(() => {
+    if (gantryFile && gantryQuery.isError && errorHasStatus(gantryQuery.error, 404)) {
+      setConfigNotices((n) => ({ ...n, gantry: `${gantryFile} was not found in the config directory.` }));
+      setGantryFile(null);
+    }
+  }, [gantryFile, gantryQuery.isError, gantryQuery.error]);
+  React.useEffect(() => {
+    if (deckFile && deckQuery.isError && errorHasStatus(deckQuery.error, 404)) {
+      setConfigNotices((n) => ({ ...n, deck: `${deckImportedFrom ?? deckFile} was not found in the config directory.` }));
+      setDeckFile(null);
+      setDeckImportedFrom(null);
+    }
+  }, [deckFile, deckImportedFrom, deckQuery.isError, deckQuery.error]);
+  React.useEffect(() => {
+    if (protocolFile && protocolQuery.isError && errorHasStatus(protocolQuery.error, 404)) {
+      setConfigNotices((n) => ({ ...n, protocol: `${protocolFile} was not found in the config directory.` }));
+      setProtocolFile(null);
+    }
+  }, [protocolFile, protocolQuery.isError, protocolQuery.error]);
 
   React.useEffect(() => {
     if (!protocolRunActive) {
@@ -397,6 +463,86 @@ export default function App() {
     }
   };
 
+  const discardDeck = () => {
+    qc.invalidateQueries({ queryKey: ["deck"] });
+    setLocalDeck(null);
+  };
+  const discardGantry = () => {
+    qc.invalidateQueries({ queryKey: ["gantry"] });
+    setLocalGantry(null);
+  };
+  const discardProtocol = () => {
+    qc.invalidateQueries({ queryKey: ["protocol"] });
+    setLocalProtocolSteps(null);
+    setLocalProtocolPositions(undefined);
+  };
+
+  const handleNewGantry = async () => {
+    if (!(await confirmDiscard(gantryDirty, "Discard unsaved gantry changes and start a new config?"))) return;
+    setConfigNotices((n) => ({ ...n, gantry: null }));
+    setGantryFile(null);
+    setLocalGantry({ filename: "unsaved", config: structuredClone(EMPTY_GANTRY) });
+  };
+  const handleNewDeck = async () => {
+    if (!(await confirmDiscard(deckDirty, "Discard unsaved deck changes and start a new deck?"))) return;
+    setConfigNotices((n) => ({ ...n, deck: null }));
+    setImportError(null);
+    setDeckFile(null);
+    setDeckImportedFrom(null);
+    setLocalDeck(null);
+  };
+  const handleNewProtocol = async () => {
+    if (!(await confirmDiscard(protocolDirty, "Discard unsaved protocol changes and start a new protocol?"))) return;
+    setConfigNotices((n) => ({ ...n, protocol: null }));
+    setProtocolFile(null);
+    setLocalProtocolSteps(null);
+    setLocalProtocolPositions(undefined);
+    setValidationResult(null);
+  };
+
+  const confirmDelete = (filename: string) => requestConfirm({
+    title: "Delete config?",
+    message: `Delete ${filename} from the config directory? This cannot be undone.`,
+    confirmLabel: "Delete",
+    danger: true,
+  });
+
+  const handleDeleteGantry = async (filename: string) => {
+    if (!(await confirmDelete(filename))) return;
+    try {
+      await deleteGantry.mutateAsync(filename);
+      setConfigNotices((n) => ({ ...n, gantry: `Deleted ${filename}.` }));
+      if (gantryFile === filename) setGantryFile(null);
+    } catch (err) {
+      setConfigNotices((n) => ({ ...n, gantry: `Delete failed: ${errorMessage(err)}` }));
+    }
+  };
+  const handleDeleteDeck = async (filename: string) => {
+    if (!(await confirmDelete(filename))) return;
+    try {
+      await deleteDeck.mutateAsync(filename);
+      setConfigNotices((n) => ({ ...n, deck: `Deleted ${filename}.` }));
+      if (deckImportedFrom === filename) setDeckImportedFrom(null);
+      if (deckFile === filename) {
+        setDeckFile(null);
+        setDeckImportedFrom(null);
+      }
+    } catch (err) {
+      setConfigNotices((n) => ({ ...n, deck: `Delete failed: ${errorMessage(err)}` }));
+    }
+  };
+  const handleDeleteProtocol = async (filename: string) => {
+    if (!(await confirmDelete(filename))) return;
+    try {
+      await deleteProtocol.mutateAsync(filename);
+      setConfigNotices((n) => ({ ...n, protocol: `Deleted ${filename}.` }));
+      if (protocolFile === filename) setProtocolFile(null);
+    } catch (err) {
+      setConfigNotices((n) => ({ ...n, protocol: `Delete failed: ${errorMessage(err)}` }));
+    }
+  };
+  const deleteBlockedReason = protocolRunActive ? "Cannot delete configs while a protocol is running" : null;
+
   const handleRunProtocol = async () => {
     if (!gantryFile || !deckFile || !protocolFile) return;
     if (unsavedConfigs.length > 0) {
@@ -437,40 +583,26 @@ export default function App() {
     setRunError(null);
     qc.setQueryData(["protocol", "run-status"], { active: true, protocol_file: protocolFile });
 
-    if (!state) {
-      // No state choice was made: byte-identical to the pre-Feature-07
-      // stateless flow, through the legacy synchronous endpoint.
-      try {
-        const result = await protocolApi.run({
-          gantry_file: gantryFile,
-          deck_file: deckFile,
-          protocol_file: protocolFile,
-        });
-        setRunResult(result);
-        qc.invalidateQueries({ queryKey: ["data", "campaigns"] });
-      } catch (err: unknown) {
-        setRunError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsRunning(false);
-        setIsCancelingRun(false);
-        qc.invalidateQueries({ queryKey: ["protocol", "run-status"] });
-      }
-      return;
-    }
-
-    // A fluid-state choice was made: only the versioned /api/v1/runs
-    // resource accepts state selection (the legacy endpoint structurally
-    // cannot), so submission and polling go through it instead.
+    // Every run goes through the versioned /api/v1/runs resource, including
+    // stateless ones (`state` omitted). It is the only path that yields a
+    // run_id and an event stream, which the step view needs; the legacy
+    // synchronous endpoint remains available to API clients but is no longer
+    // used here.
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setActiveRunId(runId);
     try {
       const submitted = await runsApi.submit({
         run_id: runId,
         gantry_file: gantryFile,
         deck_file: deckFile,
         protocol_file: protocolFile,
-        state,
+        ...(state ? { state } : {}),
       });
+      // Enter the run mode only once the server has accepted the run. A
+      // rejected submission (server busy, policy, deck fingerprint) would
+      // otherwise strand the operator on a Run view whose plan and record
+      // both 404, hiding the actual reason on the tab they just left.
+      setActiveRunId(runId);
+      setActiveView("Run");
       const finalRecord = RUN_TERMINAL_STATES.has(submitted.state)
         ? submitted
         : await pollVersionedRun(runId);
@@ -486,7 +618,8 @@ export default function App() {
     } finally {
       setIsRunning(false);
       setIsCancelingRun(false);
-      setActiveRunId(null);
+      // activeRunId is intentionally NOT cleared: the finished run's step
+      // list stays on screen until the next run replaces it.
       qc.invalidateQueries({ queryKey: ["protocol", "run-status"] });
     }
   };
@@ -496,7 +629,11 @@ export default function App() {
     setIsCancelingRun(true);
     setRunError(null);
     try {
-      if (activeRunId) {
+      // `activeRunId` outlives its run so the Run view stays reachable, so it
+      // alone cannot say which run to cancel. `isRunning` is true only while
+      // this tab's own submission is in flight; anything else active is a run
+      // started elsewhere, which the session-wide endpoint below stops.
+      if (activeRunId && isRunning) {
         await runsApi.cancel(activeRunId);
         setRunError("Protocol cancellation requested.");
       } else {
@@ -534,7 +671,17 @@ export default function App() {
         </div>
       </div>
       <div style={viewToggleStyle} aria-label="Workspace view">
-        {(["Workflow", "Visualize", "State", "Results"] as const).map((view) => (
+        {(
+          [
+            "Workflow",
+            // Only offered once a run exists — an empty run view is a dead
+            // tab, and the run is what the operator navigates back to.
+            ...(activeRunId ? (["Run"] as const) : []),
+            "Visualize",
+            "State",
+            "Results",
+          ] as const
+        ).map((view) => (
           <button
             key={view}
             type="button"
@@ -619,7 +766,13 @@ export default function App() {
   );
 
   const left = (
-    <div>
+    <div
+      style={
+        activeView === "Run"
+          ? { height: "100%", display: "flex", flexDirection: "column" }
+          : undefined
+      }
+    >
       {activeView === "Workflow" && (
         <>
           <EditorTabs
@@ -656,21 +809,33 @@ export default function App() {
           {deckQuery.isError && deckFile && (
             <div style={importErrorStyle}>Deck load failed: {errorMessage(deckQuery.error)}</div>
           )}
+          {configNotices.deck && (
+            <ConfigNotice message={configNotices.deck} onDismiss={() => setConfigNotices((n) => ({ ...n, deck: null }))} />
+          )}
           <DeckEditor
             key={deckQuery.data ? `loaded:${deckQuery.data.filename}` : `selected:${deckFile ?? "none"}`}
             configs={deckConfigs.data ?? []}
             selectedFile={deckFile}
             onSelectFile={setDeckFile}
             onImportFile={handleImportDeck}
+            onNewFile={handleNewDeck}
+            onDeleteFile={handleDeleteDeck}
+            deleteDisabledReason={deleteBlockedReason}
+            importedFrom={deckImportedFrom}
             deck={localDeck ?? deckQuery.data ?? null}
             baseline={deckQuery.data ?? null}
             dirty={deckDirty}
             onSave={async (filename, body) => {
               await saveDeck.mutateAsync({ filename, body });
               setLocalDeck(null);
+              setLastSaved((m) => ({ ...m, deck: { filename, at: new Date() } }));
             }}
+            lastSaved={lastSaved.deck}
             onLocalChange={setLocalDeck}
-            onRefresh={refreshAll}
+            onRefresh={discardDeck}
+            gantry={displayGantry}
+            position={gantryPosition.data ?? null}
+            isRunning={protocolRunActive}
           />
         </>
           )}
@@ -679,12 +844,20 @@ export default function App() {
           {gantryQuery.isError && gantryFile && (
             <div style={importErrorStyle}>Gantry load failed: {errorMessage(gantryQuery.error)}</div>
           )}
+          {configNotices.gantry && (
+            <ConfigNotice message={configNotices.gantry} onDismiss={() => setConfigNotices((n) => ({ ...n, gantry: null }))} />
+          )}
           <GantryEditor
             key={gantryQuery.data ? `loaded:${gantryQuery.data.filename}` : `selected:${gantryFile ?? "none"}`}
             configs={gantryConfigs.data ?? []}
             selectedFile={gantryFile}
             onSelectFile={setGantryFile}
             onImportFile={handleImportGantry}
+            onNewFile={handleNewGantry}
+            onDeleteFile={handleDeleteGantry}
+            deleteDisabledReason={gantryPosition.data?.connected && !protocolRunActive
+              ? "Disconnect the gantry before deleting its config"
+              : deleteBlockedReason}
             gantry={localGantry ?? gantryQuery.data ?? null}
             baseline={gantryQuery.data ?? null}
             instrumentTypes={instrumentTypes.data ?? []}
@@ -693,9 +866,11 @@ export default function App() {
             onSave={async (filename, body) => {
               await saveGantry.mutateAsync({ filename, body });
               setLocalGantry(null);
+              setLastSaved((m) => ({ ...m, gantry: { filename, at: new Date() } }));
             }}
+            lastSaved={lastSaved.gantry}
             onLocalChange={setLocalGantry}
-            onRefresh={refreshAll}
+            onRefresh={discardGantry}
           />
         </>
           )}
@@ -704,16 +879,23 @@ export default function App() {
           {protocolQuery.isError && protocolFile && (
             <div style={importErrorStyle}>Protocol load failed: {errorMessage(protocolQuery.error)}</div>
           )}
+          {configNotices.protocol && (
+            <ConfigNotice message={configNotices.protocol} onDismiss={() => setConfigNotices((n) => ({ ...n, protocol: null }))} />
+          )}
           <ProtocolEditor
             key={protocolQuery.data ? `loaded:${protocolQuery.data.filename}` : `selected:${protocolFile ?? "none"}`}
             configs={protocolConfigs.data ?? []}
             selectedFile={protocolFile}
             onSelectFile={setProtocolFile}
             onImportFile={handleImportProtocol}
+            onNewFile={handleNewProtocol}
+            onDeleteFile={handleDeleteProtocol}
+            deleteDisabledReason={deleteBlockedReason}
             commands={protocolCommands.data ?? []}
             deck={(displayDeck ?? deckQuery.data)!}
             gantry={(displayGantry ?? gantryQuery.data)!}
             instrumentMethods={instrumentMethods.data ?? {}}
+            instrumentMethodParams={instrumentMethodParams.data ?? {}}
             steps={localProtocolSteps ?? protocolQuery.data?.steps ?? null}
             positions={localProtocolPositions !== undefined ? localProtocolPositions : protocolQuery.data?.positions ?? null}
             baseline={protocolQuery.data ?? null}
@@ -721,7 +903,9 @@ export default function App() {
               await saveProtocol.mutateAsync({ filename, body });
               setLocalProtocolSteps(null);
               setLocalProtocolPositions(undefined);
+              setLastSaved((m) => ({ ...m, protocol: { filename, at: new Date() } }));
             }}
+            lastSaved={lastSaved.protocol}
             onLocalChange={(steps) => {
               setLocalProtocolSteps(steps);
               setValidationResult(null);
@@ -759,7 +943,7 @@ export default function App() {
             }}
             validationErrors={validationResult?.errors ?? null}
             isValidating={validateProtocolSetup.isPending}
-            onRefresh={refreshAll}
+            onRefresh={discardProtocol}
             onRun={handleRunProtocol}
             onCancelRun={handleCancelRun}
             unsavedConfigs={unsavedConfigs}
@@ -776,6 +960,18 @@ export default function App() {
         </>
           )}
         </>
+      )}
+      {/* The persistent right column already carries the live deck view and
+          gantry readout, so the run mode only needs to own the left region. */}
+      {activeView === "Run" && activeRunId && (
+        <div style={{ flex: "1 1 auto", minHeight: 0, display: "flex" }}>
+          <RunPanel
+            runId={activeRunId}
+            onCancel={handleCancelRun}
+            isCancelling={isCancelingRun}
+            fill
+          />
+        </div>
       )}
       {activeView === "Visualize" && (
         <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
@@ -821,23 +1017,25 @@ export default function App() {
   );
 
   const bottomRight = (
-    <GantryPositionWidget
-      position={gantryPosition.data ?? null}
-      workingVolume={workingVolume}
-      gantryFile={displayGantry ? gantryFile : null}
-      gantry={displayGantry}
-      isRunning={protocolRunActive}
-      onSaveCalibrated={async (filename, body) => {
-        const previousGantryFile = gantryFile;
-        const saved = await saveGantry.mutateAsync({ filename, body });
-        setGantryFile(saved.filename);
-        setLocalGantry(null);
-        if (previousGantryFile && saved.filename !== previousGantryFile) {
-          await gantryApi.disconnect();
-          await gantryApi.connect(saved.filename);
-        }
-      }}
-    />
+    <div>
+      <GantryPositionWidget
+        position={gantryPosition.data ?? null}
+        workingVolume={workingVolume}
+        gantryFile={displayGantry ? gantryFile : null}
+        gantry={displayGantry}
+        isRunning={protocolRunActive}
+        onSaveCalibrated={async (filename, body) => {
+          const previousGantryFile = gantryFile;
+          const saved = await saveGantry.mutateAsync({ filename, body });
+          setGantryFile(saved.filename);
+          setLocalGantry(null);
+          if (previousGantryFile && saved.filename !== previousGantryFile) {
+            await gantryApi.disconnect();
+            await gantryApi.connect(saved.filename);
+          }
+        }}
+      />
+    </div>
   );
 
   return (
@@ -861,6 +1059,34 @@ export default function App() {
     </>
   );
 }
+
+function ConfigNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  const isError = message.startsWith("Delete failed");
+  return (
+    <div role="status" style={{ ...(isError ? theme.notice.error : theme.notice.info), ...configNoticeStyle }}>
+      <span>{message}</span>
+      <button type="button" onClick={onDismiss} aria-label="Dismiss notice" style={dismissBtnStyle}>×</button>
+    </div>
+  );
+}
+
+const configNoticeStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 10,
+};
+
+const dismissBtnStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  color: "inherit",
+  cursor: "pointer",
+  fontSize: 14,
+  lineHeight: 1,
+  padding: "0 2px",
+};
 
 const brandMarkStyle: React.CSSProperties = {
   display: "flex",

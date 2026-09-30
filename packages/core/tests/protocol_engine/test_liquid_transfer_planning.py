@@ -143,11 +143,11 @@ class TestPlanStrokesSplitting:
     def test_pathological_model_where_split_cannot_satisfy_min_raises(self):
         from cubos.instruments.pipette.models import PipetteConfig, PipetteFamily
 
+        # Stroke splitting reads capability only, so a bare PipetteConfig is
+        # enough -- no plunger geometry needed.
         narrow = PipetteConfig(
             name="narrow", family=PipetteFamily.OT2, channels=1,
-            max_volume=100.0, min_volume=90.0, zero_position=0.0,
-            prime_position=1.0, blowout_position=2.0, drop_tip_position=3.0,
-            mm_to_ul=1.0,
+            max_volume=100.0, min_volume=90.0,
         )
         # 150 uL needs 2 strokes of 75 each, but min_volume is 90.
         with pytest.raises(LiquidTransferPreflightError, match="Cannot split"):

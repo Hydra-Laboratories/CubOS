@@ -4,16 +4,19 @@ import react from '@vitejs/plugin-react'
 const DEV_PORT = 5173
 const API_TARGET = 'http://127.0.0.1:8742'
 
-// Origins the dev server itself may be reached on. The CubOS API's CSRF
-// guard rejects state-changing requests whose Origin isn't the API's own
-// host:port; `changeOrigin` rewrites Host but not Origin/Referer, so
-// without rewriting these too every POST/PUT/DELETE from `npm run dev`
-// gets a 403 "Cross-origin request blocked". Only the dev server's own
-// origin is rewritten — anything else stays untouched so the backend
-// still blocks genuinely cross-origin callers.
-const DEV_ORIGINS = new Set(
-  ['localhost', '127.0.0.1', '[::1]'].map((host) => `http://${host}:${DEV_PORT}`),
-)
+// The API's CSRF guard rejects Origins other than its own host:port, and
+// `changeOrigin` rewrites Host but not Origin/Referer. Rewrite only the dev
+// server's own loopback origin (matched against the request's Host so
+// `--port` overrides work); real cross-origin callers stay blocked.
+const DEV_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
+const isDevServerOrigin = (origin?: string, host?: string): boolean => {
+  if (!origin || !host || origin !== `http://${host}`) return false
+  try {
+    return DEV_HOSTNAMES.has(new URL(origin).hostname)
+  } catch {
+    return false
+  }
+}
 
 export default defineConfig({
   plugins: [react()],
@@ -25,7 +28,7 @@ export default defineConfig({
         changeOrigin: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq, req) => {
-            if (DEV_ORIGINS.has(req.headers.origin ?? '')) {
+            if (isDevServerOrigin(req.headers.origin, req.headers.host)) {
               proxyReq.setHeader('origin', API_TARGET)
               proxyReq.removeHeader('referer')
             }

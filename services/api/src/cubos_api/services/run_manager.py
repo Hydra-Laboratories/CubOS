@@ -22,6 +22,7 @@ from cubos_api.config import CubOSSettings, get_settings
 from cubos_api.models.runs import RunRecord, RunSubmission
 from cubos_api.models.state import RunStateSelection
 from cubos_api.services.run_store import RunStore, sha256_text
+from cubos_api.services.step_observer import RunStoreStepObserver
 from cubos_api.services.yaml_io import resolve_config_path
 
 
@@ -92,7 +93,13 @@ def _check_protocol_policy(
                 raise RunPolicyError(f"step {index}: instrument {instrument!r} is not allowed")
 
 
-def _mock_execute(*, gantry_path: Path, deck_path: Path, protocol_path: Path) -> Any:
+def _mock_execute(
+    *,
+    gantry_path: Path,
+    deck_path: Path,
+    protocol_path: Path,
+    step_observer: Any | None = None,
+) -> Any:
     from cubos.protocol_engine.setup import setup_protocol
 
     protocol, context = setup_protocol(
@@ -101,6 +108,7 @@ def _mock_execute(*, gantry_path: Path, deck_path: Path, protocol_path: Path) ->
         str(protocol_path),
         gantry=None,
         mock_mode=True,
+        step_observer=step_observer,
     )
     context.gantry.connect_instruments()
     try:
@@ -293,6 +301,9 @@ class RunManager:
         self.store.append_event(run_id, state="running", message="execution started")
         self.store.write(record)
 
+        # Advisory progress reporting; see cubos.protocol_engine.observer for
+        # why an observer can never fail a run.
+        step_observer = RunStoreStepObserver(self.store, run_id)
         gate_acquired = False
         try:
             gantry_router.begin_run(protocol_file="protocol.yaml")
@@ -302,8 +313,14 @@ class RunManager:
                     gantry_path=directory / "gantry.yaml",
                     deck_path=directory / "deck.yaml",
                     protocol_path=directory / "protocol.yaml",
+                    step_observer=step_observer,
                 )
             else:
+                # Manual bring-up handles (Camera view preview, lighting) hold
+                # the vendor device open; the run's own instruments must be
+                # able to claim it.
+                from cubos_api.routers.instruments import reset_manual_instruments
+                reset_manual_instruments()
                 raw_result = gantry_router.run_protocol_on_session(
                     gantry_path=str(directory / "gantry.yaml"),
                     deck_path=str(directory / "deck.yaml"),
@@ -313,6 +330,7 @@ class RunManager:
                     protocol_file="protocol.yaml",
                     db_path=self.settings.data_db_path,
                     fluid_state_id=record.fluid_state_id,
+                    step_observer=step_observer,
                 )
             result = _jsonable(raw_result)
             record = self.store.read(run_id) or record

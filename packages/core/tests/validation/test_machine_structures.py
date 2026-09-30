@@ -115,7 +115,7 @@ def test_cub_xl_low_pose_inside_right_rail_fails():
 
 
 def test_cub_xl_high_pose_inside_right_rail_xy_passes():
-    protocol = _protocol(_move_step(0, position=(500.0, 150.0, 101.0)))
+    protocol = _protocol(_move_step(0, position=(500.0, 150.0, 81.0)))
 
     assert validate_protocol_semantics(
         protocol, _board(), _deck(), _gantry(),
@@ -177,7 +177,7 @@ def test_home_over_rail_passes_but_lowering_while_over_rail_fails():
 
 
 def test_home_over_rail_at_rail_height_fails():
-    gantry = _gantry(x_max=400.0, z_max=100.0)
+    gantry = _gantry(x_max=400.0, z_max=80.0)
     instrumented_gantry = InstrumentedGantry(
         controller=MagicMock(),
         instruments={"pipette": _instrument(name="pipette", offset_x=100.0)},

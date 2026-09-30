@@ -90,6 +90,7 @@ def load_gantry_from_yaml(path: str | Path) -> GantryConfig:
         factory_z_travel_mm=schema.cnc.factory_z_travel_mm,
         calibration_block_height_mm=schema.cnc.calibration_block_height_mm,
         safe_z=schema.safe_z,
+        default_feed_rate_mm_min=schema.cnc.default_feed_rate_mm_min,
         working_volume=WorkingVolume(
             x_min=schema.working_volume.x_min,
             x_max=schema.working_volume.x_max,

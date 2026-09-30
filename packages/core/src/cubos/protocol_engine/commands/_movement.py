@@ -12,8 +12,10 @@ CubOS uses a +Z-up deck frame and labware-relative action heights.
   ``InstrumentedGantry.safe_z``.
 
 There is no inter-labware helper. Callers compose the motion explicitly:
-``context.gantry.move_to_labware`` (travels at ``safe_z``) followed by
-``context.gantry.move`` to descend to the per-labware action plane.
+``context.gantry.move_to_labware`` (lifts to the working-volume ceiling,
+travels XY, ends at ``safe_z``) followed by ``context.gantry.move`` to
+descend to the per-labware action plane. A raw ``move`` that changes XY
+without an explicit ``travel_z`` lifts to the same ceiling first.
 """
 
 from __future__ import annotations
@@ -53,7 +55,7 @@ def engage_at_labware(
     *,
     measurement_height: float,
     command_label: str,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float]:
     """Travel above *position* at ``safe_z``, descend to the action plane.
 
     ``measurement_height`` is a labware-relative offset (mm above the
@@ -62,9 +64,10 @@ def engage_at_labware(
     tip racks, the vial-rim Z for vials). The gantry descends to
     ``coord.z + measurement_height``.
 
-    Returns a ``(well_z, action_z)`` pair where ``well_z`` is the labware
-    surface reference (the resolved coordinate's Z) and ``action_z`` is
-    that reference plus ``measurement_height``. Callers forward the
+    Returns ``(x, y, well_z, action_z)`` where ``x, y`` is the resolved
+    tip XY, ``well_z`` is the labware surface reference (the resolved
+    coordinate's Z) and ``action_z`` is that reference plus
+    ``measurement_height``. Callers forward the
     well-surface Z to closed-loop instrument methods that compute their
     own descent geometry from a labware-relative ``measurement_height`` /
     ``indentation_limit_height``.
@@ -96,4 +99,4 @@ def engage_at_labware(
     action_z = well_z + measurement_height
     context.gantry.move_to_labware(instrument, coord)
     context.gantry.move(instrument, (x, y, action_z))
-    return well_z, action_z
+    return x, y, well_z, action_z

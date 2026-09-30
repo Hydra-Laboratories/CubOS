@@ -2,6 +2,7 @@ import json
 import re
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 import tomllib
 
@@ -127,7 +128,8 @@ def test_windows_installer_packages_native_desktop_app() -> None:
     assert desktop_package["build"]["win"]["target"] == "dir"
 
 
-def test_windows_installer_offers_asmi_as_optional_public_driver() -> None:
+def test_windows_installer_installs_all_bundled_public_drivers_by_default() -> None:
+    """No per-driver checkbox; Install-Runtime.ps1 installs every driver file it finds."""
     iss = (WINDOWS_INSTALLER / "CubOS.iss").read_text()
     build_script = (WINDOWS_INSTALLER / "build-installer.ps1").read_text()
     install_runtime = (WINDOWS_INSTALLER / "scripts" / "Install-Runtime.ps1").read_text()
@@ -136,27 +138,58 @@ def test_windows_installer_offers_asmi_as_optional_public_driver() -> None:
         WINDOWS_INSTALLER / "requirements" / "drivers" / "asmi.txt"
     ).read_text()
 
-    assert "ASMI Go Direct driver support" in iss
-    asmi_task_line = next(line for line in iss.splitlines() if 'Name: "asmi"' in line)
-    assert "unchecked" not in asmi_task_line.lower()
-
-    # Inno Setup task hierarchy is positional: a task at indent level N becomes
-    # a child of the nearest preceding level-(N-1) task. Any backslash in a
-    # [Tasks] name would (re-)introduce accidental parenting like the ASMI
-    # default-selection bug this suite is guarding against.
     tasks_section = _extract_ini_section(iss, "Tasks")
     assert tasks_section
     task_names = re.findall(r'Name:\s*"([^"]+)"', tasks_section)
-    assert task_names
-    assert all("\\" not in name for name in task_names)
+    assert task_names == ["desktopicon"]
+    assert "asmi" not in iss.lower()
+    assert "GetDriverGroups" not in iss
+    assert "WizardIsTaskSelected" not in iss
+    assert "-DriverGroups" not in iss
 
-    assert "GetDriverGroups" in iss
-    assert "WizardIsTaskSelected('asmi')" in iss
+    assert "Get-ChildItem -Path $DriverRequirementsDir" in install_runtime
+    assert '-Filter "*.txt"' in install_runtime
+    assert "$SelectedDriverGroups" in install_runtime
     assert "godirect" not in runtime_requirements.lower()
     assert "godirect>=1.2.1" in asmi_requirements
     assert "$DriverRequirementsDir" in build_script
     assert "requirements\\drivers" in build_script
-    assert "$SelectedDriverGroups" in install_runtime
+
+    assert "TODO" in install_runtime
+    assert "uvvis" in install_runtime.lower()
+    assert "instruments/README.md" in install_runtime
+
+
+@pytest.mark.skipif(
+    shutil.which("pwsh") is None, reason="pwsh is not available on PATH"
+)
+def test_windows_runtime_installs_every_driver_requirements_file() -> None:
+    """Runs the real $SelectedDriverGroups snippet against a synthetic drivers directory."""
+    install_runtime = (WINDOWS_INSTALLER / "scripts" / "Install-Runtime.ps1").read_text()
+    match = re.search(r"\$SelectedDriverGroups = @\(.*?\n\)", install_runtime, re.DOTALL)
+    assert match, "could not find the $SelectedDriverGroups construction in Install-Runtime.ps1"
+    selection_snippet = match.group(0)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        drivers_dir = Path(tmp) / "requirements" / "drivers"
+        drivers_dir.mkdir(parents=True)
+        (drivers_dir / "asmi.txt").write_text("godirect>=1.2.1\n")
+        (drivers_dir / "widgetcam.txt").write_text("widgetcam-sdk>=2.0\n")
+        (drivers_dir / "README.md").write_text("not a requirements file\n")
+
+        escaped_dir = str(drivers_dir).replace("'", "''")
+        probe = (
+            f"$DriverRequirementsDir = '{escaped_dir}'; "
+            f"{selection_snippet}; "
+            "$SelectedDriverGroups -join ','"
+        )
+        result = subprocess.run(
+            ["pwsh", "-NoProfile", "-NonInteractive", "-Command", probe],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr or result.stdout
+        assert result.stdout.strip() == "asmi,widgetcam"
 
 
 def _requirement_name(spec: str) -> str:

@@ -146,6 +146,16 @@ class GantrySession:
         return self._connected_gantry_filename
 
     @property
+    def connected_gantry_config(self) -> dict[str, Any] | None:
+        """Deep copy of the YAML config the connected gantry was built from.
+
+        ``None`` while disconnected. Consumers (e.g. the API's manual
+        instrument endpoints) read the ``instruments:`` section from here so
+        they act on exactly the configuration the operator connected.
+        """
+        return copy.deepcopy(self._connected_gantry_config)
+
+    @property
     def operation_lock(self) -> threading.Lock:
         """Return the serial-operation lock for targeted tests/observability."""
         return self._lock
@@ -631,6 +641,7 @@ class GantrySession:
         protocol_file: str,
         db_path: str | Path | None = None,
         fluid_state_id: int | None = None,
+        step_observer: Any | None = None,
     ) -> ProtocolRunResult:
         context = None
         data_store = None
@@ -662,6 +673,7 @@ class GantrySession:
                     data_store=data_store,
                     campaign_id=campaign_id,
                     fluid_state_id=fluid_state_id,
+                    step_observer=step_observer,
                 )
                 gantry.prepare_for_protocol_run()
                 context.gantry.connect_instruments()

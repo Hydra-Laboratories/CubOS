@@ -38,7 +38,7 @@ from cubos_api.models.protocol import (
     ProtocolStepConfig,
     ProtocolValidationResponse,
 )
-from cubos_api.services.yaml_io import list_configs, read_yaml, resolve_config_path, write_yaml
+from cubos_api.services.yaml_io import delete_config, list_configs, read_yaml, resolve_config_path, write_yaml
 
 router = APIRouter(prefix="/api/v1/protocol", tags=["protocol"])
 
@@ -179,6 +179,21 @@ def save_protocol(filename: str, body: ProtocolConfig) -> dict:
 
     write_yaml(path, data)
     return {"status": "ok", "filename": filename}
+
+
+@router.delete("/{filename}")
+def delete_protocol(filename: str) -> dict:
+    from cubos_api.routers import gantry as gantry_router
+
+    if gantry_router.run_active():
+        raise HTTPException(409, "Cannot delete a protocol while a protocol run is active")
+    try:
+        delete_config(get_settings().configs_dir, "protocol", filename)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except FileNotFoundError:
+        raise HTTPException(404, f"Config not found: {filename}")
+    return {"status": "deleted", "filename": filename}
 
 
 @router.post("/validate")

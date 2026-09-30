@@ -1,0 +1,18 @@
+# VialHolder (deck.labware.vial_holder.VialHolder) — class-attribute template.
+#
+# Every key below maps directly to a field on the VialHolder pydantic class.
+# `location` is deliberately omitted; deck YAMLs supply it per-instance.
+#
+# 2x6 enclosed holder for 4 mL vials (long axis in Y, matching the 9x20mL
+# holder convention). Vials seat 3 mm above the holder bottom, so a 45 mm
+# vial reads 48 mm above the deck when seated.
+
+type: vial_holder
+name: vial_holder_12x4ml
+model_name: 12VialHolder4mL
+length: 38.7
+width: 110.7
+height: 35.0
+labware_support_height: 35.0
+labware_seat_height_from_bottom: 3.0
+slot_count: 12

@@ -12,6 +12,7 @@ from cubos.deck.labware.well_plate import WellPlate
 from ..errors import ProtocolExecutionError
 from ..measurements import normalize_measurement
 from ..registry import protocol_command
+from . import _summaries
 from ..scan_args import normalize_scan_arguments, surface_detection_enabled
 from ._dispatch import inject_runtime_args
 from ._fluid_contents import (
@@ -32,7 +33,7 @@ def _row_major_key(well_id: str) -> tuple:
     return (well_id[0], int(well_id[1:]))
 
 
-@protocol_command("scan")
+@protocol_command("scan", summary=_summaries.scan)
 def scan(
     context: ProtocolContext,
     plate: str,

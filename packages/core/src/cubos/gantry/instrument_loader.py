@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import difflib
 import inspect
+import logging
 from pathlib import Path
 from typing import Any, Dict, Mapping, TYPE_CHECKING
 
@@ -17,6 +18,16 @@ from .instrument_mount import InstrumentedGantry
 
 if TYPE_CHECKING:
     from cubos.gantry import Gantry
+
+logger = logging.getLogger(__name__)
+
+# Removed YAML fields still present in deployed configs: dropped with a
+# warning instead of failing the load. Keyed by instrument type.
+_RETIRED_INSTRUMENT_FIELDS: dict[str, dict[str, str]] = {
+    "capper": {
+        "park_position": "decap/cap no longer park; delete this key",
+    },
+}
 
 
 def _format_loader_exception(path: Path, error: Exception) -> str:
@@ -69,12 +80,23 @@ def _instantiate_instruments(
         type_key = kwargs.pop("type")
         vendor = kwargs.pop("vendor")
         validate_instrument(type_key, vendor)
+        _drop_retired_fields(name, type_key, kwargs)
         if mock_mode:
             kwargs["offline"] = True
         cls = get_instrument_class(type_key, vendor)
         _validate_driver_kwargs(name, type_key, vendor, cls, kwargs)
         instruments[name] = cls(**kwargs)
     return instruments
+
+
+def _drop_retired_fields(name: str, type_key: str, kwargs: Dict[str, Any]) -> None:
+    for field, reason in _RETIRED_INSTRUMENT_FIELDS.get(type_key, {}).items():
+        if field in kwargs:
+            kwargs.pop(field)
+            logger.warning(
+                "Instrument '%s' (%s): YAML field '%s' is no longer used and "
+                "was ignored (%s).", name, type_key, field, reason,
+            )
 
 
 def _validate_driver_kwargs(

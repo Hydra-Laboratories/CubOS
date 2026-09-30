@@ -63,7 +63,7 @@ class TestEngageAtLabware:
 
     def test_descends_to_well_z_plus_offset(self):
         ctx, _ = _mock_ctx_with_well(well_z=14.10)
-        well_z, action_z = engage_at_labware(
+        _, _, well_z, action_z = engage_at_labware(
             ctx, "sensor", "plate.A1",
             measurement_height=2.0, command_label="measure",
         )
@@ -74,7 +74,7 @@ class TestEngageAtLabware:
 
     def test_negative_offset_descends_below_surface(self):
         ctx, _ = _mock_ctx_with_well(well_z=14.10)
-        well_z, action_z = engage_at_labware(
+        _, _, well_z, action_z = engage_at_labware(
             ctx, "sensor", "plate.A1",
             measurement_height=-1.0, command_label="measure",
         )

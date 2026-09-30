@@ -435,3 +435,35 @@ def test_normalize_labware_config_uses_public_labware_schema_mapping(monkeypatch
     )
 
     assert resolved["resolved_field"] == 42
+
+
+def test_delete_deck_removes_file_and_404s_when_missing(monkeypatch, tmp_path: Path):
+    config_dir = tmp_path / "configs"
+    deck_dir = config_dir / "deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "old.yaml").write_text("labware: {}\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    app = create_app()
+
+    response = api_request(app, "DELETE", "/api/v1/deck/old.yaml")
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted", "filename": "old.yaml"}
+    assert not (deck_dir / "old.yaml").exists()
+
+    assert api_request(app, "DELETE", "/api/v1/deck/old.yaml").status_code == 404
+    assert api_request(app, "DELETE", "/api/v1/deck/%2e%2e").status_code in (400, 404)
+
+
+def test_delete_deck_refused_while_run_active(monkeypatch, tmp_path: Path):
+    from cubos_api.routers import gantry as gantry_router
+
+    config_dir = tmp_path / "configs"
+    deck_dir = config_dir / "deck"
+    deck_dir.mkdir(parents=True)
+    (deck_dir / "busy.yaml").write_text("labware: {}\n", encoding="utf-8")
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    monkeypatch.setattr(gantry_router, "run_active", lambda: True)
+
+    response = api_request(create_app(), "DELETE", "/api/v1/deck/busy.yaml")
+    assert response.status_code == 409
+    assert (deck_dir / "busy.yaml").exists()

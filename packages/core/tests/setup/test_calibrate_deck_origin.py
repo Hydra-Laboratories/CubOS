@@ -1090,10 +1090,6 @@ def test_dry_run_prints_commands_without_connecting(tmp_path):
     assert "  $132=<z_span_mm>" in messages
     assert "  $22=1" in messages
     assert "  $20=1" in messages
-    assert (
-        "The gantry YAML cnc.factory_z_travel_mm is preserved as an out-of-box "
-        "safety bound; calibrated Z max comes from the homed readback."
-    ) in messages
 
 
 def test_dry_run_prints_ruler_gap_step(tmp_path):

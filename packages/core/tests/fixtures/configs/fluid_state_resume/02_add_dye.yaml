@@ -13,7 +13,7 @@ protocol:
   - mix:
       position: assay_plate.A1
       volume_ul: 60.0
-      repetitions: 3
+      cycles: 3
       height: -3.0
   - blowout:
       position: assay_plate.A1
@@ -32,7 +32,7 @@ protocol:
   - mix:
       position: assay_plate.A2
       volume_ul: 50.0
-      repetitions: 3
+      cycles: 3
       height: -3.0
   - blowout:
       position: assay_plate.A2

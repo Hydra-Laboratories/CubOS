@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isFieldEqual } from "./field-utils";
+import { isFieldEqual, normalizeYamlFilename } from "./field-utils";
 
 describe("isFieldEqual", () => {
   it("treats strictly equal values as equal", () => {
@@ -21,5 +21,14 @@ describe("isFieldEqual", () => {
     expect(isFieldEqual(5, 6)).toBe(false);
     expect(isFieldEqual("a", "b")).toBe(false);
     expect(isFieldEqual(5, "6")).toBe(false);
+  });
+});
+
+describe("normalizeYamlFilename", () => {
+  it("appends .yaml and keeps existing yaml/yml extensions", () => {
+    expect(normalizeYamlFilename("  my_deck ")).toBe("my_deck.yaml");
+    expect(normalizeYamlFilename("deck.yaml")).toBe("deck.yaml");
+    expect(normalizeYamlFilename("deck.yml")).toBe("deck.yml");
+    expect(normalizeYamlFilename("   ")).toBe("");
   });
 });

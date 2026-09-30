@@ -346,6 +346,25 @@ describe("GantryEditor", () => {
     expect(props.onLocalChange).toHaveBeenCalled();
   });
 
+  it("shows each instrument's hardware mode and badges simulated (offline) instruments", async () => {
+    const user = userEvent.setup();
+    const gantry = gantryFixture();
+    gantry.config.instruments.pipette_1.offline = true;
+    const props = renderGantry({ gantry, baseline: gantry });
+
+    const pipetteMode = screen.getByLabelText("Hardware", { selector: "#pipette_1-offline" });
+    const asmiMode = screen.getByLabelText("Hardware", { selector: "#asmi_1-offline" });
+    expect(pipetteMode).toHaveValue("true");
+    expect(asmiMode).toHaveValue("false");
+    expect(screen.getAllByText("simulated")).toHaveLength(1);
+
+    await user.selectOptions(pipetteMode, "false");
+    expect(props.onLocalChange).toHaveBeenCalled();
+    expect(screen.queryByText("simulated")).not.toBeInTheDocument();
+    const saved = vi.mocked(props.onLocalChange).mock.calls.at(-1)?.[0] as GantryResponse;
+    expect(saved.config.instruments.pipette_1.offline).toBe(false);
+  });
+
   it("switches instrument fields when the vendor changes", async () => {
     const user = userEvent.setup();
     renderStatefulGantry();

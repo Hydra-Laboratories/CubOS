@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -31,6 +32,15 @@ class RunStore:
     def __init__(self, base_dir: Path):
         self.base_dir = Path(base_dir).expanduser().resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        # Last emitted sequence per run, so appending an event does not have
+        # to re-read and re-parse the whole log to number it. A step-level
+        # event stream emits ~2 events per protocol step (plus substeps), so
+        # the previous count-the-file approach was O(n^2) in events -- on the
+        # execution thread, between motion commands. Seeded lazily from disk
+        # (see `_next_sequence`) so restarts and crash recovery stay correct;
+        # events.jsonl remains the source of truth.
+        self._sequence_cache: dict[str, int] = {}
+        self._sequence_lock = threading.Lock()
 
     def run_dir(self, run_id: str) -> Path:
         return self.base_dir / run_id
@@ -77,17 +87,44 @@ class RunStore:
             record.model_dump_json(indent=2) + "\n",
         )
 
-    def append_event(self, run_id: str, *, state: str, message: str) -> RunEvent:
-        events = self.events(run_id)
-        event = RunEvent(
-            sequence=len(events) + 1,
-            timestamp=time.time(),
-            state=state,
-            message=message,
-        )
+    def _next_sequence(self, run_id: str) -> int:
+        """Return the next event sequence number for *run_id*.
+
+        Cached in memory; seeded from the on-disk log the first time a run is
+        touched by this process so a restart mid-run continues the numbering
+        instead of colliding with existing events.
+        """
+        cached = self._sequence_cache.get(run_id)
+        if cached is None:
+            cached = len(self.events(run_id))
+        cached += 1
+        self._sequence_cache[run_id] = cached
+        return cached
+
+    def append_event(
+        self,
+        run_id: str,
+        *,
+        state: str,
+        message: str,
+        kind: str = "lifecycle",
+        data: dict[str, Any] | None = None,
+    ) -> RunEvent:
         path = self.run_dir(run_id) / "events.jsonl"
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(event.model_dump_json() + "\n")
+        # Sequence assignment and the append share one lock: the step
+        # observer runs on the execution thread while the API thread can
+        # still append lifecycle events (e.g. a cancel request).
+        with self._sequence_lock:
+            event = RunEvent(
+                sequence=self._next_sequence(run_id),
+                timestamp=time.time(),
+                state=state,
+                message=message,
+                kind=kind,
+                data=data,
+            )
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(event.model_dump_json() + "\n")
         return event
 
     def events(self, run_id: str) -> list[RunEvent]:

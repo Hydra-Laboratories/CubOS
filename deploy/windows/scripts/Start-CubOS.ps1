@@ -38,7 +38,6 @@ $PythonInstaller = Join-Path $InstallDir "installers\python-installer.exe"
 $InstallPythonScript = Join-Path $InstallDir "scripts\Install-Python.ps1"
 $InstallRuntimeScript = Join-Path $InstallDir "scripts\Install-Runtime.ps1"
 $RuntimeMarker = Join-Path $InstallDir "runtime-installed.txt"
-$DriverGroupsFile = Join-Path $InstallDir "driver-groups.txt"
 $CubOSDir = Join-Path $InstallDir "app\CubOS"
 $ApiSeedConfigDir = Join-Path $CubOSDir "services\api\configs"
 $ConfigDir = if ($env:CUBOS_CONFIG_DIR) { $env:CUBOS_CONFIG_DIR } else { Join-Path $UserRoot "configs" }
@@ -67,32 +66,6 @@ function Invoke-LauncherScript {
     }
 }
 
-function Get-InstalledDriverGroups {
-    if (Test-Path $DriverGroupsFile) {
-        $FileValue = Get-Content -Path $DriverGroupsFile -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($FileValue -and $FileValue.Trim()) {
-            return $FileValue.Trim()
-        }
-    }
-
-    if (-not (Test-Path $RuntimeMarker)) {
-        return ""
-    }
-
-    $DriverLine = Get-Content -Path $RuntimeMarker -ErrorAction SilentlyContinue |
-        Where-Object { $_ -like "DriverGroups=*" } |
-        Select-Object -First 1
-    if (-not $DriverLine) {
-        return ""
-    }
-
-    $Value = $DriverLine.Substring("DriverGroups=".Length)
-    if ($Value -eq "none") {
-        return ""
-    }
-    return $Value
-}
-
 try {
     Write-Log "Starting CubOS launcher"
     Write-Log "Install directory: $InstallDir"
@@ -116,8 +89,7 @@ try {
 
     if ($NeedsRuntimeInstall) {
         Write-Log "CubOS runtime packages need installation"
-        $InstalledDriverGroups = Get-InstalledDriverGroups
-        Invoke-LauncherScript $InstallRuntimeScript @("-InstallDir", $InstallDir, "-DriverGroups", $InstalledDriverGroups)
+        Invoke-LauncherScript $InstallRuntimeScript @("-InstallDir", $InstallDir)
     }
 
     $FrontendDist = Join-Path $CubOSDir "apps\operator-web\dist"

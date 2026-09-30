@@ -178,6 +178,45 @@ class TestGantryConfig:
                 safe_z=85.0,
             )
 
+    def test_default_feed_rate_mm_min_defaults_to_none(self):
+        config = GantryConfig(
+            serial_port="/dev/ttyUSB0",
+            gantry_type=GantryType.CUB_XL,
+            factory_z_travel_mm=90.0,
+            working_volume=_make_volume(),
+        )
+        assert config.default_feed_rate_mm_min is None
+
+    def test_stores_default_feed_rate_mm_min(self):
+        config = GantryConfig(
+            serial_port="/dev/ttyUSB0",
+            gantry_type=GantryType.CUB_XL,
+            factory_z_travel_mm=90.0,
+            working_volume=_make_volume(),
+            default_feed_rate_mm_min=4000.0,
+        )
+        assert config.default_feed_rate_mm_min == 4000.0
+
+    def test_rejects_zero_default_feed_rate_mm_min(self):
+        with pytest.raises(ValueError, match="default_feed_rate_mm_min"):
+            GantryConfig(
+                serial_port="/dev/ttyUSB0",
+                gantry_type=GantryType.CUB_XL,
+                factory_z_travel_mm=90.0,
+                working_volume=_make_volume(),
+                default_feed_rate_mm_min=0.0,
+            )
+
+    def test_rejects_negative_default_feed_rate_mm_min(self):
+        with pytest.raises(ValueError, match="default_feed_rate_mm_min"):
+            GantryConfig(
+                serial_port="/dev/ttyUSB0",
+                gantry_type=GantryType.CUB_XL,
+                factory_z_travel_mm=90.0,
+                working_volume=_make_volume(),
+                default_feed_rate_mm_min=-100.0,
+            )
+
 
 class TestWorkingVolumeSignedBounds:
 

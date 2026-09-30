@@ -106,11 +106,11 @@ def test_mill_logger_writes_error_to_file(tmp_path):
 
 def test_command_logger_writes_command_to_file(tmp_path):
     logger = set_up_command_logger(tmp_path)
-    logger.debug("G01 X10 F2000")
+    logger.debug("G01 X10 F3000")
     for handler in _file_handlers(logger):
         handler.flush()
     contents = (tmp_path / "command.log").read_text()
-    assert "G01 X10 F2000" in contents
+    assert "G01 X10 F3000" in contents
 
 
 def test_env_override_directs_default_log_dir(tmp_path, monkeypatch):

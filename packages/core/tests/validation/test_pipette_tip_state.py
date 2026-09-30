@@ -324,13 +324,13 @@ def test_home_with_attached_tip_over_right_rail_fails():
         protocol,
         _board(depth=0.0, offset_x=100.0),
         _deck(tip_x=140.0),
-        _gantry(x_max=400.0, y_max=260.0, z_max=150.0, safe_z=85.0),
+        _gantry(x_max=400.0, y_max=260.0, z_max=130.0, safe_z=85.0),
     )
 
     assert any(
         "home pose" in v.message
         and "Cub XL right X-max rail" in v.message
-        and "(500.0, 260.0, 90.7)" in v.message
+        and "(500.0, 260.0, 70.7)" in v.message
         for v in violations
     ), violations
 

@@ -1,0 +1,25 @@
+# WellPlate (deck.labware.well_plate.WellPlate) — Ursa 12-well plate
+# ("ursa plate"), 3 rows x 4 columns on a 15 mm pitch (both axes).
+#
+# The `calibration` values below are a computed placeholder (well grid
+# centered on an SBS ANSI 127.76 x 85.47 mm footprint), NOT measured from
+# a vendor drawing. Override `calibration.a1` and `calibration.a2` in your
+# deck YAML with real deck coordinates before use. `height`, `well_depth`,
+# `well_attributes`, `capacity_ul`, and `working_volume_ul` are
+# intentionally omitted — no vendor drawing was supplied for this plate.
+# Set them in your deck YAML (or here) once you have real measurements;
+# `well_depth`/`height` in particular affect pipette/instrument Z travel
+# and must be accurate before running on hardware.
+
+type: well_plate
+name: ursa_12_well_plate
+model_name: ursa_12_well_plate
+rows: 3
+columns: 4
+length: 127.76
+width: 85.47
+calibration:
+  a1: { x: 41.38, y: 27.74 }   # centered placeholder — override with measured deck coordinates
+  a2: { x: 56.38, y: 27.74 }   # next column (a1.x + x_offset)
+x_offset: 15.0
+y_offset: 15.0

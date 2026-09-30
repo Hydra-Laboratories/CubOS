@@ -89,9 +89,12 @@ class RecordingPipette(OpentronsPipette):
         self.dispense_volumes: list[float] = []
         self._fail_on_dispense_call = fail_on_dispense_call
         self._dispense_calls = 0
+        self.blowout_calls: list[float] = []
+        self.call_order: list[str] = []
 
     def aspirate(self, volume_ul: float, speed: float = 50.0):
         self.aspirate_volumes.append(volume_ul)
+        self.call_order.append("aspirate")
         return super().aspirate(volume_ul, speed)
 
     def dispense(self, volume_ul: float, speed: float = 50.0):
@@ -99,7 +102,13 @@ class RecordingPipette(OpentronsPipette):
         if self._dispense_calls == self._fail_on_dispense_call:
             raise RuntimeError("simulated physical dispense failure")
         self.dispense_volumes.append(volume_ul)
+        self.call_order.append("dispense")
         return super().dispense(volume_ul, speed)
+
+    def blowout(self, speed: float = 50.0):
+        self.blowout_calls.append(speed)
+        self.call_order.append("blowout")
+        return super().blowout(speed)
 
 
 @pytest.fixture()
@@ -218,6 +227,41 @@ class TestStrokeSplitting:
         for volume in pipette.aspirate_volumes + pipette.dispense_volumes:
             assert volume <= P300.max_volume + 1e-9
         assert sum(pipette.aspirate_volumes) == pytest.approx(1400.0)
+
+
+# ─── Blow-out after the final stroke (always runs, not opt-in) ──────────────
+
+
+class TestBlowOutOnFinalStroke:
+
+    def test_single_stroke_transfer_blows_out_once_after_dispense(self, tracked_env):
+        deck, store, state_id, campaign_id = tracked_env
+        pipette = RecordingPipette()
+        context = _make_context(deck, store, state_id, campaign_id, pipette)
+
+        transfer(
+            context, source="source", destination="dest", volume_ul=50.0,
+            speed=30.0,
+        )
+
+        assert pipette.blowout_calls == [30.0]
+        assert pipette.call_order == ["aspirate", "dispense", "blowout"]
+
+    def test_multi_stroke_transfer_blows_out_only_after_the_final_stroke(
+        self, tracked_env,
+    ):
+        deck, store, state_id, campaign_id = tracked_env
+        pipette = RecordingPipette()
+        context = _make_context(deck, store, state_id, campaign_id, pipette)
+
+        transfer(context, source="source", destination="dest", volume_ul=600.0)
+
+        assert len(pipette.aspirate_volumes) >= 2
+        assert pipette.blowout_calls == [50.0]
+        assert pipette.call_order == (
+            ["aspirate", "dispense"] * (len(pipette.aspirate_volumes) - 1)
+            + ["aspirate", "dispense", "blowout"]
+        )
 
 
 # ─── Preflight rejects before motion ─────────────────────────────────────────

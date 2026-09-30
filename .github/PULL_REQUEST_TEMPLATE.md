@@ -29,4 +29,5 @@ summarize as "tested on hardware". -->
       instrument or gantry config
 - [ ] Optional vendor dependencies remain optional (lazy SDK imports, extras
       in `packages/core/pyproject.toml`)
-- [ ] Public docs/config examples were updated, if needed
+- [ ] Public docs/config examples reflect every added, removed, or renamed
+      config/catalog choice (including changes that do not alter the schema)

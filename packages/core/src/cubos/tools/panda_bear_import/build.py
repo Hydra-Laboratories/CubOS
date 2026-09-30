@@ -22,7 +22,6 @@ from .constants import (
     CAPPER_CAPTURE_SETTLE_S,
     CAPPER_ENGAGE_DEPTH_MM,
     CAPPER_INSTRUMENT_KEY,
-    CAPPER_PARK_POSITION,
     ELECTRODE_FRAME_TOOL,
     ENVELOPE_TOLERANCE_MM,
     PIPETTE_FRAME_TOOL,
@@ -636,8 +635,8 @@ def _upgrade_capper_entry(instruments: dict) -> None:
     cubos.instruments.capper.vendors.pawduino), preserving its calibrated
     `offset_x`/`offset_y`/`depth`/`offline` and adding the motion-sequence
     config the `decap`/`cap` protocol commands read
-    (`engage_depth_mm`/`park_position`/`capture_retries`/
-    `capture_settle_s` -- placeholder values, see constants.py).
+    (`engage_depth_mm`/`capture_retries`/`capture_settle_s` -- placeholder
+    values, see constants.py).
 
     A no-op when the mount entry is absent (the capper instrument stays
     optional -- existing non-capper gantry configs import unchanged) or
@@ -655,7 +654,6 @@ def _upgrade_capper_entry(instruments: dict) -> None:
         "vendor": "pawduino",
         "port": "",
         "engage_depth_mm": CAPPER_ENGAGE_DEPTH_MM,
-        "park_position": list(CAPPER_PARK_POSITION),
         "capture_retries": CAPPER_CAPTURE_RETRIES,
         "capture_settle_s": CAPPER_CAPTURE_SETTLE_S,
     }

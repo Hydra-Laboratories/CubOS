@@ -19,3 +19,15 @@ class PipetteTimeoutError(PipetteError):
 
 class PipetteConfigError(PipetteError):
     """Raised when an unknown pipette model is requested."""
+
+
+class PipetteBatteryError(PipetteError):
+    """Raised when a battery-powered pipette is too low to start work."""
+
+
+class PipetteMotorControlError(PipetteError):
+    """Raised when the instrument revokes host control of its motor.
+
+    Distinct from a command failure: the piston position after an abort is
+    unknown, so the driver must fail closed rather than retry.
+    """

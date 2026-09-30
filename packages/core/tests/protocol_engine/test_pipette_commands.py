@@ -44,7 +44,7 @@ def _mock_context(
         pipette = MagicMock()
         pipette.aspirate.return_value = MagicMock(success=True, volume_ul=100.0)
         pipette.dispense.return_value = MagicMock(success=True, volume_ul=100.0)
-        pipette.mix.return_value = MagicMock(success=True, volume_ul=50.0, repetitions=3)
+        pipette.mix.return_value = MagicMock(success=True, volume_ul=50.0, cycles=3)
         # Default: pipette's instrument-config measurement_height is 0 (well surface).
         board.instruments = {"pipette": pipette}
     else:
@@ -292,24 +292,30 @@ class TestMixCommand:
         ctx = _mock_context()
         call_order = []
         ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append("move")
-        _get_pipette(ctx).mix.side_effect = lambda *a: call_order.append("mix")
+        _get_pipette(ctx).mix.side_effect = lambda *a, **kw: call_order.append("mix")
 
         mix(ctx, position="plate_1.A1", volume_ul=50.0)
         assert call_order == ["move", "mix"]
 
-    def test_passes_volume_repetitions_and_speed(self):
+    def test_passes_volume_cycles_speed_and_engaged_tip(self):
         from cubos.protocol_engine.commands.pipette import mix
 
         ctx = _mock_context()
-        mix(ctx, position="plate_1.A1", volume_ul=50.0, repetitions=5, speed=20.0)
-        _get_pipette(ctx).mix.assert_called_once_with(50.0, 5, 20.0)
+        mix(ctx, position="plate_1.A1", volume_ul=50.0, cycles=5, speed=20.0, height=-3.0)
+        _get_pipette(ctx).mix.assert_called_once_with(
+            50.0, 5, 20.0,
+            gantry=ctx.gantry, position=(100.0, 50.0, PIPETTE_HEIGHT_MM - 3.0),
+        )
 
-    def test_default_repetitions_and_speed(self):
+    def test_default_cycles_and_speed(self):
         from cubos.protocol_engine.commands.pipette import mix
 
         ctx = _mock_context()
         mix(ctx, position="plate_1.A1", volume_ul=50.0)
-        _get_pipette(ctx).mix.assert_called_once_with(50.0, 3, 50.0)
+        _get_pipette(ctx).mix.assert_called_once_with(
+            50.0, 3, 50.0,
+            gantry=ctx.gantry, position=(100.0, 50.0, PIPETTE_HEIGHT_MM),
+        )
 
     def test_raises_when_no_pipette(self):
         from cubos.protocol_engine.commands.pipette import mix
@@ -339,13 +345,13 @@ class TestMixCommand:
         ctx.gantry.move_to_labware.side_effect = (
             lambda *args, **kwargs: events.append("move")
         )
-        _get_pipette(ctx).mix.side_effect = lambda *args: events.append("mix")
+        _get_pipette(ctx).mix.side_effect = lambda *args, **kwargs: events.append("mix")
 
         mix(
             ctx,
             position="plate.A1",
             volume_ul=25.0,
-            repetitions=4,
+            cycles=4,
             speed=20.0,
         )
 
@@ -834,6 +840,24 @@ class TestTransferCommand:
 
         pip.aspirate.assert_called_once_with(100.0, 50.0)
         pip.dispense.assert_called_once_with(100.0, 50.0)
+
+    def test_transfer_always_blows_out_with_speed_after_dispense(self):
+        from cubos.protocol_engine.commands.pipette import transfer
+
+        ctx = _mock_context_multi_resolve()
+        pip = ctx.gantry.instruments["pipette"]
+        call_order = []
+        pip.aspirate.side_effect = lambda *a: call_order.append("aspirate")
+        pip.dispense.side_effect = lambda *a: call_order.append("dispense")
+        pip.blowout.side_effect = lambda *a: call_order.append("blowout")
+
+        transfer(
+            ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0,
+            speed=40.0,
+        )
+
+        pip.blowout.assert_called_once_with(40.0)
+        assert call_order == ["aspirate", "dispense", "blowout"]
 
     def test_tracked_transfer_journals_before_liquid_and_commits_after_dispense(self):
         from cubos.protocol_engine.commands.pipette import transfer

@@ -30,6 +30,22 @@ class TestGantry(unittest.TestCase):
         mock_mill.connect.assert_called_with(port="/dev/tty.usbserial-130")
 
     @patch("cubos.gantry.gantry.Mill")
+    def test_connect_leaves_default_feed_rate_unset_without_config(self, mock_mill_cls):
+        mock_mill = mock_mill_cls.return_value
+        mock_mill.default_feed_rate = 3000
+        gantry = Gantry(config=self.config)
+        gantry.connect()
+        self.assertEqual(mock_mill.default_feed_rate, 3000)
+
+    @patch("cubos.gantry.gantry.Mill")
+    def test_connect_applies_configured_default_feed_rate(self, mock_mill_cls):
+        mock_mill = mock_mill_cls.return_value
+        config = {**self.config, "cnc": {"default_feed_rate_mm_min": 4000.0}}
+        gantry = Gantry(config=config)
+        gantry.connect()
+        self.assertEqual(mock_mill.default_feed_rate, 4000.0)
+
+    @patch("cubos.gantry.gantry.Mill")
     def test_move_delegates_to_mill_move_to(self, mock_mill_cls):
         mock_mill = mock_mill_cls.return_value
         gantry = Gantry(config=self.config)

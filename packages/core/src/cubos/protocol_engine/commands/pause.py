@@ -7,12 +7,13 @@ import time
 from typing import TYPE_CHECKING
 
 from ..registry import protocol_command
+from . import _summaries
 
 if TYPE_CHECKING:
     from ..runtime import ProtocolContext
 
 
-@protocol_command("pause")
+@protocol_command("pause", summary=_summaries.pause)
 def pause(
     context: ProtocolContext,
     seconds: float,
@@ -32,7 +33,7 @@ def pause(
     time.sleep(seconds)
 
 
-@protocol_command("breakpoint")
+@protocol_command("breakpoint", summary=_summaries.breakpoint_cmd)
 def breakpoint_cmd(
     context: ProtocolContext,
     message: str = "Press Enter to continue...",

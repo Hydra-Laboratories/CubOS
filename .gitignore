@@ -191,3 +191,22 @@ PANDA-BEAR/
 # Local doc-review tool (ephemeral review state + node deps)
 docs/.review/
 tools/doc-review/node_modules/
+
+# PANDA bench-specific configs — live local state, not tracked in the PR.
+packages/core/configs/deck/cub_deck.yaml
+packages/core/configs/deck/panda-4ml-vials.yaml
+packages/core/configs/deck/panda-deck-deck-origin.yaml
+packages/core/configs/deck/panda-deck.yaml
+packages/core/configs/deck/panda_vials.yaml
+packages/core/configs/gantry/cub_xl_panda_deck_origin_full.yaml
+packages/core/configs/gantry/panda_pipette_only.yaml
+packages/core/configs/protocol/MOF_synthesis_stage_1.yaml
+packages/core/configs/protocol/aspirate_s2.yaml
+packages/core/configs/protocol/panda_4ml_demo.yaml
+packages/core/configs/protocol/pipette_dry_run.yaml
+packages/core/configs/protocol/pipette_pickup.yaml
+packages/core/configs/protocol/pipette_pickup_drop.yaml
+packages/core/configs/protocol/pipette_water_run.yaml
+packages/core/configs/protocol/sartorius_s1_to_s2.yaml
+packages/core/configs/protocol/testpickup.yaml
+packages/core/configs/protocol/transfer_source7.yaml

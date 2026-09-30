@@ -970,8 +970,14 @@ instruments:
                 events.append(("healthy",))
                 return True
 
+            position = {"x": 0.0, "y": 0.0, "z": 0.0}
+
+            def get_coordinates(self):
+                return dict(self.position)
+
             def move_to(self, x, y, z, travel_z=None):
                 events.append(("move_to", x, y, z, travel_z))
+                self.position = {"x": x, "y": y, "z": z}
 
             def disconnect(self):
                 events.append(("disconnect",))

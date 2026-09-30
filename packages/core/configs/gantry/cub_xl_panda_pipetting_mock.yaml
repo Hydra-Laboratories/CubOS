@@ -61,6 +61,7 @@
 # `+depth[+tip_extension]` arithmetic for pick_up_tip/transfer/drop_tip).
 
 cnc:
+  default_feed_rate_mm_min: 3000.0
   factory_z_travel_mm: 250.0
   safe_z: -170.0
   y_axis_motion: head
@@ -110,9 +111,6 @@ instruments:
     offline: true
     offset_x: 62.9
     offset_y: 5.1
-    park_position:
-    - -10.0
-    - -10.0
     port: ''
     type: capper
     vendor: pawduino

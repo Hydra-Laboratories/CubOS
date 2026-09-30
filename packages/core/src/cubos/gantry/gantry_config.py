@@ -80,6 +80,7 @@ class GantryConfig:
     origin_policy: OriginPolicy = OriginPolicy.DECK_ORIGIN
     calibration_block_height_mm: Optional[float] = None
     safe_z: Optional[float] = None
+    default_feed_rate_mm_min: Optional[float] = None
     expected_grbl_settings: Optional[Dict[str, float]] = field(default=None)
     instruments: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
@@ -120,6 +121,10 @@ class GantryConfig:
                     "safe_z must be within the configured "
                     "working-volume Z bounds."
                 )
+        if self.default_feed_rate_mm_min is not None and self.default_feed_rate_mm_min <= 0:
+            raise ValueError(
+                f"default_feed_rate_mm_min ({self.default_feed_rate_mm_min}) must be > 0"
+            )
 
     @property
     def resolved_safe_z(self) -> float:

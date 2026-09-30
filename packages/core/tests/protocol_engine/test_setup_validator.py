@@ -8,7 +8,6 @@ from textwrap import dedent
 import pytest
 
 from cubos.protocol_engine.setup_validator import run_setup_validation
-from cubos.protocol_engine.registry import CommandRegistry
 
 
 GANTRY_YAML = """\
@@ -58,36 +57,6 @@ instruments:
     offset_y: 0.0
     depth: 0.0
 """
-
-
-@pytest.fixture(autouse=True)
-def _ensure_commands_registered():
-    """Other protocol tests reset the singleton registry; restore real commands."""
-    required_commands = {
-        "home",
-        "measure",
-        "move",
-        "pause",
-        "scan",
-        "transfer",
-        "serial_transfer",
-    }
-    if required_commands.issubset(set(CommandRegistry.instance().command_names)):
-        return
-
-    import importlib
-
-    modules = [
-        importlib.import_module("cubos.protocol_engine.commands.home"),
-        importlib.import_module("cubos.protocol_engine.commands.measure"),
-        importlib.import_module("cubos.protocol_engine.commands.move"),
-        importlib.import_module("cubos.protocol_engine.commands.pause"),
-        importlib.import_module("cubos.protocol_engine.commands.pipette"),
-        importlib.import_module("cubos.protocol_engine.commands.scan"),
-    ]
-    CommandRegistry.reset()
-    for module in modules:
-        importlib.reload(module)
 
 
 def _write(path: Path, content: str) -> Path:

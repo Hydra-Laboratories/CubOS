@@ -7,7 +7,13 @@ nav:
   - Home: index.md
   - Set Up and Use CubOS:
     - Getting Started: getting-started.md
-    - Use the Operator UI: operator-ui.md
+    - Use the Operator UI:
+      - Overview: operator-ui.md
+      - Gantry, Connect and Move: operator-ui/gantry.md
+      - Calibrate the Gantry: operator-ui/calibrate-gantry.md
+      - Deck and Labware: operator-ui/deck-and-labware.md
+      - Protocols: operator-ui/protocols.md
+      - Results and State: operator-ui/results-and-state.md
     - Gantry Bring-Up: admin/gantry-bring-up.md
     - Set Up Gantry YAML: gantry-setup.md
     - Calibrate Gantry: calibration.md
@@ -15,6 +21,7 @@ nav:
     - Run a Protocol with YAML: protocol-yaml.md
     - Fluid State Tracking: fluid-state.md
     - PANDA-CUB Quickstart: panda-cub-quickstart.md
+    - EmStat Cyclic Voltammetry: emstat-cv.md
     - Data: data.md
     - Troubleshooting & Recovery: troubleshooting.md
   - Contributing to CubOS:

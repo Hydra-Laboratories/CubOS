@@ -62,6 +62,52 @@ instruments:
     return path
 
 
+def _write_home_origin_multi_gantry(path: Path) -> Path:
+    path.write_text(
+        """\
+serial_port: /dev/ttyUSB0
+gantry_type: cub_xl
+origin_policy: home_origin
+cnc:
+  factory_z_travel_mm: 100.0
+  calibration_block_height_mm: 12.5
+  y_axis_motion: head
+working_volume:
+  x_min: -400.0
+  x_max: 0.0
+  y_min: -300.0
+  y_max: 0.0
+  z_min: -100.0
+  z_max: 0.0
+grbl_settings:
+  status_report: 0
+  soft_limits: true
+  homing_enable: true
+  homing_pull_off: 10.0
+  max_travel_x: 400.0
+  max_travel_y: 300.0
+  max_travel_z: 100.0
+instruments:
+  left_probe:
+    type: asmi
+    vendor: vernier
+    offset_x: 99.0
+    offset_y: 99.0
+    depth: 99.0
+    offline: true
+  camera:
+    type: uv_curing
+    vendor: excelitas
+    offset_x: 1.0
+    offset_y: 2.0
+    depth: 3.0
+    offline: true
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
 def _write_rpi_camera_gantry(path: Path) -> Path:
     path.write_text(
         """\
@@ -100,6 +146,59 @@ instruments:
     offset_x: 1.0
     offset_y: 2.0
     depth: 3.0
+    offline: true
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _write_lighting_gantry(path: Path) -> Path:
+    path.write_text(
+        """\
+serial_port: /dev/ttyUSB0
+gantry_type: cub_xl
+cnc:
+  factory_z_travel_mm: 100.0
+  calibration_block_height_mm: 12.5
+  y_axis_motion: head
+working_volume:
+  x_min: 0.0
+  x_max: 400.0
+  y_min: 0.0
+  y_max: 300.0
+  z_min: 0.0
+  z_max: 100.0
+grbl_settings:
+  status_report: 0
+  soft_limits: true
+  homing_enable: true
+  homing_pull_off: 10.0
+  max_travel_x: 400.0
+  max_travel_y: 300.0
+  max_travel_z: 100.0
+instruments:
+  left_probe:
+    type: asmi
+    vendor: vernier
+    offset_x: 99.0
+    offset_y: 99.0
+    depth: 99.0
+    offline: true
+  pi_camera:
+    type: camera
+    vendor: raspberry_pi
+    offset_x: 1.0
+    offset_y: 2.0
+    depth: 3.0
+    offline: true
+  lights:
+    type: lighting
+    vendor: pawduino
+    port: ""
+    offset_x: 5.0
+    offset_y: 6.0
+    depth: 7.0
     offline: true
 """,
         encoding="utf-8",
@@ -379,6 +478,39 @@ def test_dry_run_prompts_for_only_operator_choices(tmp_path):
     assert any("Dry run only" in message for message in messages)
 
 
+def test_dry_run_home_origin_prompt_label_matches_preflight_wording(tmp_path):
+    path = _write_home_origin_multi_gantry(tmp_path / "gantry.yaml")
+    inputs = iter(["1", "y"])
+    prompts: list[str] = []
+    messages: list[str] = []
+
+    def input_reader(prompt: str) -> str:
+        prompts.append(prompt)
+        return next(inputs)
+
+    result = run_multi_instrument_calibration(
+        path,
+        dry_run=True,
+        output=messages.append,
+        input_reader=input_reader,
+    )
+
+    assert result is None
+    assert prompts == [
+        "Pick the number for the first/left-most tool for back-right-top origin: ",
+        "You selected #1 left_probe. Continue? [y/N]: ",
+    ]
+    assert any(
+        "place the origin block/artifact at the back-right-top corner" in message
+        for message in messages
+    )
+    assert any(
+        "place an origin block/artifact at the back-right-top corner" in message
+        for message in messages
+    )
+    assert not any("front-left" in message for message in messages)
+
+
 def test_multi_instrument_calibration_reconnects_once_if_serial_drops_during_home(tmp_path):
     path = _write_multi_gantry(tmp_path / "gantry.yaml")
     messages: list[str] = []
@@ -528,6 +660,39 @@ def test_multi_instrument_calibration_accepts_block_height_for_z_reference(tmp_p
     assert result.z_origin_verification == (199.0, 149.5, 12.5)
     assert ("set_work_coordinates", None, None, 12.5) in _FakeGantry.instance.calls
     assert any("calibration block" in message.lower() for message in messages)
+
+
+def test_multi_instrument_calibration_prompts_for_lowest_instrument_when_omitted(tmp_path):
+    path = _write_multi_gantry(tmp_path / "gantry.yaml")
+    messages: list[str] = []
+    inputs = iter(["12.5", "1", "y"])
+
+    result = run_multi_instrument_calibration(
+        path,
+        reference_instrument="left_probe",
+        instruments_to_calibrate=("left_probe",),
+        skip_soft_limit_config=True,
+        output=messages.append,
+        input_reader=lambda _prompt: next(inputs),
+        gantry_factory=_FakeGantry,
+        key_reader=_key_reader(
+            [
+                ("\r", 1),
+                ("Z", 1),
+                ("\r", 1),
+                ("RIGHT", 1),
+                ("\r", 1),
+            ]
+        ),
+        stdin_flusher=lambda: None,
+    )
+
+    assert isinstance(result, MultiInstrumentCalibrationResult)
+    assert result.lowest_instrument == "left_probe"
+    assert any(
+        "Lowest mounted tool will be selected after all instruments are attached." in message
+        for message in messages
+    )
 
 
 def test_multi_instrument_calibration_sets_xy_before_z_and_updates_yaml(tmp_path):
@@ -726,6 +891,113 @@ def test_multi_instrument_calibration_rejects_rpi_camera_as_lowest(tmp_path):
             reference_instrument="left_probe",
             lowest_instrument="pi_camera",
             instruments_to_calibrate=("left_probe", "pi_camera"),
+            dry_run=True,
+            output=lambda _message: None,
+            input_reader=lambda _prompt: "y",
+        )
+
+
+def test_multi_instrument_calibration_lighting_reuses_camera_calibration(tmp_path):
+    path = _write_lighting_gantry(tmp_path / "gantry.yaml")
+    out_path = tmp_path / "calibrated.yaml"
+    messages: list[str] = []
+    inputs = iter(["12.5", "20.0", "y"])
+
+    result = run_multi_instrument_calibration(
+        path,
+        reference_instrument="left_probe",
+        lowest_instrument="left_probe",
+        instruments_to_calibrate=("left_probe", "pi_camera", "lights"),
+        skip_soft_limit_config=False,
+        output_gantry_path=out_path,
+        write_gantry_yaml=True,
+        output=messages.append,
+        input_reader=lambda _prompt: next(inputs),
+        gantry_factory=_FakeGantry,
+        key_reader=_key_reader(
+            [
+                ("\r", 1),  # XY origin
+                ("Z", 3),
+                ("\r", 1),  # lowest instrument shared block point
+                ("RIGHT", 12),
+                ("UP", 4),
+                ("Z", 8),
+                ("\r", 1),  # camera centered over block; no lights step follows
+            ]
+        ),
+        stdin_flusher=lambda: None,
+    )
+
+    assert isinstance(result, MultiInstrumentCalibrationResult)
+    assert result.instrument_calibrations["lights"] == (
+        result.instrument_calibrations["pi_camera"]
+    )
+    assert "lights" not in result.block_reference_coordinates
+    output_text = "\n".join(messages)
+    assert "lights reuses the camera calibration from pi_camera." in output_text
+    assert "calibrate lights" not in output_text
+    assert "calibrate non-contact instrument 'lights'" not in output_text
+
+    written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    camera = written["instruments"]["pi_camera"]
+    lights = written["instruments"]["lights"]
+    assert lights["offset_x"] == camera["offset_x"]
+    assert lights["offset_y"] == camera["offset_y"]
+    assert lights["depth"] == camera["depth"]
+
+
+def test_multi_instrument_calibration_lighting_without_camera_keeps_offsets(tmp_path):
+    path = _write_lighting_gantry(tmp_path / "gantry.yaml")
+    raw = path.read_text(encoding="utf-8")
+    start = raw.index("  pi_camera:")
+    end = raw.index("  lights:")
+    path.write_text(raw[:start] + raw[end:], encoding="utf-8")
+    out_path = tmp_path / "calibrated.yaml"
+    messages: list[str] = []
+    inputs = iter(["12.5", "y"])
+
+    result = run_multi_instrument_calibration(
+        path,
+        reference_instrument="left_probe",
+        lowest_instrument="left_probe",
+        instruments_to_calibrate=("left_probe", "lights"),
+        skip_soft_limit_config=False,
+        output_gantry_path=out_path,
+        write_gantry_yaml=True,
+        output=messages.append,
+        input_reader=lambda _prompt: next(inputs),
+        gantry_factory=_FakeGantry,
+        key_reader=_key_reader(
+            [
+                ("\r", 1),  # XY origin
+                ("Z", 3),
+                ("\r", 1),  # lowest instrument shared block point; no more steps
+            ]
+        ),
+        stdin_flusher=lambda: None,
+    )
+
+    assert isinstance(result, MultiInstrumentCalibrationResult)
+    assert "lights" not in result.instrument_calibrations
+    assert any(
+        "Skipping lights: no calibrated camera to copy from" in message
+        for message in messages
+    )
+    written = yaml.safe_load(out_path.read_text(encoding="utf-8"))
+    assert written["instruments"]["lights"]["offset_x"] == 5.0
+    assert written["instruments"]["lights"]["offset_y"] == 6.0
+    assert written["instruments"]["lights"]["depth"] == 7.0
+
+
+def test_multi_instrument_calibration_rejects_lighting_as_reference(tmp_path):
+    path = _write_lighting_gantry(tmp_path / "gantry.yaml")
+
+    with pytest.raises(ValueError, match="follows the camera"):
+        run_multi_instrument_calibration(
+            path,
+            reference_instrument="lights",
+            lowest_instrument="left_probe",
+            instruments_to_calibrate=("left_probe", "pi_camera", "lights"),
             dry_run=True,
             output=lambda _message: None,
             input_reader=lambda _prompt: "y",

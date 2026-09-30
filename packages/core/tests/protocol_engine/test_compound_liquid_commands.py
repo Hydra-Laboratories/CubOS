@@ -358,10 +358,8 @@ class TestRinseWithMix:
             context, well="plate.A1", volume_ul=50.0, cycles=1, solution="water",
             mix_repetitions=2,
         )
-        # fill (aspirate+dispense) + remove (aspirate+dispense). Mix is a
-        # single driver-level command (OpentronsPipette.mix), not decomposed
-        # into aspirate()/dispense() calls -- verified via the journal below.
-        assert len(pipette.aspirate_volumes) == 2
+        # fill + two mix cycles (two aspirates each) + remove.
+        assert len(pipette.aspirate_volumes) == 6
 
         operations = _operations(store, state_id)
         mix_ops = [op for op in operations if op["operation_type"] == "mix"]

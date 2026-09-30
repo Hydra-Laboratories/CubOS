@@ -14,7 +14,7 @@ export type UpdateStatus = {
   error: string | null;
 };
 
-class ApiError extends Error {
+export class ApiError extends Error {
   status: number;
 
   constructor(status: number, message: string) {
@@ -70,6 +70,8 @@ export const deckApi = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  delete: (filename: string) =>
+    request<{ status: string; filename: string }>(`/deck/${filename}`, { method: "DELETE" }),
   previewWells: (config: import("../types").WellPlateConfig) =>
     request<Record<string, import("../types").WellPosition>>("/deck/preview-wells", {
       method: "POST",
@@ -88,6 +90,8 @@ export const gantryApi = {
     request<import("../types").InstrumentSchemas>("/gantry/instrument-schemas"),
   getInstrumentMethods: () =>
     request<import("../types").InstrumentMeasurementMethods>("/gantry/instrument-methods"),
+  getInstrumentMethodParams: () =>
+    request<import("../types").InstrumentMethodParams>("/gantry/instrument-method-params"),
   get: (filename: string) =>
     request<import("../types").GantryResponse>(`/gantry/${filename}`),
   put: (filename: string, body: import("../types").GantryConfig) =>
@@ -95,6 +99,8 @@ export const gantryApi = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  delete: (filename: string) =>
+    request<{ status: string; filename: string }>(`/gantry/${filename}`, { method: "DELETE" }),
   getPosition: () =>
     request<import("../types").GantryPosition>("/gantry/position"),
   connect: (filename: string) =>
@@ -230,6 +236,8 @@ export const protocolApi = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  delete: (filename: string) =>
+    request<{ status: string; filename: string }>(`/protocol/${filename}`, { method: "DELETE" }),
   validate: (body: import("../types").ProtocolConfig) =>
     request<import("../types").ProtocolValidationResponse>(
       "/protocol/validate",
@@ -274,6 +282,12 @@ export const runsApi = {
       body: JSON.stringify(body),
     }),
   get: (runId: string) => request<import("../types").RunRecord>(`/runs/${runId}`),
+  plan: (runId: string) =>
+    request<import("../types").RunPlanResponse>(`/runs/${runId}/plan`),
+  events: (runId: string, after = 0) =>
+    request<import("../types").RunEventsResponse>(
+      `/runs/${runId}/events?after=${after}`,
+    ),
   cancel: (runId: string) =>
     request<import("../types").RunRecord>(`/runs/${runId}/cancel`, {
       method: "POST",
@@ -343,8 +357,19 @@ export const systemApi = {
 export const dataApi = {
   listCampaigns: () =>
     request<import("../types").CampaignSummary[]>("/data/campaigns"),
-  exportCampaignMeasurementsZip: (campaignId: number) =>
-    download(`/data/campaigns/${campaignId}/measurements.zip`),
-  exportCampaignAsmiZip: (campaignId: number) =>
-    download(`/data/campaigns/${campaignId}/asmi.zip`),
+  downloadCampaignData: (campaignId: number) =>
+    download(`/data/campaigns/${campaignId}/data.zip`),
 };
+
+// Manual instrument control (bring-up work, outside protocol runs)
+export const instrumentsApi = {
+  captureCameraFrame: (instrument: string, preview = false) =>
+    request<{ instrument: string; image_path: string }>("/instruments/camera/capture", {
+      method: "POST",
+      body: JSON.stringify({ instrument, preview }),
+    }),
+  cameraLastImage: (instrument: string) =>
+    // Cache-bust: repeated preview polls hit the same URL as the frame changes.
+    download(`/instruments/camera/last-image?instrument=${encodeURIComponent(instrument)}&_=${Date.now()}`),
+};
+

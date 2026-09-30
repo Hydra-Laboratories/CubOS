@@ -17,6 +17,7 @@ from cubos_api.routers import (
     deck,
     fluid_states,
     gantry,
+    instruments,
     protocol,
     raw,
     runs,
@@ -129,6 +130,7 @@ async def lifespan(app: FastAPI):
             session.disconnect()
         except Exception as e:
             logger.warning("Error disconnecting gantry on shutdown: %s", e)
+        instruments.reset_manual_instruments()
         gantry.reset_session()
 
 
@@ -138,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(deck.router)
     app.include_router(data.router)
     app.include_router(gantry.router)
+    app.include_router(instruments.router)
     app.include_router(protocol.router)
     app.include_router(raw.router)
     app.include_router(settings.router)

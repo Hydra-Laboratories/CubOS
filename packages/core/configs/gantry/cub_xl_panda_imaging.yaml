@@ -1,0 +1,82 @@
+# PANDA gantry configuration with the imaging stack (camera + lights) live.
+#
+# Same frame and motion envelope as cub_xl_panda.yaml (front-left-bottom
+# origin, +X right, +Y back, +Z up); adds the FLIR high-res camera and the
+# Pawduino imaging lights as first-class instruments so protocols can
+# move / set_lights / capture / image_well.
+#
+# Dry-run ready as checked in: every instrument is `offline: true`, so
+# `capture` writes placeholder PNGs and `set_lights` simulates in memory.
+# For the real bench, per instrument:
+#   camera: set `offline: false`. Requires the Spinnaker SDK + PySpin wheel
+#           (https://www.flir.com/products/spinnaker-sdk/); for a plain USB
+#           webcam instead, switch `vendor: opencv`.
+#   lights: set `offline: false` and set `port` to the Pawduino's serial
+#           device (e.g. /dev/ttyACM0). The capper and pipette share this
+#           Arduino — give every Pawduino-backed instrument the SAME port;
+#           the shared link opens it once.
+
+serial_port: /dev/ttyUSB0
+gantry_type: cub_xl
+
+cnc:
+  default_feed_rate_mm_min: 3000.0
+  factory_z_travel_mm: 100.0
+  y_axis_motion: head
+  # Absolute deck-frame Z used for inter-labware travel and the entry
+  # approach to the first well of a scan. Bounded by the deepest mounted
+  # instrument: gantry z = safe_z + instrument depth must stay within
+  # z_max (100), so with the camera's 32 mm standoff safe_z <= 68.
+  safe_z: 60.0
+
+working_volume:
+  x_min: 0.0
+  x_max: 400.0
+  y_min: 0.0
+  y_max: 300.0
+  z_min: 0.0
+  z_max: 100.0
+
+grbl_settings:
+  # Starting point copied from the Cub XL ASMI controller config. Re-verify on
+  # the actual PANDA controller before trusting physical motion.
+  dir_invert_mask: 1
+  status_report: 0
+  homing_enable: true
+  homing_dir_mask: 0
+  steps_per_mm_x: 400.0
+  steps_per_mm_y: 400.0
+  steps_per_mm_z: 400.0
+  max_travel_x: 400.0
+  max_travel_y: 300.0
+  max_travel_z: 100.0
+
+instruments:
+  camera:
+    type: camera
+    vendor: flir
+    camera_id: 0
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    # Center mount; estimated imaging standoff above deck targets.
+    depth: 32.0
+
+  lights:
+    type: lighting
+    vendor: pawduino
+    port: ""
+    offline: true
+    offset_x: 0.0
+    offset_y: 0.0
+    # White + contact (red/blue) imaging lights on the Pawduino.
+    depth: 0.0
+
+  vial_capper_decapper:
+    type: mounted_tool
+    vendor: mount_only
+    offline: true
+    offset_x: 58.0
+    offset_y: 0.0
+    # Right white tool; approximate capper/decapper centerline.
+    depth: 48.0

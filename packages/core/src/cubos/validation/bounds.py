@@ -16,6 +16,7 @@ from cubos.deck.labware.tip_rack import (
     resolve_tip_rack_slot,
 )
 from cubos.deck.labware.well_plate import WellPlate
+from cubos.deck.labware.vial import Vial
 from cubos.gantry.gantry_config import GantryConfig, WorkingVolume
 from cubos.gantry.instrument_mount import InstrumentedGantry
 from cubos.protocol_engine.protocol import Protocol
@@ -363,6 +364,37 @@ def _append_measure_targets(
     )
 
 
+def _append_rinse_targets(
+    targets: list[ProtocolMotionTarget],
+    *,
+    step_args: dict[str, Any],
+    deck: Deck,
+    gantry: GantryConfig,
+) -> None:
+    instrument = step_args.get("instrument")
+    vial = step_args.get("vial")
+    height = step_args.get("measurement_height")
+    if (
+        not isinstance(instrument, str)
+        or not isinstance(vial, str)
+        or not _is_finite_number(height)
+    ):
+        return
+    try:
+        target = deck.resolve_labware(vial)
+    except (KeyError, ValueError):
+        return
+    if not isinstance(target, Vial):
+        return
+    coord = deck.resolve_coordinate(vial)
+    for suffix in ("safe_z", "action_z"):
+        z = gantry.resolved_safe_z if suffix == "safe_z" else coord.z + float(height)
+        _append_target(
+            targets, target=vial, suffix=suffix, instrument=instrument,
+            x=coord.x, y=coord.y, z=z,
+        )
+
+
 def _append_scan_targets(
     targets: list[ProtocolMotionTarget],
     *,
@@ -559,6 +591,10 @@ def collect_protocol_motion_targets(
                 deck=deck,
                 gantry=gantry,
                 pipette_tip_extension=pipette_tip_extension,
+            )
+        elif step.command_name == "rinse":
+            _append_rinse_targets(
+                targets, step_args=step.args, deck=deck, gantry=gantry,
             )
         elif step.command_name == "scan":
             _append_scan_targets(

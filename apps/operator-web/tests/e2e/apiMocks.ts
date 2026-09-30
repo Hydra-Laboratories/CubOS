@@ -16,6 +16,66 @@ export interface MockApiState {
   requests: RecordedRequest[];
 }
 
+/**
+ * Frozen run state for the step-execution view.
+ *
+ * The run view is a pure function of (plan, events) fetched by run id, so a
+ * scenario just supplies both plus the run record. That renders one exact
+ * moment of a run deterministically — no timing races in E2E.
+ */
+export interface RunScenario {
+  plan: { index: number; command: string; summary: string; args?: Record<string, unknown> }[];
+  events: {
+    index: number;
+    command: string;
+    outcome: "started" | "completed" | "failed" | "skipped";
+    substep?: string | null;
+    duration_s?: number | null;
+    error?: string | null;
+    reason?: string | null;
+  }[];
+  runState?: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  runError?: string | null;
+}
+
+function runRecord(runId: string, scenario: RunScenario | undefined) {
+  const state = scenario?.runState ?? "running";
+  return {
+    run_id: runId,
+    state,
+    created_at: 0,
+    started_at: 0,
+    finished_at: state === "running" || state === "queued" ? null : 1,
+    mock_mode: false,
+    metadata: {},
+    digests: {},
+    result: state === "succeeded" ? { status: "ok", steps_executed: 1, campaign_id: 42 } : null,
+    error: scenario?.runError ?? null,
+    artifacts: [],
+    fluid_state_id: null,
+  };
+}
+
+function runEvents(runId: string, scenario: RunScenario | undefined) {
+  const events = (scenario?.events ?? []).map((event, position) => ({
+    sequence: position + 1,
+    timestamp: position + 1,
+    state: "running",
+    message: `step ${event.index} ${event.command} ${event.outcome}`,
+    kind: "step",
+    data: {
+      index: event.index,
+      command: event.command,
+      substep: event.substep ?? null,
+      outcome: event.outcome,
+      duration_s: event.duration_s ?? null,
+      error: event.error ?? null,
+      reason: event.reason ?? null,
+    },
+  }));
+  return { run_id: runId, events };
+}
+
 const GANTRY_CONFIG = {
   serial_port: "/dev/ttyUSB0",
   gantry_type: "cub_xl",
@@ -111,7 +171,11 @@ function position(state: MockApiState) {
 
 export async function installApiMocks(
   page: Page,
-  options: { connected?: boolean; fluidStates?: boolean } = {},
+  options: {
+    connected?: boolean;
+    fluidStates?: boolean;
+    run?: RunScenario;
+  } = {},
 ): Promise<MockApiState> {
   const state: MockApiState = {
     connected: options.connected ?? false,
@@ -181,6 +245,30 @@ export async function installApiMocks(
         steps: [{ command: "move", args: { position: "plate_1.A1" } }],
       });
     }
+    // ── Versioned runs resource (drives the step-execution view) ──────
+    if (path === "/runs" && method === "POST") {
+      const runId = (body as { run_id?: string } | null)?.run_id ?? "run-1";
+      return json({ ...runRecord(runId, options.run), state: "queued" }, 202);
+    }
+    if (path.startsWith("/runs/") && path.endsWith("/plan")) {
+      const runId = path.slice("/runs/".length, -"/plan".length);
+      return json({
+        run_id: runId,
+        steps: (options.run?.plan ?? []).map((step) => ({ args: {}, ...step })),
+      });
+    }
+    if (path.startsWith("/runs/") && path.includes("/events")) {
+      const runId = path.slice("/runs/".length).split("/")[0];
+      return json(runEvents(runId, options.run));
+    }
+    if (path.startsWith("/runs/") && path.endsWith("/cancel") && method === "POST") {
+      const runId = path.slice("/runs/".length, -"/cancel".length);
+      return json(runRecord(runId, options.run));
+    }
+    if (path.startsWith("/runs/") && method === "GET") {
+      return json(runRecord(path.slice("/runs/".length), options.run));
+    }
+
     if (path === "/data/campaigns") return json([]);
     if (path === "/fluid-states") return json(withFluidStates ? [FLUID_STATE_SUMMARY] : []);
     if (path === "/fluid-states/1") return json(FLUID_STATE_DETAIL);

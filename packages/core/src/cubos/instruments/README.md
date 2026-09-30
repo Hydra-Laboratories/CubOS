@@ -7,14 +7,28 @@ that pair to choose the concrete class.
 | Type folder | Built-in vendor | Instrument | Notes |
 |-------------|-----------------|------------|-------|
 | `asmi/` | `vernier` | GoDirect Force Sensor | Force measurement via USB (GoDirect SDK) |
-| `camera/` | `mount_only`, `raspberry_pi` | Mounted camera | `mount_only` is calibration-only; `capture()` is intentionally not implemented |
+| `camera/` | `mount_only`, `raspberry_pi`, `flir`, `opencv` | Mounted camera | `mount_only` is calibration-only (`capture()` intentionally not implemented); `flir` is the PANDA high-res camera via the proprietary Spinnaker/PySpin SDK (manual install; OpenCV saves the frames); `opencv` is a plain USB webcam with index auto-detect |
 | `capper/` | `mock`, `pawduino` | Vial capper/decapper | Electromagnet capture/release + line-break sensor confirm via Arduino serial (Pawduino firmware); `mock` is an offline in-memory simulation |
+| `lighting/` | `pawduino` | Imaging/deck lights | Two channels on the PANDA Arduino: `white` (5/10/15/25/50/100%) and `contact` red+blue (5/10/20/30/50%). Non-positional; driven by the `set_lights` / `image_well` protocol commands, forced off at run end |
 | `filmetrics/` | `kla` | F-Series (via FilmetricsTool.exe) | Thin-film thickness measurement via spectral reflectance |
 | `mounted_tool/` | `mount_only` | Mounted non-instrumented tool | Calibration-only stand-in for physical tools without control code |
-| `pipette/` | `opentrons` | OT-2 / Flex pipettes | Pipette control via Arduino serial (Pawduino firmware) |
+| `pipette/` | `opentrons`, `sartorius` | OT-2 / Flex pipettes; Sartorius Picus 2 | `opentrons` drives a CubOS stepper on a bare pipette body via Arduino serial (Pawduino firmware) and commands plunger millimetres; `sartorius` commands microlitres to the pipette's own controller over USB serial |
 | `potentiostat/` | `admiral` | Admiral potentiostat | Squidstat Python SDK |
 | `uv_curing/` | `excelitas` | OmniCure S1500 PRO | UV curing system via RS-232 serial |
 | `uvvis_ccs/` | `thorlabs` | CCS100 / CCS175 / CCS200 | Compact CCD spectrometer for UV-Vis spectroscopy |
+
+## Shared Pawduino serial link
+
+The PANDA-family Arduino serves several instruments over one serial port
+(capper electromagnet + line-break sensor, pipette plunger, imaging lights).
+Drivers must never open the port themselves: opening it toggles DTR and
+resets the board mid-session, and interleaved reads steal each other's
+responses. Instead every Pawduino-backed driver acquires
+`cubos.instruments.controllers.pawduino.PawduinoLink` — one refcounted,
+lock-serialized connection per port string. Configure every Pawduino-backed
+instrument in the gantry YAML with the **same** `port`; the first
+`connect()` opens (and resets) the board once, and the port closes when the
+last holder disconnects.
 
 ## Structure convention
 

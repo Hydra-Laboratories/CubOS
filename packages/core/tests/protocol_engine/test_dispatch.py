@@ -9,6 +9,7 @@ can compute their own descent geometry from a single anchor.
 
 from __future__ import annotations
 
+import dataclasses
 from unittest.mock import MagicMock
 
 import pytest
@@ -313,3 +314,91 @@ def test_method_kwargs_not_mutated():
     )
 
     assert original == snapshot
+
+
+# ── Dataclass-param coercion & missing-required-argument detail ─────────
+
+@dataclasses.dataclass
+class _RunParams:
+    duration_s: float
+    sampling_interval_s: float = 0.1
+    tags: list = dataclasses.field(default_factory=list)
+
+
+class _DataclassParamInstrument(BaseInstrument):
+    def __init__(self) -> None:
+        super().__init__(name="x", offset_x=0.0, offset_y=0.0, depth=0.0)
+
+    def connect(self) -> None: ...
+    def disconnect(self) -> None: ...
+    def health_check(self) -> bool: return True
+
+    def run(self, params: _RunParams, label: str) -> dict:
+        return {"params": params, "label": label}
+
+
+def test_dict_kwarg_coerced_into_dataclass_param():
+    """YAML can only carry plain mappings; a dict supplied for a
+    dataclass-annotated parameter is coerced into that dataclass so the
+    method receives a real instance (and its own validation runs)."""
+    instr = _DataclassParamInstrument()
+    ctx = _ctx()
+
+    kwargs = inject_runtime_args(
+        instr.run, {"params": {"duration_s": 5.0}, "label": "a"}, ctx,
+        well_z=0.0,
+    )
+
+    assert isinstance(kwargs["params"], _RunParams)
+    assert kwargs["params"].duration_s == 5.0
+    assert kwargs["params"].sampling_interval_s == 0.1
+    assert kwargs["label"] == "a"
+
+
+def test_dataclass_coercion_failure_raises_actionable_error():
+    """A dict that doesn't match the dataclass's fields fails at the
+    dispatch boundary with the dataclass's field summary, not a bare
+    TypeError from the constructor call."""
+    instr = _DataclassParamInstrument()
+    ctx = _ctx()
+
+    with pytest.raises(ProtocolExecutionError, match="cannot build"):
+        inject_runtime_args(
+            instr.run,
+            {"params": {"not_a_real_field": 1}, "label": "a"},
+            ctx, well_z=0.0,
+        )
+
+
+def test_missing_required_arguments_lists_dataclass_fields_and_plain_names():
+    """Missing both a dataclass-typed required arg and a plain required
+    arg: the error spells out the dataclass's fields (so the YAML fix is
+    obvious) and names the plain one bare."""
+    instr = _DataclassParamInstrument()
+    ctx = _ctx()
+
+    with pytest.raises(ProtocolExecutionError) as exc_info:
+        inject_runtime_args(instr.run, {}, ctx, well_z=0.0)
+
+    message = str(exc_info.value)
+    assert "missing required argument" in message
+    assert "`params` (_RunParams:" in message
+    assert "duration_s (required)" in message
+    assert "sampling_interval_s=0.1" in message
+    assert "tags=<computed default>" in message
+    assert "`label`" in message
+
+
+def test_dict_kwarg_for_non_dataclass_param_left_as_is():
+    """A dict value for a parameter that isn't dataclass-annotated must
+    pass through untouched — coercion only applies to dataclass-typed
+    parameters."""
+    instr = _ClosedLoopInstrument()  # indentation(self, gantry, step_size: float)
+    ctx = _ctx()
+
+    kwargs = inject_runtime_args(
+        instr.indentation, {"step_size": {"not": "a-dataclass-field"}}, ctx,
+        well_z=0.0,
+    )
+
+    assert kwargs["step_size"] == {"not": "a-dataclass-field"}

@@ -1,0 +1,31 @@
+# Automated-test fixture. Uses /dev/null and must never control hardware.
+#
+# Sartorius Picus 2 variant of gantry.yaml, sharing the same deck.yaml and
+# protocol.yaml. Exercises the vendor swap end-to-end: identical protocol,
+# different actuation model (volume-native, no plunger geometry).
+
+serial_port: /dev/null
+gantry_type: cub_xl
+cnc:
+  factory_z_travel_mm: 129.0
+  y_axis_motion: head
+  safe_z: 69.0
+
+working_volume:
+  x_min: 0.0
+  x_max: 307.0
+  y_min: 0.0
+  y_max: 300.0
+  z_min: 0.0
+  z_max: 129.0
+
+instruments:
+  pipette:
+    type: pipette
+    vendor: sartorius
+    pipette_model: picus2_1ch_1000
+    port: ''
+    offline: true
+    offset_x: 72.0
+    offset_y: -6.0
+    depth: 0.0

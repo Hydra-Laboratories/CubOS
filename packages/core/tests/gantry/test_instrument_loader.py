@@ -418,3 +418,55 @@ class TestLoadInstrumentedGantryMockMode:
         assert mounted.instruments["uvvis"]._offline is True
         assert isinstance(mounted.instruments["film"], KLAFilmetrics)
         assert mounted.instruments["film"]._offline is True
+
+
+class TestRetiredInstrumentFields:
+    def _capper_yaml(self, extra: str = ""):
+        return _gantry_yaml(
+            f"""
+            capper:
+              type: capper
+              vendor: pawduino
+              engage_depth_mm: -15.0
+              {extra}
+            """
+        )
+
+    def test_park_position_is_dropped_with_a_warning(self, tmp_path, caplog):
+        gantry_path = _write_gantry_yaml(
+            tmp_path, self._capper_yaml("park_position: [-10.0, -10.0]"),
+        )
+        with caplog.at_level("WARNING", logger="cubos.gantry.instrument_loader"):
+            mounted = load_instrumented_gantry_from_config(
+                load_gantry_from_yaml(gantry_path), _mock_controller(), mock_mode=True,
+            )
+        capper = mounted.instruments["capper"]
+        assert not hasattr(capper, "park_position")
+        assert "park_position" in caplog.text
+        assert "no longer used" in caplog.text
+
+    def test_other_unknown_fields_still_fail(self, tmp_path):
+        gantry_path = _write_gantry_yaml(
+            tmp_path, self._capper_yaml("engage_depth: -15.0"),
+        )
+        with pytest.raises(ValueError, match="unsupported YAML field.*engage_depth"):
+            load_instrumented_gantry_from_config(
+                load_gantry_from_yaml(gantry_path), _mock_controller(), mock_mode=True,
+            )
+
+    def test_retired_field_is_type_scoped(self, tmp_path):
+        gantry_path = _write_gantry_yaml(
+            tmp_path,
+            _gantry_yaml(
+                """
+                camera:
+                  type: camera
+                  vendor: mount_only
+                  park_position: [1.0, 2.0]
+                """
+            ),
+        )
+        with pytest.raises(ValueError, match="unsupported YAML field.*park_position"):
+            load_instrumented_gantry_from_config(
+                load_gantry_from_yaml(gantry_path), _mock_controller(), mock_mode=True,
+            )

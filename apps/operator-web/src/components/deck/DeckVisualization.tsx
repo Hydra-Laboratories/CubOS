@@ -266,6 +266,33 @@ export default function DeckVisualization({
               </g>
             );
           }
+          if (item.config.type === "vial_grid") {
+            const grid = item.config;
+            return (
+              <g key={item.key}>
+                {Object.entries(item.positions ?? {}).map(([vialId, position]) => (
+                  <VialRenderer
+                    key={`${item.key}:${vialId}`}
+                    label={vialId}
+                    config={{
+                      type: "vial",
+                      name: vialId,
+                      model_name: grid.vial_model_name ?? "",
+                      height: grid.vial_height ?? 0,
+                      diameter: grid.vial_diameter ?? 0,
+                      location: position,
+                      capacity_ul: grid.capacity_ul ?? 0,
+                      working_volume_ul: grid.working_volume_ul ?? 0,
+                    }}
+                    svgWidth={SVG_W}
+                    svgHeight={SVG_H}
+                    machineXRange={visualXRange}
+                    machineYRange={visualYRange}
+                  />
+                ))}
+              </g>
+            );
+          }
           if (item.config.type === "vial") {
             return (
               <VialRenderer

@@ -36,7 +36,7 @@ from ..coordinates import Coordinates
 from .logger import set_up_command_logger, set_up_mill_logger
 
 # Constants
-DEFAULT_FEED_RATE = 2000
+DEFAULT_FEED_RATE = 3000
 HOMING_TIMEOUT = 90
 ERROR_22_MAX_RETRIES = 2
 
@@ -87,6 +87,7 @@ class Mill:
         self.logger = set_up_mill_logger(log_dir)
         self.port = port
         self.config = {}
+        self.default_feed_rate = DEFAULT_FEED_RATE
         self._init_state()
         self.ser_mill: serial.Serial = None
         self._write_lock = threading.Lock()
@@ -301,7 +302,7 @@ class Mill:
         self.read_config()
         self.clear_buffers()
         self.enforce_wpos_mode()
-        self.set_feed_rate(DEFAULT_FEED_RATE)
+        self.set_feed_rate(self.default_feed_rate)
         self.seed_wco()
         return self.ser_mill
 
@@ -428,7 +429,7 @@ class Mill:
                         ERROR_22_MAX_RETRIES,
                         mill_response,
                     )
-                    self.set_feed_rate(DEFAULT_FEED_RATE)
+                    self.set_feed_rate(self.default_feed_rate)
                     continue
 
                 level = logging.WARNING if suppress_errors else logging.ERROR
@@ -1044,7 +1045,7 @@ class Mill:
         every axis is then emitted unconditionally — safe because the
         commands are absolute.
         """
-        f = f" F{DEFAULT_FEED_RATE}"
+        f = f" F{self.default_feed_rate}"
         self._validate_target_coordinates(target_coordinates)
         commands = []
         if current_coordinates is None or target_coordinates.x != current_coordinates.x:
@@ -1074,7 +1075,7 @@ class Mill:
         unconditionally — safe because the commands are absolute and the
         lift happens first.
         """
-        f = f" F{DEFAULT_FEED_RATE}"
+        f = f" F{self.default_feed_rate}"
         self._validate_target_coordinates(target_coordinates)
         self._validate_finite_coordinate(travel_z, "travel Z")
         commands = []

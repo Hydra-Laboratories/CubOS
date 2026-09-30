@@ -8,9 +8,12 @@ import type {
   InstrumentSchemas,
   InstrumentTypeInfo,
 } from "../../types";
-import { DirtyMarker, NumberField, SaveButton, TextField, UnsavedNotice } from "./fields";
+import { DirtyMarker, NumberField, SaveButton, SaveTargetHint, SavedStatus, TextField, UnsavedNotice } from "./fields";
+import { useSaveShortcut } from "./saveHelpers";
+import { normalizeYamlFilename } from "./field-utils";
 import { isFieldEqual } from "./field-utils";
-import ImportFromFile from "./ImportFromFile";
+import ConfigFilePicker from "./ConfigFilePicker";
+import { EMPTY_GANTRY } from "./gantryDefaults";
 import { useConfirm } from "../common/useConfirm";
 import * as theme from "../../theme";
 
@@ -19,6 +22,11 @@ interface Props {
   selectedFile: string | null;
   onSelectFile: (f: string) => void;
   onImportFile: (f: string) => void;
+  onNewFile?: () => void;
+  onDeleteFile?: (f: string) => void;
+  deleteDisabledReason?: string | null;
+  /** Last successful save on this tab, shown as a "Saved" acknowledgement. */
+  lastSaved?: { filename: string; at: Date } | null;
   gantry: GantryResponse | null;
   /** The server-loaded config; used to decide which fields show the
    * amber "*" dirty marker. Differs from ``gantry`` when the parent
@@ -38,19 +46,6 @@ interface Props {
   onRefresh: () => void;
 }
 
-const EMPTY_GANTRY: GantryConfig = {
-  serial_port: "",
-  gantry_type: "cub_xl",
-  cnc: {
-    factory_z_travel_mm: 80,
-    calibration_block_height_mm: 35,
-    y_axis_motion: "head",
-    safe_z: 80,
-  },
-  working_volume: { x_min: 0, x_max: 300, y_min: 0, y_max: 200, z_min: 0, z_max: 80 },
-  grbl_settings: {},
-  instruments: {},
-};
 
 const GRBL_NUMBER_FIELDS: Array<{ key: keyof GrblSettingsConfig; label: string }> = [
   { key: "dir_invert_mask", label: "Dir invert mask" },
@@ -97,6 +92,10 @@ export default function GantryEditor({
   selectedFile,
   onSelectFile,
   onImportFile,
+  onNewFile,
+  onDeleteFile,
+  deleteDisabledReason,
+  lastSaved,
   gantry,
   baseline,
   instrumentTypes,
@@ -138,9 +137,9 @@ export default function GantryEditor({
     onLocalChange?.({ filename: selectedFile ?? "unsaved", config: next });
   };
 
-  const startNew = () => {
+  const startNew = onNewFile ?? (() => {
     commit(structuredClone(EMPTY_GANTRY));
-  };
+  });
 
   const enterRawMode = () => {
     if (!config) return;
@@ -254,10 +253,22 @@ export default function GantryEditor({
 
   const canSave = !!config && isValidGantry(config) && (!!saveAs.trim() || !!selectedFile) && !saving && !(rawMode && !!rawError);
 
+  const saveAsFilename = normalizeYamlFilename(saveAs);
+  const saveAsExists = !!saveAsFilename && configs.includes(saveAsFilename);
+
   const handleSave = async () => {
     if (!config || !canSave) return;
-    const filename = saveAs.trim() || selectedFile || "";
-    const normalized = filename.endsWith(".yaml") ? filename : filename + ".yaml";
+    const normalized = saveAsFilename || selectedFile || "";
+    if (!normalized) return;
+    if (saveAsExists && normalized !== selectedFile) {
+      const ok = await requestConfirm({
+        title: "Overwrite file?",
+        message: `${normalized} already exists. Overwrite it?`,
+        confirmLabel: "Overwrite",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       await Promise.resolve(onSave(normalized, config));
@@ -270,6 +281,8 @@ export default function GantryEditor({
       setSaving(false);
     }
   };
+
+  useSaveShortcut(handleSave, canSave);
 
   const handleDiscard = async () => {
     const confirmed = await requestConfirm({
@@ -289,7 +302,15 @@ export default function GantryEditor({
   return (
     <div>
       <div style={configPickerRowStyle}>
-        <ImportFromFile configs={configs} onSelectFile={onImportFile} label="Import gantry config" />
+        <ConfigFilePicker
+          kind="Gantry"
+          configs={configs}
+          selectedFile={selectedFile}
+          onSelectFile={onImportFile}
+          onNew={startNew}
+          onDelete={onDeleteFile}
+          deleteDisabledReason={deleteDisabledReason}
+        />
         {!config && <button onClick={startNew} style={newConfigBtnStyle}>+ New config</button>}
       </div>
 
@@ -417,6 +438,7 @@ export default function GantryEditor({
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                         <h4 style={{ ...sectionTitleStyle, color, ...theme.mono }}>
                           {key} <span style={{ fontWeight: 400, color: theme.color.textMuted, fontSize: 11, fontFamily: theme.font.ui }}>({typeLabel(inst.type)})</span>
+                          {inst.offline === true && <span style={simulatedBadgeStyle}>simulated</span>}
                         </h4>
                         <button onClick={() => removeInstrument(key)} style={removeBtnStyle}>Remove</button>
                       </div>
@@ -471,6 +493,15 @@ export default function GantryEditor({
                         <NumberField id={`${key}-offset-x`} name={`${key}_offset_x`} label="Offset X" value={inst.offset_x} onChange={(v) => updateInstrument(key, { ...inst, offset_x: v })} dirty={isInstrumentFieldDirty(baseline, key, "offset_x", inst.offset_x)} />
                         <NumberField id={`${key}-offset-y`} name={`${key}_offset_y`} label="Offset Y" value={inst.offset_y} onChange={(v) => updateInstrument(key, { ...inst, offset_y: v })} dirty={isInstrumentFieldDirty(baseline, key, "offset_y", inst.offset_y)} />
                         <NumberField id={`${key}-depth`} name={`${key}_depth`} label="Depth" value={Number(inst.depth ?? 0)} onChange={(v) => updateInstrument(key, { ...inst, depth: v })} dirty={isInstrumentFieldDirty(baseline, key, "depth", inst.depth)} />
+                        <SelectField
+                          id={`${key}-offline`}
+                          name={`${key}_offline`}
+                          label="Hardware"
+                          value={String(inst.offline === true)}
+                          options={[{ value: "false", label: "Connected" }, { value: "true", label: "Simulated (offline)" }]}
+                          onChange={(v) => updateInstrument(key, { ...inst, offline: v === "true" })}
+                          dirty={isInstrumentFieldDirty(baseline, key, "offline", inst.offline)}
+                        />
                       </div>
 
                       {fields.length > 0 && (
@@ -611,8 +642,9 @@ export default function GantryEditor({
             <div style={saveErrorStyle}>Save failed: {saveError}</div>
           )}
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 12, flexWrap: "wrap" }}>
             <input
+              aria-label="Save as filename"
               value={saveAs}
               onChange={(e) => setSaveAs(e.target.value)}
               placeholder={selectedFile ?? "my_gantry.yaml"}
@@ -622,7 +654,9 @@ export default function GantryEditor({
             {dirty && (
               <button onClick={handleDiscard} style={discardBtnStyle}>Discard changes</button>
             )}
+            {lastSaved && !dirty && <SavedStatus filename={lastSaved.filename} at={lastSaved.at} />}
           </div>
+          <SaveTargetHint saveAs={saveAsFilename} selectedFile={selectedFile} exists={saveAsExists} />
         </>
       )}
       {confirmDialog}
@@ -950,6 +984,20 @@ const newConfigBtnStyle: React.CSSProperties = {
   fontSize: 12,
   height: 34,
   padding: "0 12px",
+};
+
+const simulatedBadgeStyle: React.CSSProperties = {
+  marginLeft: 8,
+  padding: "1px 6px",
+  borderRadius: 4,
+  fontSize: 10,
+  fontWeight: 600,
+  letterSpacing: 0.4,
+  textTransform: "uppercase",
+  fontFamily: theme.font.ui,
+  color: theme.color.warningText,
+  background: theme.color.warningBg,
+  border: `1px solid ${theme.color.warningBorder}`,
 };
 
 const removeBtnStyle: React.CSSProperties = {

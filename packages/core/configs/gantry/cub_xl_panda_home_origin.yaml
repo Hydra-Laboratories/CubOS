@@ -21,6 +21,7 @@ gantry_type: cub_xl
 origin_policy: home_origin
 
 cnc:
+  default_feed_rate_mm_min: 3000.0
   factory_z_travel_mm: 100.0
   y_axis_motion: head
   # Absolute Z ceiling for inter-labware travel, 5 mm below the homed top.

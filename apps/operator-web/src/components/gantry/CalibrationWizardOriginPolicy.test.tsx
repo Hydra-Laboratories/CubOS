@@ -64,7 +64,7 @@ describe("CalibrationWizard origin_policy copy", () => {
     vi.unstubAllGlobals();
   });
 
-  it("uses front-left wording and a deck-origin subtitle for deck_origin (default) single-instrument configs", async () => {
+  it("uses front-left wording for deck_origin (default) single-instrument configs", async () => {
     const user = userEvent.setup();
     installFetch();
     const config: GantryConfig = singleInstrumentConfig();
@@ -79,17 +79,15 @@ describe("CalibrationWizard origin_policy copy", () => {
       />,
     );
 
-    expect(screen.getByText(/single-instrument deck origin/)).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Continue" })); // Prepare -> Home
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> Reference height
     await user.click(await screen.findByRole("button", { name: "Continue" })); // -> Set Origin
 
-    expect(await screen.findByText(/front-left-most point/)).toBeInTheDocument();
-    expect(screen.queryByText(/back-right-top-most point/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/front-left corner of the deck/)).toBeInTheDocument();
+    expect(screen.queryByText(/back-right corner of the deck/)).not.toBeInTheDocument();
   });
 
-  it("uses back-right-top wording and a home-origin subtitle for home_origin single-instrument configs", async () => {
+  it("uses back-right wording for home_origin single-instrument configs", async () => {
     const user = userEvent.setup();
     installFetch();
     const config: GantryConfig = { ...singleInstrumentConfig(), origin_policy: "home_origin" };
@@ -104,17 +102,15 @@ describe("CalibrationWizard origin_policy copy", () => {
       />,
     );
 
-    expect(screen.getByText(/single-instrument home origin/)).toBeInTheDocument();
-
     await user.click(screen.getByRole("button", { name: "Continue" })); // Prepare -> Home
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> Reference height
     await user.click(await screen.findByRole("button", { name: "Continue" })); // -> Set Origin
 
-    expect(await screen.findByText(/back-right-top-most point/)).toBeInTheDocument();
-    expect(screen.queryByText(/front-left-most point/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/back-right corner of the deck/)).toBeInTheDocument();
+    expect(screen.queryByText(/front-left corner of the deck/)).not.toBeInTheDocument();
   });
 
-  it("uses back-right-top wording for home_origin multi-instrument XY origin step", async () => {
+  it("uses back-right wording for home_origin multi-instrument XY origin step", async () => {
     const user = userEvent.setup();
     installFetch();
     const config: GantryConfig = { ...multiInstrumentConfig(), origin_policy: "home_origin" };
@@ -132,7 +128,7 @@ describe("CalibrationWizard origin_policy copy", () => {
     await user.click(screen.getByRole("button", { name: "Continue" })); // Prepare -> Home
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> XY origin
 
-    expect(await screen.findByText(/back-right-top origin/)).toBeInTheDocument();
-    expect(screen.queryByText(/front-left origin/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/back-right corner of the deck/)).toBeInTheDocument();
+    expect(screen.queryByText(/front-left corner of the deck/)).not.toBeInTheDocument();
   });
 });
