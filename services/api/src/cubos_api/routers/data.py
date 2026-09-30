@@ -13,8 +13,7 @@ from cubos.data import (
     DataSchemaError,
     MeasurementDataError,
     MeasurementExportNotFoundError,
-    export_campaign_asmi_zip as cubos_export_campaign_asmi_zip,
-    export_campaign_measurements_zip as cubos_export_campaign_measurements_zip,
+    export_campaign_data_zip as cubos_export_campaign_data_zip,
     list_campaign_summaries,
 )
 from fastapi import APIRouter, HTTPException, Response
@@ -51,36 +50,16 @@ def list_campaigns() -> list[CampaignSummary]:
     return [CampaignSummary(**asdict(summary)) for summary in summaries]
 
 
-@router.get("/campaigns/{campaign_id}/measurements.zip")
-def export_campaign_measurements_zip(campaign_id: int) -> Response:
-    """Export non-empty instrument measurement tables for a campaign as CSV."""
+@router.get("/campaigns/{campaign_id}/data.zip")
+def export_campaign_data_zip(campaign_id: int) -> Response:
+    """Download a campaign's measurements as analysis-ready CSVs."""
     try:
-        content = cubos_export_campaign_measurements_zip(
-            _data_db_path(),
-            campaign_id,
-        )
+        content = cubos_export_campaign_data_zip(_data_db_path(), campaign_id)
     except DataExportError as exc:
         raise _data_http_exception(exc) from exc
     except DatabaseError as exc:
         raise _unreadable_database_exception(exc) from exc
-    filename = f"campaign_{campaign_id}_measurements.zip"
-    return Response(
-        content=content,
-        media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/campaigns/{campaign_id}/asmi.zip")
-def export_campaign_asmi_zip(campaign_id: int) -> Response:
-    """Export a campaign's ASMI measurements as raw CSV files plus metadata."""
-    try:
-        content = cubos_export_campaign_asmi_zip(_data_db_path(), campaign_id)
-    except DataExportError as exc:
-        raise _data_http_exception(exc) from exc
-    except DatabaseError as exc:
-        raise _unreadable_database_exception(exc) from exc
-    filename = f"campaign_{campaign_id}_asmi_raw_csvs.zip"
+    filename = f"campaign_{campaign_id}_data.zip"
     return Response(
         content=content,
         media_type="application/zip",

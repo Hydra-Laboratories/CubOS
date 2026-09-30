@@ -28,6 +28,7 @@ imported, params/results built, and :attr:`offline` runs performed without it.
 
 from __future__ import annotations
 
+import math
 import random
 import tempfile
 from datetime import datetime, timezone
@@ -202,12 +203,11 @@ class EmstatPotentiostat(PotentiostatInstrument):
         )
 
     def run_CV(self, params: CVParams) -> CVResult:
+        step_size_v = _validate_cv_params(params)
         if self._offline:
             return simulate_CV(
                 params, self._offline_rng, self.vendor, self._offline_metadata()
             )
-
-        step_size_v = params.scan_rate_V_per_s * params.sampling_interval_s
 
         def build_CV(hp: Any, stem: str) -> Any:
             return hp.potentiostat.CV(
@@ -217,7 +217,9 @@ class EmstatPotentiostat(PotentiostatInstrument):
                 Efin=params.end_V,
                 sr=params.scan_rate_V_per_s,
                 dE=step_size_v,
-                nSweeps=params.cycles,
+                # hardpotato's EmStat script emits nscans(nSweeps - 1), while
+                # MethodSCRIPT defines nscans as the number of full cycles.
+                nSweeps=params.cycles + 1,
                 fileName=stem,
                 header="CV",
             )
@@ -341,6 +343,60 @@ def _column(curves: list[Any], column: int) -> tuple[float, ...]:
         raise PotentiostatCommandError(
             f"Unexpected EmStat data package shape (column {column}): {exc}"
         ) from exc
+
+
+def _validate_cv_params(params: CVParams) -> float:
+    """Validate CV settings against hardpotato's millivolt quantization.
+
+    The EmStat MethodSCRIPT generator truncates voltage and rate settings to
+    integer millivolts/millivolts-per-second.  It also ignores ``Efin`` and
+    uses ``nSweeps - 1`` for the script's full-cycle count.
+    """
+    values = {
+        "start_V": params.start_V,
+        "vertex1_V": params.vertex1_V,
+        "vertex2_V": params.vertex2_V,
+        "end_V": params.end_V,
+        "scan_rate_V_per_s": params.scan_rate_V_per_s,
+        "sampling_interval_s": params.sampling_interval_s,
+    }
+    for name, value in values.items():
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise PotentiostatConfigError(f"{name} must be finite, got {value}")
+    if not isinstance(params.cycles, int) or isinstance(params.cycles, bool):
+        raise PotentiostatConfigError(
+            f"cycles must be an integer in [1, 9999], got {params.cycles!r}"
+        )
+    if not 1 <= params.cycles <= 9999:
+        raise PotentiostatConfigError(
+            f"cycles must be an integer in [1, 9999], got {params.cycles}"
+        )
+    if params.end_V != params.start_V:
+        raise PotentiostatConfigError(
+            "EmStat CV requires end_V == start_V; hardpotato ignores Efin"
+        )
+
+    step_size_v = params.scan_rate_V_per_s * params.sampling_interval_s
+    if not math.isfinite(step_size_v) or step_size_v < 0.001:
+        raise PotentiostatConfigError(
+            "CV step size must be at least 0.001 V for EmStat millivolt output; "
+            f"got {step_size_v} V"
+        )
+    if params.scan_rate_V_per_s < 0.001:
+        raise PotentiostatConfigError(
+            "scan_rate_V_per_s must be at least 0.001 V/s for EmStat "
+            f"millivolt-per-second output; got {params.scan_rate_V_per_s}"
+        )
+    if int(params.vertex1_V * 1000) == int(params.vertex2_V * 1000):
+        raise PotentiostatConfigError(
+            "vertex1_V and vertex2_V must differ after EmStat millivolt "
+            "quantization"
+        )
+    return step_size_v
 
 
 def _load_hardpotato() -> Any:

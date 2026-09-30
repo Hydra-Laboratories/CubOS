@@ -121,6 +121,7 @@ Commands available in YAML:
 - `home`
 - `move`
 - `measure`
+- `rinse`
 - `scan`
 - `pause`
 - `breakpoint`
@@ -146,6 +147,24 @@ Commands available in YAML:
 Home the gantry without rewriting the calibrated work-coordinate system —
 whichever `origin_policy` the gantry YAML selects (see [Gantry: Origin
 Policy](gantry.md#origin-policy)). No arguments.
+
+### `rinse`
+
+Dip a potentiostat probe into an uncapped vial three times, withdrawing to
+`safe_z` after each dip.
+
+- `instrument` *(str, required)* — mounted potentiostat name.
+- `vial` *(str, required)* — vial path, including holder or grid positions.
+- `measurement_height` *(float, required)* — negative offset in mm below the
+  calibrated vial rim; choose a depth that reaches the liquid and clears the bottom.
+
+```yaml
+protocol:
+  - rinse:
+      instrument: potentiostat
+      vial: vial_holder.vial_1
+      measurement_height: -5
+```
 
 ### `move`
 
@@ -312,6 +331,11 @@ applied and a rerun never re-applies committed liquid.
   (`reconciliation_required`, or never registered). Explicit opt-in only —
   never runs `decap` itself; a target with no durable cap state at all is
   not constrained by this check.
+
+Every `transfer` runs the pipette's calibrated blow-out motion once, right
+after the final stroke's dispense, to clear any fluid left in the tip. Does
+not change the tracked dispense volume; a blow-out failure is treated the
+same as a dispense failure.
 
 #### `serial_transfer`
 

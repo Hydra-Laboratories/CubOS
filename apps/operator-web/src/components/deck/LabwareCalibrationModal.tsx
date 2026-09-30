@@ -21,6 +21,7 @@ interface Props {
   gantry: GantryResponse | null;
   position: GantryPosition | null;
   onSaveDeck: (filename: string, config: DeckConfig) => Promise<void>;
+  initialMode?: "new" | "calibrate";
 }
 
 // Deck coordinates are the zero-offset instrument frame: the engine resolves
@@ -120,6 +121,8 @@ const LABWARE_TEMPLATES: Record<string, LabwareTemplate[]> = {
 };
 
 const STEP_LABELS = ["Select labware", "Adjust positions", "Review & save"];
+const NEW_STEP_LABELS = ["Define labware", "Adjust positions", "Review & save"];
+const RESERVED_LABWARE_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 export default function LabwareCalibrationModal({
   open,
@@ -128,11 +131,17 @@ export default function LabwareCalibrationModal({
   gantry,
   position,
   onSaveDeck,
+  initialMode = "calibrate",
 }: Props) {
+  const [mode, setMode] = useState<"new" | "calibrate">(initialMode);
   const [step, setStep] = useState(0);
   const [labwareType, setLabwareType] = useState("");
   const [labwareChoice, setLabwareChoice] = useState("");
   const [labwareName, setLabwareName] = useState("");
+  const [customRows, setCustomRows] = useState("");
+  const [customColumns, setCustomColumns] = useState("");
+  const [customXOffset, setCustomXOffset] = useState("");
+  const [customYOffset, setCustomYOffset] = useState("");
   const [referenceInstrument, setReferenceInstrument] = useState("");
   const [withTip, setWithTip] = useState(false);
   const [tipLength, setTipLength] = useState("");
@@ -168,12 +177,38 @@ export default function LabwareCalibrationModal({
     : null;
   const trimmedName = labwareName.trim();
   const newKey = labwareKeyFromName(trimmedName);
-  const keyCollision = !!selectedTemplate && !!newKey && labwareEntries.some((item) => item.key === newKey);
+  const reservedName = RESERVED_LABWARE_KEYS.has(trimmedName.toLowerCase()) || RESERVED_LABWARE_KEYS.has(newKey);
+  const keyCollision = !!newKey && (
+    reservedName ||
+    labwareEntries.some((item) => labwareKeyFromName(item.key) === newKey)
+  );
+  const parsedCustomRows = Number(customRows);
+  const parsedCustomColumns = Number(customColumns);
+  const parsedCustomXOffset = Number(customXOffset);
+  const parsedCustomYOffset = Number(customYOffset);
+  const customGeometryValid = mode === "new" &&
+    trimmedName.length > 0 && !!newKey && !keyCollision &&
+    isPositiveInteger(parsedCustomRows) && isPositiveInteger(parsedCustomColumns) &&
+    isPositiveFinite(parsedCustomXOffset) && isPositiveFinite(parsedCustomYOffset);
+  const customConfig = useMemo<LabwareConfig | null>(() => mode === "new" && customGeometryValid
+    ? {
+      type: "well_plate",
+      name: trimmedName,
+      model_name: "",
+      rows: parsedCustomRows,
+      columns: parsedCustomColumns,
+      calibration: { a1: null, a2: null as unknown as Coordinate3D },
+      x_offset: parsedCustomXOffset,
+      y_offset: parsedCustomYOffset,
+    }
+    : null,
+  [customGeometryValid, mode, parsedCustomColumns, parsedCustomRows, parsedCustomXOffset, parsedCustomYOffset, trimmedName]);
   const activeConfig: LabwareConfig | null = useMemo(() => {
+    if (mode === "new") return customConfig;
     if (selectedItem) return selectedItem.config;
     if (!selectedTemplate) return null;
     return { ...selectedTemplate.config, name: trimmedName || selectedTemplate.label } as unknown as LabwareConfig;
-  }, [selectedItem, selectedTemplate, trimmedName]);
+  }, [customConfig, mode, selectedItem, selectedTemplate, trimmedName]);
   const selectedLabel = selectedItem?.key ?? (selectedTemplate ? `new ${selectedTemplate.label}` : null);
 
   const instruments = useMemo(
@@ -238,9 +273,14 @@ export default function LabwareCalibrationModal({
     previousOpen.current = open;
     if (!open || wasOpen) return;
     setStep(0);
+    setMode(initialMode);
     setLabwareType("");
     setLabwareChoice("");
     setLabwareName("");
+    setCustomRows("");
+    setCustomColumns("");
+    setCustomXOffset("");
+    setCustomYOffset("");
     setReferenceInstrument("");
     setWithTip(false);
     setTipLength("");
@@ -248,7 +288,12 @@ export default function LabwareCalibrationModal({
     setBusy(false);
     setError(null);
     setStatusNote(null);
-  }, [open]);
+  }, [initialMode, open]);
+
+  useEffect(() => {
+    if (mode !== "new") return;
+    setCaptured({});
+  }, [customRows, customColumns, customXOffset, customYOffset, mode]);
 
   useEffect(() => {
     if (!open) return;
@@ -321,7 +366,11 @@ export default function LabwareCalibrationModal({
 
   const beginAdjust = () => {
     if (!activeConfig) {
-      setError("Select the labware to calibrate first.");
+      setError(mode === "new" ? "Complete the labware definition first." : "Select the labware to calibrate first.");
+      return;
+    }
+    if (mode === "new" && !customGeometryValid) {
+      setError("Enter a name, positive integer rows and columns, and positive finite X/Y well spacing in mm.");
       return;
     }
     if (selectedTemplate) {
@@ -460,13 +509,29 @@ export default function LabwareCalibrationModal({
     try {
       const labware: Record<string, LabwareConfig> = {};
       for (const item of deck.labware) {
-        labware[item.key] = item.config;
+        Object.defineProperty(labware, item.key, {
+          value: item.config,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
       }
       const targetKey = selectedItem ? selectedItem.key : newKey;
+      if (!targetKey || RESERVED_LABWARE_KEYS.has(targetKey)) {
+        throw new Error("Choose a labware name that does not normalize to a reserved key.");
+      }
       const base = selectedItem && trimmedName
         ? ({ ...(selectedItem.config as unknown as Record<string, unknown>), name: trimmedName } as unknown as LabwareConfig)
         : activeConfig;
-      labware[targetKey] = buildUpdatedLabware(base, targets, resolveTarget);
+      if (!selectedItem && Object.keys(labware).some((key) => labwareKeyFromName(key) === targetKey)) {
+        throw new Error(`"${trimmedName}" conflicts with existing labware on this deck.`);
+      }
+      Object.defineProperty(labware, targetKey, {
+        value: buildUpdatedLabware(base, targets, resolveTarget),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
       await onSaveDeck(deck.filename, { labware });
       onClose();
     } catch (err) {
@@ -503,7 +568,7 @@ export default function LabwareCalibrationModal({
       <div style={modalStyle}>
         <div style={headerStyle}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 18, color: theme.color.ink, letterSpacing: "-0.01em" }}>Calibrate labware</h2>
+            <h2 style={{ margin: 0, fontSize: 18, color: theme.color.ink, letterSpacing: "-0.01em" }}>{mode === "new" ? "Create custom labware" : "Calibrate labware"}</h2>
             <div style={{ marginTop: 3, fontSize: 12, color: theme.color.textMuted }}>
               {deck?.filename ?? "No deck loaded"}
               {selectedLabel ? ` · ${selectedLabel}` : ""}
@@ -516,7 +581,7 @@ export default function LabwareCalibrationModal({
 
         <div style={bodyStyle}>
           <aside style={stepsStyle}>
-            {STEP_LABELS.map((label, index) => (
+            {(mode === "new" ? NEW_STEP_LABELS : STEP_LABELS).map((label, index) => (
               <div
                 key={label}
                 style={index === step ? activeStepStyle : index < step ? completedStepStyle : stepItemStyle}
@@ -534,16 +599,41 @@ export default function LabwareCalibrationModal({
 
             {step === 0 && (
               <div>
-                <h3 style={sectionTitleStyle}>Select Labware</h3>
+                <h3 style={sectionTitleStyle}>{mode === "new" ? "Define labware" : "Select Labware"}</h3>
                 <p style={instructionStyle}>
-                  Pick the labware to calibrate, then choose which instrument you will
-                  position over it. Recorded positions are converted into the deck frame
-                  using that instrument&apos;s configured offsets.
+                  {mode === "new"
+                    ? "Define your labware’s layout, then calibrate its position. It will be saved in the current deck configuration."
+                    : <>Pick the labware to calibrate, then choose which instrument you will position over it. Recorded positions are converted into the deck frame using that instrument&apos;s configured offsets.</>}
                 </p>
-                {labwareEntries.length === 0 && (
+                {mode !== "new" && labwareEntries.length === 0 && (
                   <div style={noteStyle}>No labware on this deck yet - pick a type and add one from a template below.</div>
                 )}
                 <div style={fieldRowStyle}>
+                  {mode === "new" ? (
+                    <>
+                      <label style={fieldStyle}>
+                        <span style={labelStyle}>Labware name</span>
+                        <input value={labwareName} onChange={(event) => { setLabwareName(event.target.value); setCaptured({}); }} disabled={busy} placeholder="e.g. custom_plate" style={{ ...inputStyle, borderColor: keyCollision ? theme.color.danger : theme.color.borderStrong }} />
+                      </label>
+                      <label style={fieldStyle}>
+                        <span style={labelStyle}>Rows</span>
+                        <input value={customRows} onChange={(event) => setCustomRows(event.target.value)} disabled={busy} inputMode="numeric" style={{ ...inputStyle, borderColor: customRows && !isPositiveInteger(parsedCustomRows) ? theme.color.danger : theme.color.borderStrong }} />
+                      </label>
+                      <label style={fieldStyle}>
+                        <span style={labelStyle}>Columns</span>
+                        <input value={customColumns} onChange={(event) => setCustomColumns(event.target.value)} disabled={busy} inputMode="numeric" style={{ ...inputStyle, borderColor: customColumns && !isPositiveInteger(parsedCustomColumns) ? theme.color.danger : theme.color.borderStrong }} />
+                      </label>
+                      <label style={fieldStyle}>
+                        <span style={labelStyle}>Well spacing X (mm)</span>
+                        <input value={customXOffset} onChange={(event) => setCustomXOffset(event.target.value)} disabled={busy} inputMode="decimal" style={{ ...inputStyle, borderColor: customXOffset && !isPositiveFinite(parsedCustomXOffset) ? theme.color.danger : theme.color.borderStrong }} />
+                      </label>
+                      <label style={fieldStyle}>
+                        <span style={labelStyle}>Well spacing Y (mm)</span>
+                        <input value={customYOffset} onChange={(event) => setCustomYOffset(event.target.value)} disabled={busy} inputMode="decimal" style={{ ...inputStyle, borderColor: customYOffset && !isPositiveFinite(parsedCustomYOffset) ? theme.color.danger : theme.color.borderStrong }} />
+                      </label>
+                    </>
+                  ) : null}
+                  {mode !== "new" && <>
                   <label style={fieldStyle}>
                     <span style={labelStyle}>Labware type</span>
                     <select
@@ -617,7 +707,29 @@ export default function LabwareCalibrationModal({
                       </select>
                     </label>
                   )}
+                  </>}
+                  {mode === "new" && isMulti && (
+                    <label style={fieldStyle}>
+                      <span style={labelStyle}>Reference instrument</span>
+                      <select
+                        value={selectedInstrumentName}
+                        onChange={(event) => setReferenceInstrument(event.target.value)}
+                        disabled={busy}
+                        style={inputStyle}
+                      >
+                        {instruments.map(([name, config]) => (
+                          <option key={name} value={name}>{name} ({config.type})</option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                 </div>
+                {mode === "new" && <p style={instructionStyle}>
+                  Enter center-to-center spacing from the plate specification or your measurements.
+                  Calibration records the position and orientation; it does not measure both spacings.
+                  Rows and columns must be positive whole numbers.
+                </p>}
+                {mode === "new" && keyCollision && <div style={errorStyle}>That name conflicts with existing labware or a reserved key.</div>}
                 {isPipette && (
                   <div style={tipBoxStyle}>
                     <label style={checkboxRowStyle}>
@@ -746,8 +858,8 @@ export default function LabwareCalibrationModal({
                       >
                         Record {nextTarget.label}
                       </button>
-                      {nextTarget.stored && (
-                        <button onClick={() => keepStored(nextTarget)} disabled={busy} style={secondaryButtonStyle}>
+                      {(nextTarget.stored || mode === "new") && (
+                        <button onClick={() => keepStored(nextTarget)} disabled={busy || !nextTarget.stored} style={secondaryButtonStyle}>
                           Keep saved value
                         </button>
                       )}
@@ -859,7 +971,7 @@ function targetsForLabware(config: LabwareConfig): Target[] {
       {
         id: "a2",
         label: "A2",
-        hint: `Jog toward the adjacent ${noun} A2 along its row/column. A2 only sets the labware's orientation: it is saved exactly one pitch from A1 in the direction you jogged.`,
+        hint: `Jog toward the adjacent ${noun} A2 along its row/column. A2 only sets the labware's orientation: it is saved exactly one pitch from A1 in the direction you jogged. ${config.type === "well_plate" && config.columns === 1 ? "This plate has only one column. Use a reference in the direction a second column would occupy; no extra well is added." : ""}`,
         stored: pointFrom(calibration.a2),
       },
     ];
@@ -1040,6 +1152,14 @@ function requireWorkPosition(position: GantryPosition): Coordinate3D {
 function parsePositiveStep(value: string): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function isPositiveInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value > 0;
+}
+
+function isPositiveFinite(value: number): boolean {
+  return Number.isFinite(value) && value > 0;
 }
 
 function roundMm(value: number): number {

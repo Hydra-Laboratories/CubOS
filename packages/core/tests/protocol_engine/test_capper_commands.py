@@ -457,3 +457,6 @@ class _FakePipette:
 
     def dispense(self, volume_ul, speed=50.0):
         return type("R", (), {"success": True, "volume_ul": volume_ul})()
+
+    def blowout(self, speed=50.0):
+        return type("R", (), {"success": True})()

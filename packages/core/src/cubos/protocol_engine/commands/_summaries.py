@@ -171,6 +171,13 @@ def rinse_well(args: Dict[str, Any]) -> str:
     )
 
 
+def rinse(args: Dict[str, Any]) -> str:
+    return _join(
+        f"{args['instrument']} @ {args['vial']}",
+        f"3 dips ({args['measurement_height']:g} mm)",
+    )
+
+
 def flush_pipette(args: Dict[str, Any]) -> str:
     return _join(
         _volume(args["volume_ul"]),

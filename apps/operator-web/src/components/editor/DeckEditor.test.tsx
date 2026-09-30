@@ -91,20 +91,16 @@ describe("DeckEditor", () => {
     expect(banner).toHaveTextContent(/save this deck/i);
   });
 
-  it("adds and removes labware", async () => {
+  it("replaces legacy shortcuts and removes existing labware", async () => {
     const user = userEvent.setup();
-    const props = renderDeck({ deck: { filename: "deck.yaml", labware: [] } });
-
-    await user.click(screen.getByRole("button", { name: "+ Well Plate" }));
-    await user.click(screen.getByRole("button", { name: "+ Vial" }));
-    expect(props.onLocalChange).toHaveBeenCalled();
-    expect(screen.getByText("wellplate_1")).toBeInTheDocument();
-    expect(screen.getByText("vial_2")).toBeInTheDocument();
-
-    // First Remove button belongs to the first card (wellplate_1).
+    const props = renderDeck();
+    expect(screen.queryByRole("button", { name: "+ Well Plate" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Vial" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New Labware" })).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
-    expect(screen.queryByText("wellplate_1")).not.toBeInTheDocument();
-    expect(screen.getByText("vial_2")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Plate A")).not.toBeInTheDocument();
+    expect(screen.getByDisplayValue("Vial A")).toBeInTheDocument();
+    expect(props.onLocalChange).toHaveBeenCalled();
   });
 
   it("saves the deck and disables Save when a required name is blank", async () => {
@@ -119,26 +115,6 @@ describe("DeckEditor", () => {
 
     await user.clear(screen.getByDisplayValue("Plate A"));
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  });
-
-  it("saves a newly added well plate without the legacy a1 key", async () => {
-    const user = userEvent.setup();
-    const props = renderDeck({ deck: { filename: "deck.yaml", labware: [] }, selectedFile: null });
-
-    await user.click(screen.getByRole("button", { name: "+ Well Plate" }));
-    await user.type(screen.getByPlaceholderText("my_deck.yaml"), "new_deck");
-    await user.click(screen.getByRole("button", { name: "Save" }));
-
-    expect(props.onSave).toHaveBeenCalledTimes(1);
-    const [filename, body] = vi.mocked(props.onSave).mock.calls[0];
-    expect(filename).toBe("new_deck.yaml");
-    const plate = body.labware.wellplate_1;
-    expect(plate).toBeDefined();
-    // The backend schema uses extra="forbid"; a stray top-level `a1`
-    // (legacy calibration format) makes the save 400.
-    expect(plate).not.toHaveProperty("a1");
-    expect(plate.calibration.a1).toEqual({ x: 100, y: 50, z: 20 });
-    expect(plate.calibration.a2).toEqual({ x: 91, y: 50, z: 20 });
   });
 
   it("edits well-plate and vial detail fields", async () => {
@@ -185,36 +161,34 @@ describe("DeckEditor", () => {
     expect(screen.getByText("vial_holder")).toBeInTheDocument();
   });
 
-  it("does not reuse a labware key after removing an earlier item", async () => {
+  it("opens custom creation without adding a placeholder and cancels cleanly", async () => {
     const user = userEvent.setup();
-    renderDeck({ deck: { filename: "deck.yaml", labware: [] } });
+    const props = renderDeck({ gantry: gantryFixture() });
+    await user.click(screen.getByRole("button", { name: "New Labware" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByLabelText("Labware name")).toBeInTheDocument();
+    expect(props.onSave).not.toHaveBeenCalled();
+    expect(props.onLocalChange).not.toHaveBeenCalled();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(props.onSave).not.toHaveBeenCalled();
+    expect(props.onLocalChange).not.toHaveBeenCalled();
+  });
 
-    await user.click(screen.getByRole("button", { name: "+ Well Plate" })); // wellplate_1
-    await user.click(screen.getByRole("button", { name: "+ Well Plate" })); // wellplate_2
-    expect(screen.getByText("wellplate_1")).toBeInTheDocument();
-    expect(screen.getByText("wellplate_2")).toBeInTheDocument();
-
-    // Distinguish wellplate_2 so we can tell if it survives.
-    const nameFields = screen.getAllByLabelText(/^Component ID/);
-    await user.clear(nameFields[1]);
-    await user.type(nameFields[1], "Calibrated Plate");
-
-    // Remove the first item, then add a new one — with the old
-    // `count + 1` logic this collides with wellplate_2 and wipes it out.
-    await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
-    expect(screen.queryByText("wellplate_1")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "+ Well Plate" }));
-
-    expect(screen.getByText("wellplate_2")).toBeInTheDocument();
-    expect(screen.getByText("wellplate_3")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Calibrated Plate")).toBeInTheDocument();
+  it.each([
+    { gantry: null },
+    { gantry: gantryFixture(), deck: null },
+    { gantry: gantryFixture(), isRunning: true },
+  ])("disables custom creation without prerequisites or during a run: %j", (overrides) => {
+    renderDeck(overrides);
+    expect(screen.getByRole("button", { name: "New Labware" })).toBeDisabled();
   });
 
   it("always renders the action bar and disables Save with a hint when there are no items", () => {
     renderDeck({ deck: { filename: "deck.yaml", labware: [] } });
 
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByText(/Add at least one well plate or vial/i)).toBeInTheDocument();
+    expect(screen.getByText(/Add.*labware|New Labware/i)).toBeInTheDocument();
   });
 
   it("shows a save-failed banner and clears it on the next edit or successful save", async () => {

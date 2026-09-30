@@ -136,4 +136,4 @@ diff-cover coverage.xml --compare-branch=origin/main --fail-under=90
 
 ## When to Update This File
 
-Update `AGENTS.md` only when agent retrieval, hardware-safety workflow, or source-of-truth pointers change. Update `README.md` / docs only when public CLI/workflow, YAML schema/config, coordinate/motion/calibration semantics, protocol behavior, or cross-repo interfaces change.
+Update `AGENTS.md` only when agent retrieval, hardware-safety workflow, or source-of-truth pointers change. Update `README.md` / docs only when public CLI/workflow, YAML schema/config, coordinate/motion/calibration semantics, protocol behavior, or cross-repo interfaces change. Adding, removing, or renaming a public config/catalog choice (such as an instrument model or labware definition) is a public config change even when the schema is unchanged; update docs and examples that enumerate those choices.

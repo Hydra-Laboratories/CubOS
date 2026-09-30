@@ -183,6 +183,7 @@ export interface InstrumentConfig {
   offset_x: number;
   offset_y: number;
   depth?: number;
+  offline?: boolean;
   [key: string]: unknown;
 }
 

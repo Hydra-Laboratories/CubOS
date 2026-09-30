@@ -4,7 +4,7 @@ Importing this package triggers all @protocol_command decorators,
 populating the CommandRegistry.
 """
 
-from . import camera, capper, cure, home, lights, measure, move, pause, pipette, scan  # noqa: F401 -- side-effect imports for registration
+from . import camera, capper, cure, home, lights, measure, move, pause, pipette, rinse, scan  # noqa: F401 -- side-effect imports for registration
 
 __all__ = [
     "camera",
@@ -16,5 +16,6 @@ __all__ = [
     "move",
     "pause",
     "pipette",
+    "rinse",
     "scan",
 ]

@@ -348,8 +348,58 @@ class TestRunCVOnline:
         assert sent["Efin"] == -0.2
         assert sent["sr"] == 0.1
         assert sent["dE"] == pytest.approx(0.001)
-        assert sent["nSweeps"] == 3
+        # hardpotato emits nscans(nSweeps - 1); pass one extra so the device
+        # performs the requested three full cycles.
+        assert sent["nSweeps"] == 4
         assert result.step_size_v == pytest.approx(0.001)
+
+    @pytest.mark.parametrize(
+        "params, message",
+        [
+            (
+                dict(start_V=0.0, vertex1_V=0.5, vertex2_V=-0.5, end_V=0.0,
+                     scan_rate_V_per_s=0.05, sampling_interval_s=0.01),
+                "step size",
+            ),
+            (
+                dict(start_V=0.0, vertex1_V=0.5, vertex2_V=-0.5, end_V=0.0,
+                     scan_rate_V_per_s=0.0005, sampling_interval_s=2.0),
+                "scan_rate",
+            ),
+            (
+                dict(start_V=0.0, vertex1_V=0.5, vertex2_V=-0.5, end_V=0.1,
+                     scan_rate_V_per_s=0.1, sampling_interval_s=0.01),
+                "end_V",
+            ),
+            (
+                dict(start_V=0.0, vertex1_V=0.5004, vertex2_V=0.5008, end_V=0.0,
+                     scan_rate_V_per_s=0.1, sampling_interval_s=0.01),
+                "quantization",
+            ),
+        ],
+    )
+    def test_rejects_emstat_incompatible_settings_before_run(self, params, message):
+        kwargs_log: list[dict] = []
+        hp = _fake_hp(cv_data=_curves((0.0, 0.0, 1e-6)), kwargs_log=kwargs_log)
+        p = _connected_driver(hp)
+        with pytest.raises(PotentiostatConfigError, match=message):
+            p.run_CV(CVParams(**params))
+        assert kwargs_log == []
+
+    @pytest.mark.parametrize("cycles", [10000, 1.5, True])
+    def test_rejects_invalid_cycle_count_before_run(self, cycles):
+        kwargs_log: list[dict] = []
+        hp = _fake_hp(cv_data=_curves((0.0, 0.0, 1e-6)), kwargs_log=kwargs_log)
+        p = _connected_driver(hp)
+        with pytest.raises(PotentiostatConfigError, match="cycles"):
+            p.run_CV(
+                CVParams(
+                    start_V=0.0, vertex1_V=0.5, vertex2_V=-0.5, end_V=0.0,
+                    scan_rate_V_per_s=0.1, cycles=cycles,
+                    sampling_interval_s=0.01,
+                )
+            )
+        assert kwargs_log == []
 
 
 class TestRunCAOnline:

@@ -23,7 +23,7 @@ Use this guide when labware is moved, recalibrated, or replaced.
 
     Use CubOS, UGS, or another G-code controller to jog the instrument to the
     physical points that define the labware position. The easiest way is the
-    [Operator UI](operator-ui.md#define-deck-positions-with-the-gantry),
+    [Operator UI](operator-ui/deck-and-labware.md#calibrate-labware-with-the-gantry),
     which shows the live position while you jog and lets you type it
     straight into the deck editor instead of editing YAML.
 

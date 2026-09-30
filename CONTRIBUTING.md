@@ -14,8 +14,12 @@ For installation, local setup, and project orientation, start with
   change.
 - Explain the problem, the approach, and any user-facing behavior changes.
 - Add or update tests for the behavior you changed.
-- Keep documentation in sync when you change public CLI behavior, YAML schema,
-  protocol semantics, hardware setup, calibration, or cross-repo interfaces.
+- Keep documentation in sync when you change public CLI behavior, YAML schema
+  or configuration choices, protocol semantics, hardware setup, calibration,
+  or cross-repo interfaces. Adding, removing, or renaming a public catalog
+  choice (for example, an instrument model or labware definition) counts as a
+  configuration change even when the YAML schema is unchanged; update any
+  docs or examples that enumerate the available choices.
 - Do not include unrelated formatting, generated files, or cleanup in the same
   PR unless the PR is specifically for that work.
 
@@ -192,5 +196,6 @@ for hardware-facing PRs, and use the relevant parts for all other PRs:
 ## Abstractions
 - [ ] Instrument/vendor boundaries are preserved
 - [ ] Optional vendor dependencies remain optional
-- [ ] Public docs/config examples were updated, if needed
+- [ ] Public docs/config examples reflect every added, removed, or renamed
+      config/catalog choice (including changes that do not alter the schema)
 ```

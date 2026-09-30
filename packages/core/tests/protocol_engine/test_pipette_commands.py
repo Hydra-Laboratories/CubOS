@@ -841,6 +841,24 @@ class TestTransferCommand:
         pip.aspirate.assert_called_once_with(100.0, 50.0)
         pip.dispense.assert_called_once_with(100.0, 50.0)
 
+    def test_transfer_always_blows_out_with_speed_after_dispense(self):
+        from cubos.protocol_engine.commands.pipette import transfer
+
+        ctx = _mock_context_multi_resolve()
+        pip = ctx.gantry.instruments["pipette"]
+        call_order = []
+        pip.aspirate.side_effect = lambda *a: call_order.append("aspirate")
+        pip.dispense.side_effect = lambda *a: call_order.append("dispense")
+        pip.blowout.side_effect = lambda *a: call_order.append("blowout")
+
+        transfer(
+            ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0,
+            speed=40.0,
+        )
+
+        pip.blowout.assert_called_once_with(40.0)
+        assert call_order == ["aspirate", "dispense", "blowout"]
+
     def test_tracked_transfer_journals_before_liquid_and_commits_after_dispense(self):
         from cubos.protocol_engine.commands.pipette import transfer
 
