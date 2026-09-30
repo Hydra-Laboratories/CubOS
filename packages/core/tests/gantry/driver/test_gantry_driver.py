@@ -1013,6 +1013,21 @@ class TestCNCDriverLogic(unittest.TestCase):
 
         self.assertEqual(mill.current_status(), "<Idle|WPos:0,0,0|FS:0,0>")
         self.assertEqual(mill.ser_mill.writes, [b"?"])
+        self.assertEqual(mill.cached_coordinates(), Coordinates(0.0, 0.0, 0.0))
+
+    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
+    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
+    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
+    def test_current_status_caches_observed_coordinates_for_readers(
+        self, mock_cmd_logger, mock_mill_logger, mock_serial,
+    ):
+        mill = Mill()
+        mill.ser_mill = ScriptedSerial([
+            b"<Run|WPos:12.5,4.0,8.25|FS:0,0>\r\n",
+        ])
+
+        self.assertEqual(mill.current_status(), "<Run|WPos:12.5,4.0,8.25|FS:0,0>")
+        self.assertEqual(mill.cached_coordinates(), Coordinates(12.5, 4.0, 8.25))
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')

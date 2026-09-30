@@ -117,6 +117,10 @@ class Mill:
         self.command_logger = set_up_command_logger(self.logger_location)
         self._wco: Optional[Coordinates] = None
         self.last_status: str = ""
+        # Updated from status frames already read as part of command
+        # execution.  Session position reads can use this while the protocol
+        # owns the serial operation lock without issuing a competing query.
+        self.last_coordinates: Optional[Coordinates] = None
 
     def _locate_over_serial(self, port: Optional[str] = None) -> Tuple[serial.Serial, str]:
         """
@@ -702,7 +706,14 @@ class Mill:
                 self.logger.error("Error in status: %s", status)
                 raise StatusReturnError(f"Error in status: {status}")
         self.last_status = status
+        coordinates = self._parse_position_from_status(status)
+        if coordinates is not None:
+            self.last_coordinates = coordinates
         return status
+
+    def cached_coordinates(self) -> Optional[Coordinates]:
+        """Return the latest coordinates observed in a GRBL status frame."""
+        return self.last_coordinates
 
     def _read_serial(self):
         self._require_open_serial()
@@ -898,6 +909,7 @@ class Mill:
             self.last_status = status
             coords = self._parse_position_from_status(status)
             if coords is not None:
+                self.last_coordinates = coords
                 self.logger.info(
                     "WPos coordinates: X = %s, Y = %s, Z = %s",
                     coords.x, coords.y, coords.z,

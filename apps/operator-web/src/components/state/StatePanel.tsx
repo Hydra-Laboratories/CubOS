@@ -29,8 +29,6 @@ function formatVolume(value: number): string {
 interface ResolveFormState {
   operation: OperationView;
   resolution: string;
-  operator: string;
-  reason: string;
 }
 
 export default function StatePanel() {
@@ -59,23 +57,17 @@ export default function StatePanel() {
 
   const openResolveForm = (operation: OperationView) => {
     setResolveError(null);
-    setResolveForm({ operation, resolution: "applied", operator: "", reason: "" });
+    setResolveForm({ operation, resolution: "applied" });
   };
 
   const submitResolve = async () => {
     if (!resolveForm) return;
-    if (!resolveForm.operator.trim() || !resolveForm.reason.trim()) {
-      setResolveError("Operator and reason are both required.");
-      return;
-    }
     setResolveError(null);
     try {
       await resolveMutation.mutateAsync({
         domain: resolveForm.operation.domain,
         operation_key: resolveForm.operation.operation_key,
         resolution: resolveForm.resolution,
-        operator: resolveForm.operator.trim(),
-        reason: resolveForm.reason.trim(),
       });
       setResolveForm(null);
       reconciliation.refetch();
@@ -168,24 +160,6 @@ export default function StatePanel() {
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-              </label>
-              <label style={fieldRowStyle}>
-                <span style={theme.fieldLabel}>Operator</span>
-                <input
-                  style={theme.input}
-                  value={resolveForm.operator}
-                  onChange={(event) => setResolveForm({ ...resolveForm, operator: event.target.value })}
-                  placeholder="Your name or initials"
-                />
-              </label>
-              <label style={fieldRowStyle}>
-                <span style={theme.fieldLabel}>Reason</span>
-                <textarea
-                  style={{ ...theme.input, minHeight: 60, resize: "vertical" }}
-                  value={resolveForm.reason}
-                  onChange={(event) => setResolveForm({ ...resolveForm, reason: event.target.value })}
-                  placeholder="What did you observe, and why does this resolution match reality?"
-                />
               </label>
               {resolveError && <div style={errorStyle}>{resolveError}</div>}
               <div style={{ display: "flex", gap: 8 }}>

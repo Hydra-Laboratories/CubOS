@@ -175,19 +175,18 @@ class ReconciliationResponse(BaseModel):
 
 
 class ResolveReconciliationRequest(BaseModel):
-    """An auditable operator decision resolving one pending operation.
+    """An auditable decision resolving one pending operation.
 
-    ``operator``/``reason`` are recorded into the journal's existing
-    ``detail`` free-text field (there is no operator-identity column in
-    ``cubos.data`` to persist them separately) — this is the "who/what/why"
-    audit trail Feature 07 exposes over HTTP.
+    When supplied, ``operator``/``reason`` are recorded into the journal's
+    existing ``detail`` free-text field. They remain optional so clients can
+    record the state transition without submitting a note.
     """
 
     domain: StateDomain
     operation_key: str
     resolution: str
-    operator: str
-    reason: str
+    operator: Optional[str] = None
+    reason: Optional[str] = None
     source_volume_ul: Optional[float] = None
     source_composition: Optional[Dict[str, float]] = None
     destination_volume_ul: Optional[float] = None
@@ -197,10 +196,15 @@ class ResolveReconciliationRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> "ResolveReconciliationRequest":
-        if not self.operator.strip():
-            raise ValueError("operator is required")
-        if not self.reason.strip():
-            raise ValueError("reason is required")
+        # New clients may resolve the state transition without submitting an
+        # operator note. Preserve the legacy all-or-nothing validation when a
+        # client supplies either audit field.
+        if self.operator is None and self.reason is None:
+            return self
+        if not self.operator or not self.operator.strip():
+            raise ValueError("operator is required when reason is supplied")
+        if not self.reason or not self.reason.strip():
+            raise ValueError("reason is required when operator is supplied")
         return self
 
 

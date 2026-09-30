@@ -586,8 +586,8 @@ export interface ResolveReconciliationRequest {
   domain: StateDomain;
   operation_key: string;
   resolution: string;
-  operator: string;
-  reason: string;
+  operator?: string;
+  reason?: string;
   source_volume_ul?: number | null;
   source_composition?: Record<string, number> | null;
   destination_volume_ul?: number | null;

@@ -387,6 +387,28 @@ class Gantry:
             "status": status,
         }
 
+    def get_cached_position_info(self) -> Dict[str, Any] | None:
+        """Return the latest controller-observed position without serial I/O.
+
+        Protocol execution holds the session operation lock for the duration
+        of a run.  The API position endpoint must still be able to report
+        movement, so it uses status frames already consumed by the driver
+        instead of querying the serial port concurrently with a command.
+        """
+        if self._offline:
+            coords = dict(self._offline_coords)
+            return {"coords": coords, "work_pos": coords, "status": "Idle"}
+        assert self._mill is not None
+        coordinates = self._mill.cached_coordinates()
+        if coordinates is None:
+            return None
+        coords = {"x": float(coordinates.x), "y": float(coordinates.y), "z": float(coordinates.z)}
+        return {
+            "coords": coords,
+            "work_pos": dict(coords),
+            "status": self._extract_status(),
+        }
+
     def set_serial_timeout(self, timeout: float) -> None:
         """Set the serial read timeout on the active mill connection."""
         if self._offline:

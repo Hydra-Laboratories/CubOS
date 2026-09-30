@@ -327,7 +327,10 @@ def get_reconciliation(fluid_state_id: int) -> ReconciliationResponse:
 def resolve_reconciliation(
     fluid_state_id: int, body: ResolveReconciliationRequest
 ) -> ResolveReconciliationResponse:
-    detail = f"[{body.operator.strip()}] {body.reason.strip()}"
+    if body.operator is None and body.reason is None:
+        detail = f"Reconciled {body.domain} operation as {body.resolution}"
+    else:
+        detail = f"[{body.operator.strip()}] {body.reason.strip()}"
     store = _open_store()
     try:
         try:

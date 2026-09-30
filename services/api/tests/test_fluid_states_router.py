@@ -235,7 +235,35 @@ def test_resolve_reconciliation_records_operator_and_reason(monkeypatch, tmp_pat
     assert reconciliation.json()["items"] == []
 
 
-def test_resolve_reconciliation_requires_operator_and_reason(monkeypatch, tmp_path: Path):
+def test_resolve_reconciliation_without_note_records_state_action(monkeypatch, tmp_path: Path):
+    _write_deck_config(monkeypatch, tmp_path)
+    app = create_app()
+    state_id = api_request(
+        app,
+        "POST",
+        "/api/v1/fluid-states",
+        json={"deck_file": "state-deck.yaml", "fluids": {"source": {"volume_ul": 100.0}}},
+    ).json()["id"]
+    _seed_reconciliation_required(state_id)
+
+    response = api_request(
+        app,
+        "POST",
+        f"/api/v1/fluid-states/{state_id}/reconciliation/resolve",
+        json={
+            "domain": "fluid",
+            "operation_key": "indeterminate",
+            "resolution": "not_applied",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "cancelled"
+    assert body["detail"] == "Reconciled fluid operation as not_applied"
+
+
+def test_resolve_reconciliation_rejects_partial_or_blank_note(monkeypatch, tmp_path: Path):
     _write_deck_config(monkeypatch, tmp_path)
     app = create_app()
     state_id = api_request(
@@ -254,7 +282,6 @@ def test_resolve_reconciliation_requires_operator_and_reason(monkeypatch, tmp_pa
             "domain": "fluid",
             "operation_key": "indeterminate",
             "resolution": "applied",
-            "operator": "  ",
             "reason": "valid reason",
         },
     )
@@ -268,7 +295,6 @@ def test_resolve_reconciliation_requires_operator_and_reason(monkeypatch, tmp_pa
             "domain": "fluid",
             "operation_key": "indeterminate",
             "resolution": "applied",
-            "operator": "alexc",
             "reason": "",
         },
     )

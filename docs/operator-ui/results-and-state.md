@@ -51,8 +51,8 @@ shows the resulting record.
 Further down, **Caps** lists cap state for capper-managed vials, and the
 footer reports any pending operations — steps that were interrupted
 mid-way. When an interrupted operation leaves the physical state uncertain,
-a **Resolution** form appears so an operator can record what they observed
-and reconcile the record. See
+a **Resolution** form appears so an operator can confirm whether the
+operation was applied and reconcile the record. See
 [Fluid State Tracking](../fluid-state.md#interrupted-operations).
 
 ## Visualize the Deck

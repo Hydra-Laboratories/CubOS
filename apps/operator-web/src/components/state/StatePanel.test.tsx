@@ -198,19 +198,6 @@ describe("StatePanel", () => {
     await user.click(screen.getByRole("button", { name: "Resolve" }));
     expect(screen.getByText(/Resolve fluid operation indeterminate/)).toBeInTheDocument();
 
-    // Submitting without operator/reason is blocked client-side.
-    await user.click(screen.getByRole("button", { name: "Submit resolution" }));
-    expect(await screen.findByText(/Operator and reason are both required/)).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalledWith(
-      "/api/v1/fluid-states/1/reconciliation/resolve",
-      expect.anything(),
-    );
-
-    await user.type(screen.getByPlaceholderText("Your name or initials"), "alexc");
-    await user.type(
-      screen.getByPlaceholderText(/What did you observe/),
-      "confirmed via camera review",
-    );
     await user.click(screen.getByRole("button", { name: "Submit resolution" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
@@ -224,9 +211,9 @@ describe("StatePanel", () => {
       domain: "fluid",
       operation_key: "indeterminate",
       resolution: "applied",
-      operator: "alexc",
-      reason: "confirmed via camera review",
     });
+    expect(screen.queryByPlaceholderText("Your name or initials")).not.toBeInTheDocument();
+    expect(screen.queryByPlaceholderText(/What did you observe/)).not.toBeInTheDocument();
   });
 
   it("shows an empty state when no fluid state is selected", async () => {
