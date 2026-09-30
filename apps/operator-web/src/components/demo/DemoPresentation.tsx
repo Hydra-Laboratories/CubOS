@@ -11,7 +11,7 @@ function formatDelta(value?: number | null): string {
 
 function colorStyle(measurement?: DemoColorMeasurement | null): React.CSSProperties {
   const rgb = measurement?.rgb;
-  return rgb ? { backgroundColor: `rgb(${rgb.join(",")})` } : {};
+  return rgb ? { background: `rgb(${rgb.join(",")})` } : {};
 }
 
 function AssetImage({ campaignId, assetId, alt }: { campaignId: string | number; assetId?: string | null; alt: string }) {

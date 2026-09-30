@@ -48,6 +48,7 @@ describe("DemoPresentation", () => {
     expect((await screen.findAllByText("2.40")).length).toBeGreaterThan(0);
     expect(screen.getByText("Selected sRGB")).toBeInTheDocument();
     expect(screen.queryByText("#demo-7")).not.toBeInTheDocument();
+    expect((document.querySelectorAll(".demo-swatch")[1] as HTMLElement).style.backgroundImage).toBe("none");
     expect(screen.getByRole("link", { name: "Export data" })).toHaveAttribute("href", "/api/v1/campaigns/demo-7/presentation/export.zip");
     const best = screen.getByRole("img", { name: "Best so far A4" });
     expect(best.querySelector("image")).toHaveAttribute("href", "/api/v1/campaigns/demo-7/presentation/assets/raw-2");
