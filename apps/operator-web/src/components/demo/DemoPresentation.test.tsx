@@ -88,4 +88,19 @@ describe("DemoPresentation", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     expect(fetchMock.mock.calls.some(([input, init]) => String(input).includes("instrument") || init?.method === "POST")).toBe(false);
   });
+
+  it("makes the document transparent only while the OBS overlay is mounted", async () => {
+    window.history.replaceState(null, "", "/?view=demo&campaign=demo-7&overlay=1");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).endsWith("/campaigns")
+      ? new Response("[]", { status: 200 })
+      : new Response(JSON.stringify(presentation), { status: 200 }));
+    const view = renderDemo();
+    await screen.findByRole("img", { name: "Best so far A4" });
+    expect(document.documentElement).toHaveClass("demo-overlay-active");
+    expect(document.body).toHaveClass("demo-overlay-active");
+    expect(screen.queryByRole("link", { name: "Export data" })).not.toBeInTheDocument();
+    view.unmount();
+    expect(document.documentElement).not.toHaveClass("demo-overlay-active");
+    expect(document.body).not.toHaveClass("demo-overlay-active");
+  });
 });

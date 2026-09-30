@@ -171,6 +171,18 @@ export default function DemoPresentation() {
     refetchInterval: (query) => live && (!query.state.data || query.state.data.status === "running") ? 1000 : false,
   });
 
+  useEffect(() => {
+    if (!overlay) return;
+    document.documentElement.classList.add("demo-overlay-active");
+    document.body.classList.add("demo-overlay-active");
+    document.getElementById("root")?.classList.add("demo-overlay-active");
+    return () => {
+      document.documentElement.classList.remove("demo-overlay-active");
+      document.body.classList.remove("demo-overlay-active");
+      document.getElementById("root")?.classList.remove("demo-overlay-active");
+    };
+  }, [overlay]);
+
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
   const replay = presentation.data
     ? visiblePresentation(presentation.data, live ? Math.max(presentation.data.events.length - 1, 0) : eventIndex)
