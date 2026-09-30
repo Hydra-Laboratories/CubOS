@@ -16,10 +16,12 @@ Every protocol run creates a campaign in the CubOS database, and every
 2. **Campaign row.** One per run, newest first, with the run's description
    and when it last recorded a measurement.
 3. **Measurements.** How many instrument measurements the campaign holds.
-   Motion-only runs show 0 and their export buttons stay disabled.
-4. **Measurements ZIP.** Downloads every measurement in the campaign as
-   CSV files in one archive. **ASMI ZIP** below it exports raw indentation
-   traces for campaigns that have them.
+   Motion-only runs show 0 and their **Download Data** button stays disabled.
+4. **Download Data.** Downloads the campaign's raw data as one ZIP of CSV
+   files that open directly in Excel: each instrument's settings and recorded
+   values, every curve point, the list of wells, and a README explaining each
+   column. Raw ASMI files are in `asmi/raw/`. See
+   [Data](../data.md#download-data-zip) for the layout.
 5. **Refresh.** Re-reads the campaign list.
 
 The **Last Campaign** box in the header shows the number of the campaign

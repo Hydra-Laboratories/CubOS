@@ -11,35 +11,24 @@ interface Props {
   onRefresh: () => void;
 }
 
-type ExportKind = "measurements" | "asmi";
-
-type ExportingState = {
-  campaignId: number;
-  kind: ExportKind;
-};
-
 export default function DataOutputPanel({
   campaigns,
   isLoading,
   error,
   onRefresh,
 }: Props) {
-  const [exporting, setExporting] = useState<ExportingState | null>(null);
+  const [exporting, setExporting] = useState<number | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
 
-  const handleExport = async (campaign: CampaignSummary, kind: ExportKind) => {
-    setExporting({ campaignId: campaign.campaign_id, kind });
+  const handleDownload = async (campaign: CampaignSummary) => {
+    setExporting(campaign.campaign_id);
     setExportError(null);
     try {
-      const blob = kind === "measurements"
-        ? await dataApi.exportCampaignMeasurementsZip(campaign.campaign_id)
-        : await dataApi.exportCampaignAsmiZip(campaign.campaign_id);
+      const blob = await dataApi.downloadCampaignData(campaign.campaign_id);
       const href = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = href;
-      link.download = kind === "measurements"
-        ? `campaign_${campaign.campaign_id}_measurements.zip`
-        : `campaign_${campaign.campaign_id}_asmi_raw_csvs.zip`;
+      link.download = `campaign_${campaign.campaign_id}_data.zip`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -83,13 +72,12 @@ export default function DataOutputPanel({
                 <th style={thStyle}>Experiments</th>
                 <th style={thStyle}>Wells</th>
                 <th style={thStyle}>Measurements</th>
-                <th style={thStyle}>Export</th>
+                <th style={thStyle}>Data</th>
               </tr>
             </thead>
             <tbody>
               {campaigns.map((campaign) => {
-                const measurementsDisabled = campaign.measurement_count === 0 || exporting !== null;
-                const asmiDisabled = campaign.asmi_measurement_count === 0 || exporting !== null;
+                const downloadDisabled = campaign.measurement_count === 0 || exporting !== null;
                 const timestamp = campaign.latest_measurement_at ?? campaign.created_at;
                 return (
                   <tr key={campaign.campaign_id}>
@@ -103,18 +91,11 @@ export default function DataOutputPanel({
                     <td style={tdNumericStyle}>{campaign.measurement_count}</td>
                     <td style={tdStyle}>
                       <button
-                        onClick={() => void handleExport(campaign, "measurements")}
-                        disabled={measurementsDisabled}
+                        onClick={() => void handleDownload(campaign)}
+                        disabled={downloadDisabled}
                         style={primaryButtonStyle}
                       >
-                        {isExporting(exporting, campaign.campaign_id, "measurements") ? "Exporting..." : "Measurements ZIP"}
-                      </button>
-                      <button
-                        onClick={() => void handleExport(campaign, "asmi")}
-                        disabled={asmiDisabled}
-                        style={secondaryExportButtonStyle}
-                      >
-                        {isExporting(exporting, campaign.campaign_id, "asmi") ? "Exporting..." : "ASMI ZIP"}
+                        {exporting === campaign.campaign_id ? "Preparing..." : "Download Data"}
                       </button>
                     </td>
                   </tr>
@@ -126,10 +107,6 @@ export default function DataOutputPanel({
       )}
     </section>
   );
-}
-
-function isExporting(exporting: ExportingState | null, campaignId: number, kind: ExportKind): boolean {
-  return exporting?.campaignId === campaignId && exporting.kind === kind;
 }
 
 function formatTimestamp(value: string): string {
@@ -217,12 +194,6 @@ const errorStyle: CSSProperties = {
 
 const primaryButtonStyle: CSSProperties = {
   ...theme.btn.primary,
-  ...theme.btnSmall,
-  marginRight: 6,
-};
-
-const secondaryExportButtonStyle: CSSProperties = {
-  ...theme.btn.secondary,
   ...theme.btnSmall,
 };
 

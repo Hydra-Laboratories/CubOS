@@ -357,10 +357,8 @@ export const systemApi = {
 export const dataApi = {
   listCampaigns: () =>
     request<import("../types").CampaignSummary[]>("/data/campaigns"),
-  exportCampaignMeasurementsZip: (campaignId: number) =>
-    download(`/data/campaigns/${campaignId}/measurements.zip`),
-  exportCampaignAsmiZip: (campaignId: number) =>
-    download(`/data/campaigns/${campaignId}/asmi.zip`),
+  downloadCampaignData: (campaignId: number) =>
+    download(`/data/campaigns/${campaignId}/data.zip`),
 };
 
 // Manual instrument control (bring-up work, outside protocol runs)
