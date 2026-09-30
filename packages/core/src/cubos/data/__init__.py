@@ -40,6 +40,7 @@ from .fluid_state import (
     FluidStateSummary,
     load_initial_fluids,
     load_replacement_state,
+    reconcile_fluid_container,
 )
 from .fluid_state_reader import FluidStateReader
 from .protocol_runs import create_campaign_for_protocol_run, register_deck_labware
@@ -95,6 +96,7 @@ __all__ = [
     "FluidStateReader",
     "load_initial_fluids",
     "load_replacement_state",
+    "reconcile_fluid_container",
     "create_campaign_for_protocol_run",
     "register_deck_labware",
     "PipetteAttachmentSnapshot",

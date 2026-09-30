@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import math
 import tempfile
 import threading
 import time
@@ -17,7 +18,13 @@ from cubos.data import DataStore
 from cubos.optimization import SearchExhaustedError, suggest
 from cubos.protocol_engine.setup_validator import run_setup_validation
 from cubos_api.config import CubOSSettings, get_settings
-from cubos_api.models.campaigns import CampaignRecord, CampaignSpec, CampaignTrial
+from cubos_api.models.campaigns import (
+    CampaignRecord,
+    CampaignSpec,
+    CampaignTrial,
+    PendingBatch,
+    RefillRequirement,
+)
 from cubos_api.models.runs import RunSubmission
 from cubos_api.models.state import RunStateSelection
 from cubos_api.services.campaign_templates import (
@@ -45,13 +52,14 @@ class CampaignManager:
         self.base.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
         self._records: dict[str, CampaignRecord] = {}
+        self._workers: set[str] = set()
         self._poll = poll_interval
         self._validator = validator or self._validate_setup
         for path in self.base.glob("*/campaign.json"):
             try:
                 record = CampaignRecord.model_validate_json(path.read_text())
                 self._records[record.campaign_id] = record
-                if record.state not in TERMINAL:
+                if record.state not in TERMINAL and record.state != "awaiting_refill":
                     record.state = "interrupted"
                     record.stop_reason = "server_restart"
                     record.error = "Server restarted; inspect the last run and physical state before starting a new campaign."
@@ -243,6 +251,71 @@ class CampaignManager:
         finally:
             store.close()
 
+    def _batch_stock_shortages(
+        self, spec: CampaignSpec, deck_yaml: str, protocol_yaml: str,
+    ) -> list[dict[str, float | str]]:
+        """Check all compiled transfers against the current durable state."""
+        if spec.mock_mode or spec.fluid_state_id is None:
+            return []
+        # This also rejects pending fluid/tip/cap operations before a refill
+        # check can authorize the next batch.
+        self.runs._resolve_run_state(
+            deck_yaml,
+            RunStateSelection(fluid_state_id=spec.fluid_state_id),
+        )
+        document = yaml.safe_load(protocol_yaml)
+        required: dict[str, float] = {}
+        steps = document.get("protocol", []) if isinstance(document, dict) else []
+        for step in steps:
+            if not isinstance(step, dict) or len(step) != 1:
+                continue
+            command, body = next(iter(step.items()))
+            if command not in {"transfer", "serial_transfer"} or not isinstance(body, dict):
+                continue
+            source = body.get("source")
+            if not isinstance(source, str) or not source.strip():
+                raise ValueError("Every batch transfer needs a named stock source")
+            try:
+                volume = float(body.get("volume_ul"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"Batch stock preflight found invalid volume for {source!r}"
+                ) from exc
+            if not math.isfinite(volume) or volume <= 0:
+                raise ValueError(
+                    f"Batch stock preflight found invalid volume for {source!r}"
+                )
+            required[source] = required.get(source, 0.0) + volume
+
+        store = DataStore(self.settings.data_db_path)
+        try:
+            snapshot = store.get_fluid_snapshot(spec.fluid_state_id)
+        finally:
+            store.close()
+        containers = {
+            f"{item['labware_key']}.{item['location_id']}"
+            if item["location_id"] else item["labware_key"]: item
+            for item in snapshot["containers"]
+        }
+        shortages: list[dict[str, float | str]] = []
+        for source, volume in required.items():
+            container = containers.get(source)
+            available = (
+                float(container["current_volume_ul"])
+                if container is not None else 0.0
+            )
+            if container is None or available + 1e-6 < volume:
+                shortages.append({
+                    "target": source,
+                    "available_ul": available,
+                    "required_ul": volume,
+                    "capacity_ul": (
+                        float(container["capacity_ul"])
+                        if container is not None else 0.0
+                    ),
+                })
+        return shortages
+
     def validate(self, spec):
         try:
             preview = self._preflight(spec, self._bundle(spec))
@@ -290,6 +363,7 @@ class CampaignManager:
                 self.runs.release_campaign(campaign_id)
                 self._records.pop(campaign_id, None)
                 raise
+            self._workers.add(campaign_id)
             threading.Thread(target=self._loop, args=(campaign_id, bundle), daemon=True,
                              name=f"cubos-campaign-{campaign_id}").start()
             return record.model_copy(deep=True)
@@ -338,6 +412,68 @@ class CampaignManager:
             record = self._records.get(campaign_id)
             if record is None:
                 raise KeyError(campaign_id)
+            if (
+                record.state == "awaiting_refill"
+                and action == "resume"
+                and campaign_id not in self._workers
+            ):
+                if record.pending_batch is None:
+                    raise RunConflictError(
+                        "Campaign is awaiting refill without a pending batch"
+                    )
+                bundle = tuple(
+                    (self.base / campaign_id / f"{name}.yaml").read_text()
+                    for name in ("gantry", "deck", "protocol")
+                )
+                if not record.spec.mock_mode:
+                    from cubos_api.routers import gantry as gantry_router
+                    session = gantry_router.current_session()
+                    if session is None or not session.connected:
+                        raise ValueError(
+                            "Connect the calibrated gantry before resuming a real campaign"
+                        )
+                self.runs.reserve_campaign(campaign_id)
+                record.pause_requested = False
+                record.pause_reason = None
+                record.state = "running"
+                record.error = None
+                self._save(record)
+                self._workers.add(campaign_id)
+                threading.Thread(
+                    target=self._loop, args=(campaign_id, bundle), daemon=True,
+                    name=f"cubos-campaign-{campaign_id}",
+                ).start()
+                return record.model_copy(deep=True)
+            if (
+                record.state in TERMINAL
+                and action == "resume"
+                and record.pending_batch is not None
+            ):
+                bundle = tuple(
+                    (self.base / campaign_id / f"{name}.yaml").read_text()
+                    for name in ("gantry", "deck", "protocol")
+                )
+                if not record.spec.mock_mode:
+                    from cubos_api.routers import gantry as gantry_router
+                    session = gantry_router.current_session()
+                    if session is None or not session.connected:
+                        raise ValueError(
+                            "Connect the calibrated gantry before resuming a real campaign"
+                        )
+                self.runs.reserve_campaign(campaign_id)
+                record.pause_requested = False
+                record.pause_reason = None
+                record.stop_requested = False
+                record.stop_reason = None
+                record.state = "running"
+                record.error = None
+                self._save(record)
+                self._workers.add(campaign_id)
+                threading.Thread(
+                    target=self._loop, args=(campaign_id, bundle), daemon=True,
+                    name=f"cubos-campaign-{campaign_id}",
+                ).start()
+                return record.model_copy(deep=True)
             if record.state in TERMINAL:
                 if action == "resume" and record.spec.batch_size > 1:
                     raise RunConflictError(
@@ -424,8 +560,20 @@ class CampaignManager:
             if action == "pause":
                 record.pause_requested = True
             elif action == "resume":
+                if record.state == "awaiting_refill":
+                    if record.pending_batch is None:
+                        raise RunConflictError(
+                            "Campaign is awaiting refill without a pending batch"
+                        )
+                    # Inventory mutation is only allowed while this ownership
+                    # reservation is absent. Reacquire it before clearing the
+                    # boundary so no unrelated run can race the resume.
+                    self.runs.reserve_campaign(campaign_id)
+                    record.pause_reason = None
                 record.pause_requested = False
                 if record.state == "paused":
+                    record.state = "running"
+                elif record.state == "awaiting_refill":
                     record.state = "running"
             elif action in {"stop", "cancel"}:
                 record.stop_requested = True
@@ -463,6 +611,8 @@ class CampaignManager:
     def _finish(self, record, state, reason, error=None):
         record.state, record.stop_reason, record.error = state, reason, error
         record.active_run_id = None
+        if state == "completed":
+            record.refill_requirements = []
         self._save(record)
 
     def _loop(self, campaign_id, bundle):
@@ -479,8 +629,13 @@ class CampaignManager:
                         self._finish(record, "stopped", record.stop_reason or "operator_stopped")
                         return
                     if record.pause_requested:
-                        if record.state != "paused":
-                            record.state = "paused"
+                        paused_state = (
+                            "awaiting_refill"
+                            if record.pause_reason == "inventory_refill"
+                            else "paused"
+                        )
+                        if record.state != paused_state:
+                            record.state = paused_state
                             self._save(record)
                         paused = True
                     else:
@@ -594,6 +749,7 @@ class CampaignManager:
                 self._finish(record, "failed", "error", f"{type(exc).__name__}: {exc}")
         finally:
             self.runs.release_campaign(campaign_id)
+            self._workers.discard(campaign_id)
 
     def _loop_batch(self, campaign_id, bundle):
         # TODO(iter): add permanent batch lifecycle regressions after operator review.
@@ -612,8 +768,13 @@ class CampaignManager:
                         )
                         return
                     if record.pause_requested:
-                        if record.state != "paused":
-                            record.state = "paused"
+                        paused_state = (
+                            "awaiting_refill"
+                            if record.pause_reason == "inventory_refill"
+                            else "paused"
+                        )
+                        if record.state != paused_state:
+                            record.state = paused_state
                             self._save(record)
                         paused = True
                     else:
@@ -632,64 +793,121 @@ class CampaignManager:
                     time.sleep(self._poll)
                     continue
 
-                observations = [
-                    {"parameters": trial.parameters, "objective": trial.objective}
-                    for trial in record.trials
-                    if trial.objective is not None
-                    and trial.objective_status == "accepted"
-                ]
                 batch_start = len(record.trials)
-                batch_limit = min(
-                    spec.batch_size, spec.stop.max_trials - batch_start,
-                )
-                parameter_sets: list[dict[str, float]] = []
-                for _ in range(batch_limit):
-                    try:
-                        point = self._suggest(
-                            spec, observations, exclude_points=parameter_sets,
+                pending = record.pending_batch
+                if pending is not None:
+                    if pending.batch_index != batch_start // spec.batch_size + 1:
+                        raise RuntimeError(
+                            "Pending batch does not match completed trial count"
                         )
-                    except SearchExhaustedError:
-                        break
-                    parameter_sets.append(point)
-                if not parameter_sets:
-                    with self._lock:
-                        self._finish(record, "completed", "search_exhausted")
-                    return
-
-                compiled = compile_color_trial_batch(
-                    bundle[2], spec, parameter_sets, batch_start,
-                )
-                if (
-                    len(compiled.objective_paths) != len(parameter_sets)
-                    or len(compiled.sample_map) != len(parameter_sets)
-                ):
-                    raise RuntimeError(
-                        "Batch compiler did not return one objective and sample "
-                        "map entry per proposed mixture"
+                    parameter_sets = [dict(point) for point in pending.parameters]
+                    protocol_yaml = pending.protocol_yaml
+                    objective_paths = tuple(pending.objective_paths)
+                    sample_map = tuple(pending.sample_map)
+                    batch_number = pending.batch_index
+                else:
+                    observations = [
+                        {"parameters": trial.parameters, "objective": trial.objective}
+                        for trial in record.trials
+                        if trial.objective is not None
+                        and trial.objective_status == "accepted"
+                    ]
+                    batch_limit = min(
+                        spec.batch_size, spec.stop.max_trials - batch_start,
                     )
-                for offset, (point, path, sample) in enumerate(zip(
-                    parameter_sets, compiled.objective_paths,
-                    compiled.sample_map,
-                )):
+                    parameter_sets = []
+                    for _ in range(batch_limit):
+                        try:
+                            point = self._suggest(
+                                spec, observations, exclude_points=parameter_sets,
+                            )
+                        except SearchExhaustedError:
+                            break
+                        parameter_sets.append(point)
+                    if not parameter_sets:
+                        with self._lock:
+                            self._finish(record, "completed", "search_exhausted")
+                        return
+
+                    compiled = compile_color_trial_batch(
+                        bundle[2], spec, parameter_sets, batch_start,
+                    )
                     if (
-                        sample.get("sample_index") != batch_start + offset
-                        or sample.get("parameters") != point
-                        or sample.get("objective_path") != path
-                        or not isinstance(sample.get("candidate_well"), str)
+                        len(compiled.objective_paths) != len(parameter_sets)
+                        or len(compiled.sample_map) != len(parameter_sets)
                     ):
                         raise RuntimeError(
-                            "Batch compiler returned mismatched sample provenance"
+                            "Batch compiler did not return one objective and sample "
+                            "map entry per proposed mixture"
                         )
+                    for offset, (point, path, sample) in enumerate(zip(
+                        parameter_sets, compiled.objective_paths,
+                        compiled.sample_map,
+                    )):
+                        if (
+                            sample.get("sample_index") != batch_start + offset
+                            or sample.get("parameters") != point
+                            or sample.get("objective_path") != path
+                            or not isinstance(sample.get("candidate_well"), str)
+                        ):
+                            raise RuntimeError(
+                                "Batch compiler returned mismatched sample provenance"
+                            )
+                    protocol_yaml = compiled.protocol_yaml
+                    objective_paths = compiled.objective_paths
+                    sample_map = compiled.sample_map
+                    batch_number = batch_start // spec.batch_size + 1
+                    pending = PendingBatch(
+                        batch_index=batch_number,
+                        parameters=parameter_sets,
+                        protocol_yaml=protocol_yaml,
+                        objective_paths=list(objective_paths),
+                        sample_map=list(sample_map),
+                        run_id=f"{campaign_id}-batch-{batch_number}",
+                    )
+                    with self._lock:
+                        record.pending_batch = pending
+                        self._save(record)
+
+                # Re-run the existing tip/setup preflight on a resumed pending
+                # batch, then check stock before RunManager.submit can create a
+                # native run or trigger any hardware action.
                 self._validator(
-                    bundle[0], bundle[1], compiled.protocol_yaml,
+                    bundle[0], bundle[1], protocol_yaml,
                     self._tip_snapshot(spec.fluid_state_id),
                 )
-                batch_number = batch_start // spec.batch_size + 1
+                shortages = self._batch_stock_shortages(
+                    spec, bundle[1], protocol_yaml,
+                )
+                if shortages:
+                    with self._lock:
+                        record.pause_requested = True
+                        record.pause_reason = "inventory_refill"
+                        record.state = "awaiting_refill"
+                        record.refill_requirements = [
+                            RefillRequirement.model_validate(item)
+                            for item in shortages
+                        ]
+                        record.error = (
+                            "Batch is waiting for operator-confirmed stock refill: "
+                            + "; ".join(
+                                f"{item['target']}: requires "
+                                f"{item['required_ul']:g} uL, durable state has "
+                                f"{item['available_ul']:g} uL"
+                                for item in shortages
+                            )
+                        )
+                        self._save(record)
+                    # The refill endpoint requires an idle, unreserved station.
+                    self.runs.release_campaign(campaign_id)
+                    time.sleep(self._poll)
+                    continue
+
                 submission = RunSubmission(
-                    run_id=f"{campaign_id}-batch-{batch_number}",
+                    run_id=pending.run_id or f"{campaign_id}-batch-{batch_number}",
                     gantry_config=bundle[0],
                     deck_config=bundle[1],
-                    protocol_yaml=compiled.protocol_yaml,
+                    protocol_yaml=protocol_yaml,
                     mock_mode=spec.mock_mode,
                     state=(
                         RunStateSelection(fluid_state_id=spec.fluid_state_id)
@@ -698,30 +916,36 @@ class CampaignManager:
                     metadata={
                         "active_learning_campaign_id": campaign_id,
                         "batch": batch_number,
-                        "sample_map": list(compiled.sample_map),
+                        "sample_map": list(sample_map),
                     },
                 )
                 with self._lock:
                     if record.stop_requested or record.pause_requested:
                         continue
-                    child = self.runs.submit(
-                        submission, campaign_owner=campaign_id,
-                    )
+                    child = self.runs.get(submission.run_id)
+                    if child is None:
+                        child = self.runs.submit(
+                            submission, campaign_owner=campaign_id,
+                        )
                     batch_trials = [
                         CampaignTrial(
                             index=batch_start + offset,
                             parameters=point,
                             run_id=child.run_id,
                             state=child.state,
-                            objective_path=compiled.objective_paths[offset],
+                            objective_path=objective_paths[offset],
                             sample_well=str(
-                                compiled.sample_map[offset]["candidate_well"]
+                                sample_map[offset]["candidate_well"]
                             ),
                             batch_index=batch_number,
                         )
                         for offset, point in enumerate(parameter_sets)
                     ]
                     record.trials.extend(batch_trials)
+                    record.pending_batch = None
+                    record.pause_reason = None
+                    record.error = None
+                    record.refill_requirements = []
                     record.active_run_id = child.run_id
                     record.state = "running"
                     self._save(record)
@@ -851,6 +1075,7 @@ class CampaignManager:
                 )
         finally:
             self.runs.release_campaign(campaign_id)
+            self._workers.discard(campaign_id)
 
     def _uses_fluid_handling(self, spec: CampaignSpec, campaign_id: str) -> bool:
         protocol = (self.base / campaign_id / "protocol.yaml").read_text()

@@ -30,6 +30,8 @@ from cubos_api.models.state import (
     CapStateResponse,
     ContainerView,
     CreateFluidStateRequest,
+    FluidStockReconciliationRequest,
+    FluidStockReconciliationResponse,
     FluidStateDetailResponse,
     FluidStateSummaryResponse,
     OperationsResponse,
@@ -45,6 +47,7 @@ from cubos_api.models.state import (
     TipStateResponse,
 )
 from cubos_api.services.state_errors import map_state_exception
+from cubos_api.services.run_manager import RunConflictError
 from cubos_api.services.yaml_io import resolve_config_path
 
 router = APIRouter(prefix="/api/v1/fluid-states", tags=["cubos-state-v1"])
@@ -146,6 +149,34 @@ def _operation_views(
                     "volume_ul": op["volume_ul"],
                     "composition": op["composition"],
                     "parameters": op["parameters"],
+                },
+            )
+        )
+    for adjustment in store.list_fluid_adjustments(fluid_state_id):
+        if only_status and "applied" not in only_status:
+            continue
+        target = (
+            f"{adjustment['labware_key']}.{adjustment['location_id']}"
+            if adjustment["location_id"] else adjustment["labware_key"]
+        )
+        views.append(
+            OperationView(
+                domain="fluid",
+                id=adjustment["id"],
+                operation_key=adjustment["operation_key"],
+                operation_type="stock_reconciliation",
+                status="applied",
+                campaign_id=None,
+                detail=f"[{adjustment['operator']}] {adjustment['reason']}",
+                created_at=adjustment["created_at"],
+                updated_at=adjustment["created_at"],
+                applied_at=adjustment["created_at"],
+                context={
+                    "target": target,
+                    "previous_volume_ul": adjustment["previous_volume_ul"],
+                    "previous_composition": adjustment["previous_composition"],
+                    "volume_ul": adjustment["volume_ul"],
+                    "composition": adjustment["composition"],
                 },
             )
         )
@@ -326,6 +357,54 @@ def _require_station_idle() -> None:
         raise HTTPException(409, "station is busy with an active protocol run")
     if manager.campaign_owner is not None:
         raise HTTPException(409, "station is reserved by an active-learning campaign")
+
+
+@router.post(
+    "/{fluid_state_id}/reconcile-stock",
+    response_model=FluidStockReconciliationResponse,
+    status_code=200,
+)
+def reconcile_stock(
+    fluid_state_id: int, body: FluidStockReconciliationRequest,
+) -> FluidStockReconciliationResponse:
+    """Record an operator-confirmed stock replacement while the station is idle."""
+    from cubos_api.routers import gantry
+    from cubos_api.services.run_manager import get_run_manager
+
+    manager = get_run_manager()
+    try:
+        with manager.inventory_edit():
+            status = gantry.run_status()
+            if status.get("active"):
+                raise HTTPException(409, "station is busy with an active protocol run")
+            store = _open_store()
+            try:
+                try:
+                    result = store.reconcile_fluid_container(
+                        fluid_state_id,
+                        body.operation_key.strip(),
+                        body.target.strip(),
+                        body.volume_ul,
+                        body.composition,
+                        operator=body.operator.strip(),
+                        reason=body.reason.strip(),
+                    )
+                except _STATE_EXCEPTIONS as exc:
+                    raise map_state_exception(exc) from exc
+                return FluidStockReconciliationResponse(
+                    fluid_state_id=fluid_state_id,
+                    target=(
+                        f"{result['labware_key']}.{result['location_id']}"
+                        if result["location_id"] else result["labware_key"]
+                    ),
+                    **{key: result[key] for key in (
+                        "operation_key", "volume_ul", "composition", "operator", "reason", "status",
+                    )},
+                )
+            finally:
+                store.close()
+    except RunConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post(

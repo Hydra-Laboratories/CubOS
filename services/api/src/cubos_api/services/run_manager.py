@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -156,6 +157,16 @@ class RunManager:
         with self._lock:
             if self._campaign_owner == campaign_id:
                 self._campaign_owner = None
+
+    @contextmanager
+    def inventory_edit(self):
+        """Serialize operator inventory edits with campaign ownership changes."""
+        with self._lock:
+            if self._active_run_id is not None or self._campaign_owner is not None:
+                raise RunConflictError(
+                    "The station is busy with an active run or campaign"
+                )
+            yield
 
     def submit(self, submission: RunSubmission, *, campaign_owner: str | None = None) -> RunRecord:
         run_id = submission.run_id or uuid.uuid4().hex

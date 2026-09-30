@@ -43,6 +43,8 @@
 .campaign-color-fields { margin:12px 0; grid-template-columns:repeat(3,minmax(0,1fr)); }
 .campaign-candidate-field { grid-column:1 / -1; }
 .campaign-candidate-field textarea { min-height:58px; resize:vertical; }
+.campaign-diluent-toggle { flex-direction:row; align-items:center; gap:6px; justify-content:flex-start; }
+.campaign-diluent-toggle input[type="checkbox"] { width:auto; }
 .campaign-color-limits { margin-bottom:10px; padding:8px; border-radius:6px; background:var(--z-surface-sunken); color:var(--z-text-muted); font-size:12px; }
 .campaign-target-chip { display:flex; align-items:center; gap:7px; font-size:12px; }
 .campaign-target-chip .campaign-swatch { width:28px; height:28px; }

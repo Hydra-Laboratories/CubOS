@@ -449,6 +449,54 @@ class TestCameraMonitor:
         assert response.status_code == 200
         assert service.updates == [("camera", {"brightness": 9.0})]
 
+    def test_patch_controls_can_enable_auto_white_balance_without_stale_temperature(
+        self, monkeypatch, opencv_session,
+    ):
+        service = FakeMonitorService()
+        service.running = True
+        monkeypatch.setattr(
+            instruments_router,
+            "get_camera_monitor_service",
+            lambda: service,
+        )
+
+        response = api_request(
+            create_app(),
+            "PATCH",
+            "/api/v1/instruments/camera/controls",
+            json={"instrument": "camera", "controls": {"auto_white_balance": True}},
+        )
+
+        assert response.status_code == 200
+        assert service.updates == [("camera", {"auto_white_balance": True})]
+
+    def test_patch_controls_rejects_auto_and_manual_white_balance_together(
+        self, monkeypatch, opencv_session,
+    ):
+        service = FakeMonitorService()
+        service.running = True
+        monkeypatch.setattr(
+            instruments_router,
+            "get_camera_monitor_service",
+            lambda: service,
+        )
+
+        response = api_request(
+            create_app(),
+            "PATCH",
+            "/api/v1/instruments/camera/controls",
+            json={
+                "instrument": "camera",
+                "controls": {
+                    "auto_white_balance": True,
+                    "white_balance": 4600.0,
+                },
+            },
+        )
+
+        assert response.status_code == 422
+        assert service.updates == []
+
     def test_patch_controls_is_rejected_during_active_run(
         self, monkeypatch, opencv_session,
     ):

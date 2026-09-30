@@ -43,6 +43,37 @@ export const campaignApi = {
     }),
 };
 
+export interface StockReconciliationResponse {
+  fluid_state_id: number;
+  operation_key: string;
+  target: string;
+  volume_ul: number;
+  composition: Record<string, number>;
+  operator: string;
+  reason: string;
+  status: string;
+}
+
+export async function reconcileCampaignStock(
+  fluidStateId: number,
+  body: {
+    target: string;
+    volume_ul: number;
+    composition?: Record<string, number>;
+    operation_key: string;
+    operator: string;
+    reason: string;
+  },
+): Promise<StockReconciliationResponse> {
+  const response = await fetch(`/api/v1/fluid-states/${fluidStateId}/reconcile-stock`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error((await response.text()) || `${response.status} request failed`);
+  return response.json() as Promise<StockReconciliationResponse>;
+}
+
 const cameraMonitorBase = "/api/v1/instruments/camera/monitor";
 export const cameraMonitorApi = {
   start: (instrument: string) => fetch(`${cameraMonitorBase}/start`, {

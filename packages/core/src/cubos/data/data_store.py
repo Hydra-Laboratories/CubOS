@@ -347,6 +347,22 @@ CREATE TABLE IF NOT EXISTS pipette_attachment (
     updated_at            TEXT    NOT NULL DEFAULT (datetime('now')),
     UNIQUE(fluid_state_id, pipette_key)
 );
+
+CREATE TABLE IF NOT EXISTS fluid_adjustments (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    fluid_state_id      INTEGER NOT NULL REFERENCES fluid_state_sessions(id)
+                                    ON DELETE CASCADE,
+    operation_key       TEXT NOT NULL UNIQUE,
+    labware_key         TEXT NOT NULL,
+    location_id         TEXT NOT NULL DEFAULT '',
+    operator            TEXT NOT NULL,
+    reason              TEXT NOT NULL,
+    previous_volume_ul  REAL NOT NULL,
+    previous_composition_json TEXT NOT NULL,
+    volume_ul           REAL NOT NULL,
+    composition_json    TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -1114,6 +1130,12 @@ class DataStore:
             self._conn, fluid_state_id, labware_key, location_id,
         )
 
+    def list_fluid_adjustments(self, fluid_state_id: int) -> list[dict[str, Any]]:
+        """Return the durable operator stock-replacement journal."""
+        from .fluid_state import list_fluid_adjustments
+
+        return list_fluid_adjustments(self._conn, fluid_state_id)
+
     def seed_fluid(
         self,
         fluid_state_id: int,
@@ -1130,6 +1152,31 @@ class DataStore:
             target,
             volume_ul,
             composition,
+        )
+
+    def reconcile_fluid_container(
+        self,
+        fluid_state_id: int,
+        operation_key: str,
+        target: Any,
+        volume_ul: float,
+        composition: Mapping[str, float] | None = None,
+        *,
+        operator: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Apply an operator-confirmed, audited container replacement."""
+        from .fluid_state import reconcile_fluid_container
+
+        return reconcile_fluid_container(
+            self._conn,
+            fluid_state_id,
+            operation_key,
+            target,
+            volume_ul,
+            composition,
+            operator=operator,
+            reason=reason,
         )
 
     def begin_fluid_transfer(

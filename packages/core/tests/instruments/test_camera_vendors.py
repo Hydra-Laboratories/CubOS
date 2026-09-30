@@ -234,6 +234,7 @@ class FakeCv2:
     CAP_PROP_BRIGHTNESS = 10
     CAP_PROP_EXPOSURE = 15
     CAP_PROP_WB_TEMPERATURE = 45
+    CAP_PROP_AUTO_WB = 44
     CAP_PROP_FOCUS = 28
 
     def __init__(self, capture_factory=None):
@@ -772,6 +773,42 @@ class TestOpenCVHardwarePath:
         assert after.frame_id > before.frame_id
         assert after.configuration_revision > before.configuration_revision
         assert camera.control_fingerprint()["controls"]["brightness"]["value"] == 12.0
+        camera.disconnect()
+
+    def test_auto_white_balance_is_enabled_without_manual_temperature_override(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        status = camera.set_controls({"auto_white_balance": True})
+
+        assert capture.props[FakeCv2.CAP_PROP_AUTO_WB] == 1.0
+        assert FakeCv2.CAP_PROP_WB_TEMPERATURE not in capture.props
+        assert status["auto_white_balance"] == {
+            "supported": True,
+            "value": 1.0,
+            "error": None,
+        }
+        camera.disconnect()
+
+    def test_auto_white_balance_rejects_manual_temperature_in_same_update(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        with pytest.raises(CameraCaptureError, match="Cannot set white_balance"):
+            camera.set_controls(
+                {"auto_white_balance": True, "white_balance": 4600.0}
+            )
+
         camera.disconnect()
 
     def test_manual_exposure_falls_back_to_v4l2_menu_value(self, monkeypatch):

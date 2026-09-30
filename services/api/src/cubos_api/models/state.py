@@ -186,6 +186,33 @@ class TipRefillResponse(TipRefillView):
     status: str = "applied"
 
 
+class FluidStockReconciliationRequest(BaseModel):
+    target: str
+    volume_ul: float
+    composition: Optional[Dict[str, float]] = None
+    operation_key: str
+    operator: str
+    reason: str
+
+    @model_validator(mode="after")
+    def validate_audit_fields(self) -> "FluidStockReconciliationRequest":
+        for name in ("target", "operation_key", "operator", "reason"):
+            if not getattr(self, name).strip():
+                raise ValueError(f"{name} is required")
+        return self
+
+
+class FluidStockReconciliationResponse(BaseModel):
+    fluid_state_id: int
+    operation_key: str
+    target: str
+    volume_ul: float
+    composition: Dict[str, float]
+    operator: str
+    reason: str
+    status: str = "applied"
+
+
 class CapContainerView(BaseModel):
     labware_key: str
     location_id: str

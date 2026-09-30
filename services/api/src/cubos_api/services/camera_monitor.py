@@ -297,7 +297,7 @@ class CameraMonitorService:
     def set_controls(
         self,
         instrument: str,
-        controls: dict[str, float],
+        controls: dict[str, float | bool],
     ) -> CameraControlsResponse:
         if not controls:
             raise CameraMonitorError("Provide at least one camera control.")

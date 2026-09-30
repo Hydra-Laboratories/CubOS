@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as theme from "../../theme";
 import CampaignFluidState from "./CampaignFluidState";
 import CampaignCameraMonitor from "./CampaignCameraMonitor";
+import CampaignRefillRecovery from "./CampaignRefillRecovery";
 import ColorTargetReview from "./ColorTargetReview";
 import RunPanel from "../run/RunPanel";
 import { campaignApi } from "./api";
@@ -69,6 +70,10 @@ interface PresetWorkspaceDraft {
   redSource: string;
   yellowSource: string;
   blueSource: string;
+  diluentEnabled: boolean;
+  diluentSource: string;
+  componentMinUl: number;
+  componentMaxUl: number;
   candidateText: string;
   cameraInstrument: string;
   roiFraction: number;
@@ -99,6 +104,10 @@ function restoredPresetWorkspace(): PresetWorkspaceDraft | null {
       redSource: typeof parsed.redSource === "string" ? parsed.redSource : "stocks.A1",
       yellowSource: typeof parsed.yellowSource === "string" ? parsed.yellowSource : "stocks.A2",
       blueSource: typeof parsed.blueSource === "string" ? parsed.blueSource : "stocks.A3",
+      diluentEnabled: typeof parsed.diluentEnabled === "boolean" ? parsed.diluentEnabled : false,
+      diluentSource: typeof parsed.diluentSource === "string" ? parsed.diluentSource : "stocks.A4",
+      componentMinUl: isFiniteNumber(parsed.componentMinUl) ? parsed.componentMinUl : 50,
+      componentMaxUl: isFiniteNumber(parsed.componentMaxUl) ? parsed.componentMaxUl : 200,
       candidateText: typeof parsed.candidateText === "string" ? parsed.candidateText : CANDIDATE_WELLS.join(", "),
       cameraInstrument: typeof parsed.cameraInstrument === "string" ? parsed.cameraInstrument : "camera",
       roiFraction: isFiniteNumber(parsed.roiFraction) ? parsed.roiFraction : 0.5,
@@ -554,6 +563,10 @@ export default function CampaignPanel(props: CampaignPanelProps) {
   const [redSource, setRedSource] = useState(restoredPreset?.redSource ?? "stocks.A1");
   const [yellowSource, setYellowSource] = useState(restoredPreset?.yellowSource ?? "stocks.A2");
   const [blueSource, setBlueSource] = useState(restoredPreset?.blueSource ?? "stocks.A3");
+  const [diluentEnabled, setDiluentEnabled] = useState(restoredPreset?.diluentEnabled ?? false);
+  const [diluentSource, setDiluentSource] = useState(restoredPreset?.diluentSource ?? "stocks.A4");
+  const [componentMinUl, setComponentMinUl] = useState(restoredPreset?.componentMinUl ?? 50);
+  const [componentMaxUl, setComponentMaxUl] = useState(restoredPreset?.componentMaxUl ?? 200);
   const [candidateText, setCandidateText] = useState(restoredPreset?.candidateText ?? CANDIDATE_WELLS.join(", "));
   const [cameraInstrument, setCameraInstrument] = useState(restoredPreset?.cameraInstrument ?? restoredReview?.cameraInstrument ?? "camera");
   const [roiFraction, setRoiFraction] = useState(restoredPreset?.roiFraction ?? restoredReview?.roiFraction ?? 0.5);
@@ -565,6 +578,9 @@ export default function CampaignPanel(props: CampaignPanelProps) {
   const [targetMeasurement, setTargetMeasurement] = useState<Record<string, unknown> | null>(restoredReview?.measurement ?? null);
   const [targetExpectedCenter, setTargetExpectedCenter] = useState<NormalizedPoint | null>(restoredReview?.selectedCenter ?? null);
   const [targetSelectionNeedsAnalysis, setTargetSelectionNeedsAnalysis] = useState(restoredReview?.selectionNeedsAnalysis ?? false);
+  const [targetChooserOpen, setTargetChooserOpen] = useState(
+    restoredReview?.measurement.measurement_status !== "accepted",
+  );
   const visibleTargetLab = targetMode === "rgb"
     ? targetRgbPreview
     : presetNeedsFreshTarget ? null : targetLab ?? (protocolTargetProfileId ? protocolTargetLab : null);
@@ -604,7 +620,8 @@ export default function CampaignPanel(props: CampaignPanelProps) {
   const candidateCount = candidateText.split(/[\n,]/).map((value) => value.trim()).filter(Boolean).length;
   const plannedSampleCount = Math.min(candidateCount, Math.max(0, spec.stop.max_trials));
   const batchCount = Number.isInteger(batchSize) && batchSize > 0 ? Math.ceil(plannedSampleCount / batchSize) : 0;
-  const estimatedTipCount = batchSize === 1 ? plannedSampleCount * 3 : plannedSampleCount + batchCount * 3;
+  const componentCount = diluentEnabled ? 4 : 3;
+  const estimatedTipCount = batchSize === 1 ? plannedSampleCount * componentCount : plannedSampleCount + batchCount * componentCount;
   const sourceTransfers = protocolFile === sourceProtocolFile ? protocolSteps.filter((step) => step.command === "transfer") : [];
   const sourceMix = protocolFile === sourceProtocolFile ? protocolSteps.find((step) => step.command === "mix") : null;
   const inheritedSourceHeights = Array.from(new Set(sourceTransfers.map((step) => String(step.args.source_height ?? "unspecified"))));
@@ -640,6 +657,10 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       redSource,
       yellowSource,
       blueSource,
+      diluentEnabled,
+      diluentSource,
+      componentMinUl,
+      componentMaxUl,
       candidateText,
       cameraInstrument,
       roiFraction,
@@ -649,7 +670,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       targetMode,
       targetRgb,
     } satisfies PresetWorkspaceDraft));
-  }, [presetNeedsFreshTarget, presetExpectedFiles, selectedPreset, presetFilename, presetName, targetWell, redSource, yellowSource, blueSource, candidateText, cameraInstrument, roiFraction, captureImageHeight, sourceProtocolFile, batchSize, targetMode, targetRgb]);
+  }, [presetNeedsFreshTarget, presetExpectedFiles, selectedPreset, presetFilename, presetName, targetWell, redSource, yellowSource, blueSource, diluentEnabled, diluentSource, componentMinUl, componentMaxUl, candidateText, cameraInstrument, roiFraction, captureImageHeight, sourceProtocolFile, batchSize, targetMode, targetRgb]);
   const refreshPresets = useCallback(async () => {
     try {
       const next = await campaignApi.listPresets();
@@ -765,6 +786,10 @@ export default function CampaignPanel(props: CampaignPanelProps) {
     setTargetRun(null);
     setTargetError(null);
   };
+  const chooseAnotherTarget = () => {
+    setTargetChooserOpen(true);
+    setTargetStatus("Choose a different well, then capture it. The current target remains accepted until the selection changes.");
+  };
   const invalidateRgbTarget = () => {
     rgbPreviewRequestRef.current += 1;
     invalidateBuiltCampaign();
@@ -833,6 +858,9 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         red_source: redSource,
         yellow_source: yellowSource,
         blue_source: blueSource,
+        diluent_source: diluentEnabled ? diluentSource : null,
+        component_min_ul: componentMinUl,
+        component_max_ul: componentMaxUl,
         candidate_wells: candidateText.split(/[\n,]/).map((value) => value.trim()).filter(Boolean),
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
@@ -868,6 +896,10 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         setRedSource(loaded.color_setup.red_source);
         setYellowSource(loaded.color_setup.yellow_source);
         setBlueSource(loaded.color_setup.blue_source);
+        setDiluentEnabled(Boolean(loaded.color_setup.diluent_source));
+        setDiluentSource(loaded.color_setup.diluent_source || "stocks.A4");
+        setComponentMinUl(loaded.color_setup.component_min_ul ?? 50);
+        setComponentMaxUl(loaded.color_setup.component_max_ul ?? 200);
         setCandidateText(loaded.color_setup.candidate_wells.join(", "));
         setCameraInstrument(loaded.color_setup.camera_instrument);
         setRoiFraction(loaded.color_setup.roi_fraction);
@@ -1094,6 +1126,9 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         red_source: redSource,
         yellow_source: yellowSource,
         blue_source: blueSource,
+        diluent_source: diluentEnabled ? diluentSource : null,
+        component_min_ul: componentMinUl,
+        component_max_ul: componentMaxUl,
         candidate_wells: candidateWells,
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
@@ -1325,6 +1360,13 @@ export default function CampaignPanel(props: CampaignPanelProps) {
               <div><span>Hardware control</span><strong>{liveCampaign.spec.name}</strong></div>
               <div className="campaign-run-metrics"><span>{liveCampaign.state.replaceAll("_", " ")}</span><span>{liveCampaign.trials.length} scheduled / {liveCampaign.spec.stop.max_trials} sample budget</span><span>{liveScoredSamples} scored</span><span>{liveScheduledBatches} / {Math.ceil(liveCampaign.spec.stop.max_trials / (liveCampaign.spec.batch_size || 1))} batches scheduled</span><span>best {liveCampaign.best_objective ?? "—"}</span></div>
             </div>
+            {liveCampaign.state === "awaiting_refill" && <CampaignRefillRecovery
+              campaign={liveCampaign}
+              onUpdated={(updated) => {
+                setSelected(updated);
+                setRecords((current) => current.map((record) => String(record.campaign_id) === String(updated.campaign_id) ? updated : record));
+              }}
+            />}
             {liveCampaign.active_run_id && <RunPanel runId={liveCampaign.active_run_id} />}
             {!liveCampaign.spec.mock_mode && campaignCameraInstrument && <CampaignCameraMonitor instrument={campaignCameraInstrument} />}
             {!liveCampaign.spec.mock_mode && !campaignCameraInstrument && <div className="campaign-banner campaign-info">Load this campaign&apos;s gantry and protocol to identify its camera before opening the live monitor.</div>}
@@ -1350,9 +1392,13 @@ export default function CampaignPanel(props: CampaignPanelProps) {
           <button type="button" className={targetMode === "rgb" ? "is-selected" : ""} onClick={() => chooseTargetMode("rgb")} aria-pressed={targetMode === "rgb"}>Choose a color</button>
         </div>
         {targetMode === "camera" ? <div className="campaign-target-mode">
-          <label className="campaign-field">Well<select aria-label="Target well" value={targetWell} onChange={(event) => { setTargetWell(event.target.value); invalidateCameraTarget(); }}>{PLATE_WELLS.map((well) => <option key={well}>{well}</option>)}</select></label>
-          <button type="button" aria-label={`Capture ${targetWell} target for review`} style={theme.btn.primary} onClick={() => void readTargetAndPrepare()} disabled={targetBusy || !!disabledReason || presetConfigMismatch}>{targetBusy ? "Capturing…" : "Capture"}</button>
-          {targetMeasurement && targetRunId && <span className="campaign-target-status">{targetReady ? "Target captured" : "Select well center"}</span>}
+          {(!cameraTargetReady || targetChooserOpen) ? <>
+            <label className="campaign-field">Well<select aria-label="Target well" value={targetWell} onChange={(event) => { setTargetWell(event.target.value); invalidateCameraTarget(); }}>{PLATE_WELLS.map((well) => <option key={well}>{well}</option>)}</select></label>
+            <button type="button" aria-label={`Capture ${targetWell} target for review`} style={theme.btn.primary} onClick={() => void readTargetAndPrepare()} disabled={targetBusy || !!disabledReason || presetConfigMismatch}>{targetBusy ? "Capturing…" : "Capture"}</button>
+            {targetMeasurement && targetRunId && <span className="campaign-target-status">{targetReady ? "Target captured" : "Select well center"}</span>}
+          </> : <>
+            <span className="campaign-target-status"><strong>{targetWell}</strong> target accepted</span>
+          </>}
         </div> : <div className="campaign-target-mode campaign-rgb-target">
           <label className="campaign-color-picker"><span>Color</span><input aria-label="RGB target color" type="color" value={rgbHex(targetRgb)} onChange={(event) => chooseRgb(hexRgb(event.target.value))} /></label>
           <div className="campaign-rgb-values"><span><strong>HEX</strong> {rgbHex(targetRgb).toUpperCase()}</span><span><strong>RGB</strong> {targetRgb ? targetRgb.join(", ") : "—"}</span></div>
@@ -1381,6 +1427,15 @@ export default function CampaignPanel(props: CampaignPanelProps) {
           <label className="campaign-field">Red stock<input aria-label="Red stock" value={redSource} onChange={(event) => { setRedSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Yellow stock<input aria-label="Yellow stock" value={yellowSource} onChange={(event) => { setYellowSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Blue stock<input aria-label="Blue stock" value={blueSource} onChange={(event) => { setBlueSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
+          <label className="campaign-field campaign-diluent-toggle">
+            <input type="checkbox" aria-label="Water (diluent)" checked={diluentEnabled} onChange={(event) => { setDiluentEnabled(event.target.checked); invalidateBuiltCampaign(); }} />
+            {" "}Water (diluent)
+          </label>
+          {diluentEnabled && <>
+            <label className="campaign-field">Water source<input aria-label="Water source" value={diluentSource} onChange={(event) => { setDiluentSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
+            <label className="campaign-field">Dye min µL<input aria-label="Dye minimum microliters" type="number" min="5" step="5" value={componentMinUl} onChange={(event) => { setComponentMinUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
+            <label className="campaign-field">Dye max µL<input aria-label="Dye maximum microliters" type="number" min="5" step="5" value={componentMaxUl} onChange={(event) => { setComponentMaxUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
+          </>}
           <label className="campaign-field campaign-candidate-field">Candidate wells <span>{candidateCount} selected</span><textarea aria-label="Color candidate wells" value={candidateText} onChange={(event) => { setCandidateText(event.target.value); invalidateBuiltCampaign(); }} /></label>
         </div>
         <div className="campaign-color-limits">{candidateCount} samples · {batchCount} batches · {estimatedTipCount} tips</div>
@@ -1433,6 +1488,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
             setTargetSelectionNeedsAnalysis(false);
             const lab = numericTriplet(measurement.lab);
             setTargetLab(measurement.measurement_status === "accepted" ? lab : null);
+            if (measurement.measurement_status === "accepted") setTargetChooserOpen(false);
             setTargetStatus(measurement.measurement_status === "accepted"
               ? "Saved target frame passed quality review. Build the campaign when the physical setup is ready."
               : "Saved target frame remains rejected. Review the diagnostics, adjust the selected center, and analyze the same frame again.");
@@ -1442,6 +1498,8 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       {targetMode === "camera" && targetRunId && targetMeasurement?.measurement_status === "accepted" && (
         <div className="campaign-actions">
           <button type="button" style={theme.btn.primary} onClick={() => void buildFromAcceptedTarget()} disabled={targetBusy || !targetExpectedCenter || targetSelectionNeedsAnalysis || presetConfigMismatch || batchError !== null || countConsistencyMessage !== null || sourceProtocolMismatch || !sourceProtocolFile || !protocolFile || (!spec.mock_mode && spec.fluid_state_id === null)}>Use target</button>
+          <button type="button" aria-label="Change target well" style={theme.btn.secondary} onClick={() => { chooseAnotherTarget(); showSetupSection(targetSectionRef); }}>Change target</button>
+          <button type="button" aria-label={`Retake ${targetWell} target photo`} style={theme.btn.secondary} onClick={() => void readTargetAndPrepare()} disabled={targetBusy || !!disabledReason || presetConfigMismatch}>Retake photo</button>
           {!spec.mock_mode && spec.fluid_state_id === null && <span className="campaign-note">Create or select a reconciled fluid state before building a real color campaign.</span>}
         </div>
       )}

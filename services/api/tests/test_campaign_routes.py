@@ -30,6 +30,17 @@ def test_station_reservation_blocks_external_submissions_and_setup_changes():
     assert manager.campaign_owner is None
 
 
+def test_inventory_edit_guard_rejects_campaign_owner():
+    manager = get_run_manager()
+    manager.reserve_campaign("owner")
+    try:
+        with pytest.raises(RunConflictError, match="active run or campaign"):
+            with manager.inventory_edit():
+                pass
+    finally:
+        manager.release_campaign("owner")
+
+
 @pytest.mark.parametrize('value',[True, '1', float('nan'), float('inf')])
 def test_manual_observation_rejects_invalid_types(value):
     with pytest.raises(ValueError): Observation(value=value)

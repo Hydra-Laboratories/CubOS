@@ -28,6 +28,7 @@ _CAPTURE_TIMEOUT_S = 2.0
 _CONTROL_PROPERTIES = {
     "exposure": "CAP_PROP_EXPOSURE",
     "white_balance": "CAP_PROP_WB_TEMPERATURE",
+    "auto_white_balance": "CAP_PROP_AUTO_WB",
     "focus": "CAP_PROP_FOCUS",
     "brightness": "CAP_PROP_BRIGHTNESS",
 }
@@ -275,13 +276,19 @@ class OpenCVCamera(CameraInstrument):
             }
         return statuses
 
-    def set_controls(self, controls: dict[str, float]) -> dict[str, dict[str, object]]:
+    def set_controls(
+        self, controls: dict[str, float | bool]
+    ) -> dict[str, dict[str, object]]:
         """Apply only the explicitly requested controls and return readback."""
         if self._lease is None or not self._lease.is_open() or self._cv2 is None:
             raise CameraCaptureError("Cannot set controls: camera not connected.")
         unknown = sorted(set(controls) - set(_CONTROL_PROPERTIES))
         if unknown:
             raise CameraCaptureError(f"Unknown camera controls: {', '.join(unknown)}")
+        if controls.get("auto_white_balance") is True and "white_balance" in controls:
+            raise CameraCaptureError(
+                "Cannot set white_balance while enabling auto_white_balance."
+            )
         accepted_any = False
         for name, value in controls.items():
             if not math.isfinite(float(value)):
@@ -293,7 +300,9 @@ class OpenCVCamera(CameraInstrument):
                     f"OpenCV does not expose {constant_name}"
                 )
                 continue
-            requested = float(value)
+            requested = (
+                1.0 if value is True else 0.0 if value is False else float(value)
+            )
             try:
                 mode = _MANUAL_MODE_PROPERTIES.get(name)
                 mode_accepted = True

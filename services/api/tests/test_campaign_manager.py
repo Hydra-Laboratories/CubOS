@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from cubos_api.models.campaigns import CampaignSpec
+from cubos_api.models.campaigns import CampaignRecord, CampaignSpec, PendingBatch
 from cubos_api.models.runs import RunRecord
 from cubos_api.services.campaign_manager import CampaignManager
 from cubos_api.services.run_manager import RunConflictError
@@ -190,6 +190,233 @@ def test_existing_run_manager_ownership_conflict(tmp_path):
     manager = CampaignManager(settings, runs, validator=lambda *args: None)
     with pytest.raises(RunConflictError):
         manager.start(spec)
+
+
+def test_batch_stock_preflight_aggregates_current_durable_sources(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_manager as module
+
+    settings, spec = _setup(tmp_path, mock=False)
+    spec = spec.model_copy(update={"fluid_state_id": 7, "batch_size": 2, "source_protocol_file": "source.yaml"})
+    manager = CampaignManager(settings, FakeRuns(), validator=lambda *args: None)
+
+    class Store:
+        def __init__(self, _path):
+            pass
+
+        def get_fluid_snapshot(self, state_id):
+            assert state_id == 7
+            return {"containers": [{
+                "labware_key": "stocks", "location_id": "A1",
+                "current_volume_ul": 120.0, "capacity_ul": 500.0,
+            }]}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(module, "DataStore", Store)
+    protocol = """protocol:
+- transfer: {source: stocks.A1, destination: plate.A1, volume_ul: 70}
+- transfer: {source: stocks.A1, destination: plate.A2, volume_ul: 60}
+"""
+    shortages = manager._batch_stock_shortages(spec, "deck: {}", protocol)
+    assert shortages == [{
+        "target": "stocks.A1",
+        "available_ul": 120.0,
+        "required_ul": 130.0,
+        "capacity_ul": 500.0,
+    }]
+
+
+def test_awaiting_refill_resume_reacquires_owner_and_preserves_pending_batch(tmp_path):
+    settings, spec = _setup(tmp_path, mock=True, max_trials=2)
+    spec = spec.model_copy(update={"batch_size": 2, "source_protocol_file": "source.yaml"})
+    runs = FakeRuns()
+    manager = CampaignManager(settings, runs, validator=lambda *args: None)
+    campaign_id = "awaiting-refill"
+    pending = PendingBatch(
+        batch_index=1,
+        parameters=[{"x": 1.0}, {"x": 0.0}],
+        protocol_yaml="protocol: []\n",
+        objective_paths=["0.value", "1.value"],
+        sample_map=[
+            {"sample_index": 0, "candidate_well": "plate.A1"},
+            {"sample_index": 1, "candidate_well": "plate.A2"},
+        ],
+        run_id=f"{campaign_id}-batch-1",
+    )
+    record = CampaignRecord(
+        campaign_id=campaign_id,
+        spec=spec,
+        state="awaiting_refill",
+        created_at=time.time(),
+        updated_at=time.time(),
+        pause_requested=True,
+        pause_reason="inventory_refill",
+        pending_batch=pending,
+    )
+    manager._records[campaign_id] = record
+    manager._workers.add(campaign_id)
+    manager._save(record)
+    (manager.base / campaign_id / "gantry.yaml").write_text("gantry: {}")
+    (manager.base / campaign_id / "deck.yaml").write_text("deck: {}")
+    (manager.base / campaign_id / "protocol.yaml").write_text("protocol: []\n")
+
+    resumed = manager.control(campaign_id, "resume")
+    assert runs.campaign_owner == campaign_id
+    assert resumed.state == "running"
+    assert resumed.pending_batch == pending
+
+
+def test_awaiting_refill_pending_batch_survives_manager_restart(tmp_path, monkeypatch):
+    settings, spec = _setup(tmp_path, mock=True, max_trials=2)
+    spec = spec.model_copy(update={"batch_size": 2, "source_protocol_file": "source.yaml"})
+    first_runs = FakeRuns()
+    first = CampaignManager(settings, first_runs, validator=lambda *args: None)
+    campaign_id = "awaiting-refill-restart"
+    pending = PendingBatch(
+        batch_index=1,
+        parameters=[{"x": 2.0}, {"x": 1.0}],
+        protocol_yaml="protocol: []\n",
+        objective_paths=["0.value", "1.value"],
+        sample_map=[
+            {"sample_index": 0, "candidate_well": "plate.A1"},
+            {"sample_index": 1, "candidate_well": "plate.A2"},
+        ],
+        run_id=f"{campaign_id}-batch-1",
+    )
+    record = CampaignRecord(
+        campaign_id=campaign_id,
+        spec=spec,
+        state="awaiting_refill",
+        created_at=time.time(),
+        updated_at=time.time(),
+        pause_requested=True,
+        pause_reason="inventory_refill",
+        pending_batch=pending,
+    )
+    first._records[campaign_id] = record
+    first._save(record)
+    for name, text in zip(("gantry", "deck", "protocol"), first._bundle(spec)):
+        (first.base / campaign_id / f"{name}.yaml").write_text(text)
+
+    recovered_runs = FakeRuns()
+    recovered = CampaignManager(settings, recovered_runs, validator=lambda *args: None)
+    restored = recovered.get(campaign_id)
+    assert restored.state == "awaiting_refill"
+    assert restored.pending_batch == pending
+
+    monkeypatch.setattr(recovered, "_loop", lambda *_args: None)
+    resumed = recovered.control(campaign_id, "resume")
+    assert resumed.state == "running"
+    assert recovered_runs.submissions == []
+    assert recovered_runs.campaign_owner == campaign_id
+
+
+def test_pending_batch_existing_run_is_not_submitted_again(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_manager as module
+
+    settings, spec = _setup(tmp_path, mock=True, max_trials=2)
+    spec = spec.model_copy(update={"batch_size": 2, "source_protocol_file": "source.yaml"})
+    runs = FakeRuns()
+    manager = CampaignManager(settings, runs, validator=lambda *args: None, poll_interval=0.001)
+    campaign_id = "existing-batch"
+    run_id = f"{campaign_id}-batch-1"
+    pending = PendingBatch(
+        batch_index=1,
+        parameters=[{"x": 1.0}, {"x": 0.0}],
+        protocol_yaml="protocol: []\n",
+        objective_paths=["0.value", "0.value"],
+        sample_map=[
+            {"sample_index": 0, "candidate_well": "plate.A1"},
+            {"sample_index": 1, "candidate_well": "plate.A2"},
+        ],
+        run_id=run_id,
+    )
+    record = CampaignRecord(
+        campaign_id=campaign_id,
+        spec=spec,
+        created_at=time.time(),
+        updated_at=time.time(),
+        pending_batch=pending,
+    )
+    manager._records[campaign_id] = record
+    manager._save(record)
+    for name, text in zip(("gantry", "deck", "protocol"), manager._bundle(spec)):
+        (manager.base / campaign_id / f"{name}.yaml").write_text(text)
+    runs.owner = campaign_id
+    runs.records[run_id] = RunRecord(
+        run_id=run_id, state="succeeded", created_at=time.time(), mock_mode=True,
+        result={"results": [{"value": 1.0}]},
+    )
+    monkeypatch.setattr(manager, "_batch_stock_shortages", lambda *args: [])
+    expected_wells = iter(("plate.A1", "plate.A2"))
+    monkeypatch.setattr(
+        module, "extract_result_context",
+        lambda *_args: {"well_identity": {"expected_well": next(expected_wells)}},
+    )
+    monkeypatch.setattr(module, "extract_result_objective", lambda *_args: 1.0)
+
+    manager._loop_batch(campaign_id, tuple(
+        (manager.base / campaign_id / f"{name}.yaml").read_text()
+        for name in ("gantry", "deck", "protocol")
+    ))
+
+    assert runs.submissions == []
+    assert manager.get(campaign_id).state == "completed"
+
+
+def test_batch_target_at_five_stops_after_completed_batch(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_manager as module
+
+    settings, spec = _setup(tmp_path, mock=True, max_trials=4, target_value=5.0)
+    spec = spec.model_copy(update={"batch_size": 2, "source_protocol_file": "source.yaml"})
+    runs = FakeRuns()
+    manager = CampaignManager(settings, runs, validator=lambda *args: None, poll_interval=0.001)
+    campaign_id = "batch-target-five"
+    run_id = f"{campaign_id}-batch-1"
+    pending = PendingBatch(
+        batch_index=1,
+        parameters=[{"x": 1.0}, {"x": 0.0}],
+        protocol_yaml="protocol: []\n",
+        objective_paths=["0.value", "0.value"],
+        sample_map=[
+            {"sample_index": 0, "candidate_well": "plate.A1"},
+            {"sample_index": 1, "candidate_well": "plate.A2"},
+        ],
+        run_id=run_id,
+    )
+    record = CampaignRecord(
+        campaign_id=campaign_id, spec=spec, created_at=time.time(),
+        updated_at=time.time(), pending_batch=pending,
+    )
+    manager._records[campaign_id] = record
+    manager._save(record)
+    for name, text in zip(("gantry", "deck", "protocol"), manager._bundle(spec)):
+        (manager.base / campaign_id / f"{name}.yaml").write_text(text)
+    runs.owner = campaign_id
+    runs.records[run_id] = RunRecord(
+        run_id=run_id, state="succeeded", created_at=time.time(), mock_mode=True,
+        result={"results": [{"value": 5.0}]},
+    )
+    monkeypatch.setattr(manager, "_batch_stock_shortages", lambda *args: [])
+    expected_wells = iter(("plate.A1", "plate.A2"))
+    objectives = iter((5.0, 7.0))
+    monkeypatch.setattr(
+        module, "extract_result_context",
+        lambda *_args: {"well_identity": {"expected_well": next(expected_wells)}},
+    )
+    monkeypatch.setattr(module, "extract_result_objective", lambda *_args: next(objectives))
+
+    manager._loop_batch(campaign_id, tuple(
+        (manager.base / campaign_id / f"{name}.yaml").read_text()
+        for name in ("gantry", "deck", "protocol")
+    ))
+
+    final = manager.get(campaign_id)
+    assert final.state == "completed"
+    assert final.stop_reason == "target_reached"
+    assert len(final.trials) == 2
+    assert runs.submissions == []
 
 
 def test_real_fluid_campaign_requires_state(tmp_path):

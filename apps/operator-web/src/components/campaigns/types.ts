@@ -1,8 +1,20 @@
 import type { DeckResponse, FluidStateSummary, GantryResponse } from "../../types";
 
 export type CampaignState =
-  | "running" | "paused" | "awaiting_observation" | "completed"
+  | "running" | "paused" | "awaiting_observation" | "awaiting_refill" | "completed"
   | "stopped" | "failed" | "interrupted";
+
+export interface RefillRequirement {
+  target: string;
+  available_ul: number;
+  required_ul: number;
+  capacity_ul: number;
+}
+export interface PendingCampaignBatch {
+  batch_index: number;
+  run_id?: string | null;
+  [key: string]: unknown;
+}
 
 export interface CampaignBinding { step_index: number; argument: string }
 export interface CampaignParameter {
@@ -34,6 +46,9 @@ export interface CampaignRecord {
   campaign_id: string | number; spec: CampaignSpec; state: CampaignState; created_at: string | number; updated_at: string | number;
   active_run_id: string | null; trials: CampaignTrial[]; best_objective: number | null; stop_reason: string | null;
   error: string | null; pause_requested: boolean; stop_requested: boolean;
+  pause_reason?: "operator" | "inventory_refill" | null;
+  pending_batch?: PendingCampaignBatch | null;
+  refill_requirements?: RefillRequirement[];
 }
 export interface ProtocolStep { command: string; args: Record<string, unknown> }
 export interface ColorCampaignSetup {
@@ -41,7 +56,11 @@ export interface ColorCampaignSetup {
   target_mode?: "camera" | "rgb";
   target_rgb?: [number, number, number] | null;
   target_lab?: [number, number, number] | null; red_source: string;
-  yellow_source: string; blue_source: string; candidate_wells: string[];
+  yellow_source: string; blue_source: string;
+  diluent_source?: string | null;
+  component_min_ul?: number;
+  component_max_ul?: number;
+  candidate_wells: string[];
   camera_instrument: string; roi_fraction: number;
   image_height?: number | null;
   expected_center?: [number, number] | null;
@@ -65,6 +84,9 @@ export interface ColorSetupDraft {
   red_source: string;
   yellow_source: string;
   blue_source: string;
+  diluent_source?: string | null;
+  component_min_ul?: number;
+  component_max_ul?: number;
   candidate_wells: string[];
   camera_instrument: string;
   roi_fraction: number;

@@ -96,6 +96,68 @@ def test_create_fluid_state_returns_summary(monkeypatch, tmp_path: Path):
     assert isinstance(body["id"], int)
 
 
+def test_reconcile_stock_requires_audit_fields_and_updates_durable_volume(
+    monkeypatch, tmp_path: Path,
+):
+    _write_deck_config(monkeypatch, tmp_path)
+    app = create_app()
+    state_id = api_request(
+        app,
+        "POST",
+        "/api/v1/fluid-states",
+        json={
+            "deck_file": "state-deck.yaml",
+            "fluids": {"source": {"volume_ul": 100.0, "composition": {"buffer": 100.0}}},
+        },
+    ).json()["id"]
+
+    response = api_request(
+        app,
+        "POST",
+        f"/api/v1/fluid-states/{state_id}/reconcile-stock",
+        json={
+            "target": "source",
+            "volume_ul": 350.0,
+            "composition": {"buffer": 350.0},
+            "operation_key": "stock-refill-1",
+            "operator": "alexc",
+            "reason": "Measured replacement before batch 2",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "applied"
+    assert response.json()["target"] == "source"
+    containers = api_request(
+        app, "GET", f"/api/v1/fluid-states/{state_id}/containers"
+    ).json()
+    assert next(row for row in containers if row["labware_key"] == "source")[
+        "current_volume_ul"
+    ] == 350.0
+    operations = api_request(
+        app, "GET", f"/api/v1/fluid-states/{state_id}/operations?pending_only=false"
+    ).json()["operations"]
+    audit = next(op for op in operations if op["operation_key"] == "stock-refill-1")
+    assert audit["operation_type"] == "stock_reconciliation"
+    assert audit["detail"] == "[alexc] Measured replacement before batch 2"
+    assert audit["context"]["previous_volume_ul"] == 100.0
+
+    retry = api_request(
+        app,
+        "POST",
+        f"/api/v1/fluid-states/{state_id}/reconcile-stock",
+        json={
+            "target": "source",
+            "volume_ul": 350.0,
+            "composition": {"buffer": 350.0},
+            "operation_key": "stock-refill-1",
+            "operator": "alexc",
+            "reason": "Measured replacement before batch 2",
+        },
+    )
+    assert retry.status_code == 200
+
+
 def test_create_fluid_state_accepts_explicit_physical_tip_inventory(
     monkeypatch, tmp_path: Path,
 ):

@@ -285,8 +285,8 @@ it("reviews a rejected target on the saved frame before building the color campa
   expect(screen.getByText("expected_center_unverified")).toBeInTheDocument();
   fireEvent.click(savedImage, { clientX: 455, clientY: 317 });
   fireEvent.click(screen.getByRole("button", { name: "Analyze saved frame at selected center" }));
-  const buildButton = await screen.findByRole("button", { name: "Build campaign from accepted target" });
-  fireEvent.click(buildButton);
+  await screen.findByRole("button", { name: "Build campaign from accepted target" });
+  fireEvent.click(screen.getByRole("button", { name: "Build campaign from accepted target" }));
   await waitFor(() => expect(screen.getByLabelText("Campaign name")).toHaveValue("CIEDE2000 color matching"));
   expect(selectedRun).toHaveBeenCalledTimes(1);
   expect(setupBody).toMatchObject({
@@ -302,6 +302,37 @@ it("reviews a rejected target on the saved frame before building the color campa
     blue_source: "stocks.A3",
   });
   expect(screen.getByText(/Campaign protocol ade_color_matching_1234.yaml is ready/)).toBeInTheDocument();
+});
+
+it("lets an accepted camera target be changed or retaken without keeping stale build evidence", async () => {
+  localStorage.setItem("cubos.active-learning.target-review", JSON.stringify({
+    runId: "accepted-target-1",
+    measurement: {
+      measurement_status: "accepted",
+      lab: [42, 12, 18],
+      processing_profile: { id: "profile-v1", calibration_status: "uncalibrated" },
+    },
+    selectedCenter: { x: 0.5, y: 0.5 },
+    targetWell: "plate.C7",
+    cameraInstrument: "camera",
+    roiFraction: 0.5,
+    captureImageHeight: "",
+    selectionNeedsAnalysis: false,
+  }));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+
+  render(<CampaignPanel gantryFile="g.yaml" deckFile="d.yaml" protocolFile="p.yaml" />);
+  expect(screen.getByRole("button", { name: "Change target well" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retake plate.C7 target photo" })).toBeInTheDocument();
+  expect(screen.queryByLabelText("Target well")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole("button", { name: "Change target well" }));
+  const targetWell = screen.getByLabelText("Target well");
+  expect(targetWell).toHaveValue("plate.C7");
+  expect(screen.getByRole("button", { name: "Build campaign from accepted target" })).toBeInTheDocument();
+  fireEvent.change(targetWell, { target: { value: "plate.C6" } });
+  expect(screen.queryByRole("button", { name: "Build campaign from accepted target" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Capture plate.C6 target for review" })).toBeEnabled();
 });
 
 it("keeps a failed target preflight visible beside the capture action", async () => {
@@ -325,4 +356,24 @@ it("keeps a failed target preflight visible beside the capture action", async ()
   expect(screen.getByText("cub_deck.yaml")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Open run" }));
   expect(selectedRun).toHaveBeenCalledWith("target-failed-1");
+});
+
+it("reveals the water diluent fields only once enabled, with a stocks.A4 default", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+  render(<CampaignPanel gantryFile="g.yaml" deckFile="d.yaml" protocolFile="p.yaml" />);
+  await screen.findByLabelText("Water (diluent)");
+
+  expect(screen.getByLabelText("Water (diluent)")).not.toBeChecked();
+  expect(screen.queryByLabelText("Water source")).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByLabelText("Water (diluent)"));
+  expect(screen.getByLabelText("Water source")).toHaveValue("stocks.A4");
+  expect(screen.getByLabelText("Dye minimum microliters")).toHaveValue(50);
+  expect(screen.getByLabelText("Dye maximum microliters")).toHaveValue(200);
+
+  fireEvent.change(screen.getByLabelText("Water source"), { target: { value: "stocks.B1" } });
+  expect(screen.getByLabelText("Water source")).toHaveValue("stocks.B1");
+
+  fireEvent.click(screen.getByLabelText("Water (diluent)"));
+  expect(screen.queryByLabelText("Water source")).not.toBeInTheDocument();
 });

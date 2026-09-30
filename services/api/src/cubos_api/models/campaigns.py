@@ -1,6 +1,7 @@
 """Operator-authored active-learning campaign specifications and records."""
 from __future__ import annotations
 
+import math
 from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -117,6 +118,24 @@ class CampaignSubmission(CampaignModel):
     spec: CampaignSpec
 
 
+class PendingBatch(CampaignModel):
+    """Exact compiled batch retained while inventory is being replenished."""
+
+    batch_index: int = Field(ge=1)
+    parameters: list[dict[str, float]] = Field(min_length=1, max_length=6)
+    protocol_yaml: str = Field(min_length=1)
+    objective_paths: list[str] = Field(min_length=1, max_length=6)
+    sample_map: list[dict[str, Any]] = Field(min_length=1, max_length=6)
+    run_id: str | None = None
+
+
+class RefillRequirement(CampaignModel):
+    target: str = Field(min_length=1, max_length=160)
+    available_ul: float = Field(ge=0)
+    required_ul: float = Field(ge=0)
+    capacity_ul: float = Field(ge=0)
+
+
 class Observation(CampaignModel):
     value: float
 
@@ -164,7 +183,10 @@ class ColorCampaignSetup(CampaignModel):
     red_source: str = Field(default="stocks.A1", min_length=1, max_length=160)
     yellow_source: str = Field(default="stocks.A2", min_length=1, max_length=160)
     blue_source: str = Field(default="stocks.A3", min_length=1, max_length=160)
-    candidate_wells: list[str] = Field(min_length=6, max_length=32)
+    diluent_source: str | None = Field(default=None, min_length=1, max_length=160)
+    component_min_ul: float = Field(default=50.0, ge=5)
+    component_max_ul: float = Field(default=200.0)
+    candidate_wells: list[str] = Field(min_length=6, max_length=96)
     camera_instrument: str = Field(default="camera", min_length=1, max_length=80)
     roi_fraction: float = Field(default=0.5, gt=0, le=1)
     expected_center: tuple[float, float] | None = None
@@ -188,8 +210,38 @@ class ColorCampaignSetup(CampaignModel):
             raise ValueError("Candidate wells must be unique")
         if self.target_mode == "camera" and self.target_well in self.candidate_wells:
             raise ValueError("Target well cannot also be a candidate well")
-        if len(self.candidate_wells) * 3 > 96:
-            raise ValueError("Color matching requires three fresh tips per candidate")
+        component_count = 4 if self.diluent_source is not None else 3
+        if self.batch_size == 1:
+            required_tips = len(self.candidate_wells) * component_count
+        else:
+            required_tips = sum(
+                component_count + min(self.batch_size, len(self.candidate_wells) - start)
+                for start in range(0, len(self.candidate_wells), self.batch_size)
+            )
+        if required_tips > 96:
+            raise ValueError(
+                f"Color matching requires {required_tips} fresh tips for "
+                f"{len(self.candidate_wells)} candidates with batch size {self.batch_size}; "
+                "a tip rack holds 96"
+            )
+        if self.diluent_source is not None:
+            if self.component_max_ul < self.component_min_ul:
+                raise ValueError(
+                    "component_max_ul must be greater than or equal to component_min_ul"
+                )
+            if not math.isclose(
+                self.component_min_ul, round(self.component_min_ul / 5.0) * 5.0,
+                abs_tol=1e-9,
+            ):
+                raise ValueError(
+                    "component_min_ul must be a multiple of the 5 µL dosing step "
+                    "so every component lands on the shared volume grid"
+                )
+            if 3 * self.component_min_ul + 5 > 300:
+                raise ValueError(
+                    "component_min_ul leaves no room for at least 5 µL of water "
+                    "once red, yellow, and blue are all at their minimum"
+                )
         if self.expected_center is not None and any(
             value < 0 or value > 1 for value in self.expected_center
         ):
@@ -288,7 +340,10 @@ class ColorCampaignPresetDraft(CampaignModel):
     red_source: str = Field(default="stocks.A1", min_length=1, max_length=160)
     yellow_source: str = Field(default="stocks.A2", min_length=1, max_length=160)
     blue_source: str = Field(default="stocks.A3", min_length=1, max_length=160)
-    candidate_wells: list[str] = Field(min_length=1, max_length=32)
+    diluent_source: str | None = Field(default=None, min_length=1, max_length=160)
+    component_min_ul: float = Field(default=50.0, ge=5)
+    component_max_ul: float = Field(default=200.0)
+    candidate_wells: list[str] = Field(min_length=1, max_length=96)
     camera_instrument: str = Field(default="camera", min_length=1, max_length=80)
     roi_fraction: float = Field(default=0.5, gt=0, le=1)
     image_height: float | None = None
@@ -317,6 +372,10 @@ class ColorCampaignPresetDraft(CampaignModel):
             raise ValueError("Camera targets cannot include target_rgb")
         if self.target_mode == "rgb" and self.target_rgb is None:
             raise ValueError("RGB targets require target_rgb")
+        if self.diluent_source is not None and self.component_max_ul < self.component_min_ul:
+            raise ValueError(
+                "component_max_ul must be greater than or equal to component_min_ul"
+            )
         return self
 
 
@@ -355,7 +414,7 @@ class CampaignPresetSummary(CampaignModel):
 class CampaignRecord(CampaignModel):
     campaign_id: str
     spec: CampaignSpec
-    state: Literal["running", "paused", "awaiting_observation", "completed", "stopped", "failed", "interrupted"] = "running"
+    state: Literal["running", "paused", "awaiting_observation", "awaiting_refill", "completed", "stopped", "failed", "interrupted"] = "running"
     created_at: float
     updated_at: float
     active_run_id: str | None = None
@@ -366,3 +425,6 @@ class CampaignRecord(CampaignModel):
     fluid_state_reconciliation_note: str | None = None
     pause_requested: bool = False
     stop_requested: bool = False
+    pause_reason: Literal["operator", "inventory_refill"] | None = None
+    pending_batch: PendingBatch | None = None
+    refill_requirements: list[RefillRequirement] = Field(default_factory=list)

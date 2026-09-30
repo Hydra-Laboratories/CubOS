@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CameraMonitorModel(BaseModel):
@@ -56,7 +56,7 @@ class CameraMonitorStatus(CameraMonitorModel):
     expected_well: str | None = None
     expected_center: NormalizedPoint | None = None
     expected_center_source: Literal[
-        "operator_selected", "registered_calibration"
+        "operator_selected", "registered_calibration", "frame_center"
     ] | None = None
     well_identity_verification: Literal["not_verified_by_cv"] = "not_verified_by_cv"
     roi: dict[str, Any] | None = None
@@ -89,8 +89,17 @@ class CameraControlsResponse(CameraMonitorModel):
 class CameraControlUpdates(CameraMonitorModel):
     exposure: float | None = None
     white_balance: float | None = None
+    auto_white_balance: bool | None = None
     focus: float | None = None
     brightness: float | None = None
+
+    @model_validator(mode="after")
+    def reject_manual_white_balance_with_auto(self) -> CameraControlUpdates:
+        if self.auto_white_balance is True and self.white_balance is not None:
+            raise ValueError(
+                "white_balance cannot be set while auto_white_balance is enabled"
+            )
+        return self
 
 
 class SetCameraControlsRequest(CameraMonitorModel):

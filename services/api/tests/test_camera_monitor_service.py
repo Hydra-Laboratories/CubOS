@@ -92,6 +92,8 @@ def test_start_status_frame_and_stop_have_bounded_monitor_lifecycle():
         "step_index": 11,
         "step_command": "measure_color",
         "expected_well": "plate.A3",
+        "expected_center": {"x": 0.5, "y": 0.5},
+        "expected_center_source": "frame_center",
         "analysis": {
             "image_path": "/images/prior.tiff",
             "roi": {"center_x_px": 455.0, "center_y_px": 317.0},
@@ -115,6 +117,8 @@ def test_start_status_frame_and_stop_have_bounded_monitor_lifecycle():
     assert status.actual_resolution.model_dump() == {"width": 800, "height": 600}
     assert status.actual_pixel_format == "YUYV"
     assert status.expected_well == "plate.A3"
+    assert status.expected_center.model_dump() == {"x": 0.5, "y": 0.5}
+    assert status.expected_center_source == "frame_center"
     assert status.well_identity_verification == "not_verified_by_cv"
     assert status.roi is None
     assert status.latest_analysis["roi"] == context["analysis"]["roi"]
