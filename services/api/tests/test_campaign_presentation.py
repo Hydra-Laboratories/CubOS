@@ -58,6 +58,7 @@ class FakeRuns:
 
 def campaign(tmp_path: Path, trials, *, state="completed", target_rgb=(120.0, 40.0, 160.0)):
     spec = SimpleNamespace(
+        name="test campaign",
         target_mode="rgb", target_rgb=target_rgb,
         objective=SimpleNamespace(direction="minimize"),
     )
@@ -81,6 +82,8 @@ def test_projection_uses_only_accepted_trials_for_best_and_preserves_quality(tmp
         "rgb": [20, 30, 40], "lab": [10, 2, -3],
         "quality": {"accepted": True}, "processing_profile_id": "profile-a",
         "measurement_status": "accepted", "comparison_status": "accepted",
+        "frame_metadata": {"width": 800, "height": 600},
+        "roi": {"center_x_px": 400, "center_y_px": 300, "radius_px": 25},
     }
     rejected_measurement = {
         "rgb": [120, 130, 140], "lab": [55, 2, -1],
@@ -100,6 +103,10 @@ def test_projection_uses_only_accepted_trials_for_best_and_preserves_quality(tmp
     assert result.attempts[1]["accepted"] is False
     assert result.attempts[1]["measurement"]["quality"]["rejection_reasons"] == ["blur"]
     assert result.attempts[2]["measurement"] is None
+    assert result.attempts[0]["measurement"]["frame"] == {
+        "width_px": 800, "height_px": 600,
+    }
+    assert result.attempts[0]["measurement"]["roi"]["radius_px"] == 25
 
 
 def test_legacy_camera_target_is_explicitly_unverified_and_not_inferred(tmp_path):
@@ -224,6 +231,54 @@ def test_asset_catalog_rejects_outside_paths_and_symlink_escape(tmp_path, monkey
     assert service.resolve_asset("campaign-1", "../secret") is None
 
 
+def test_tiff_asset_has_lossless_browser_png_without_changing_export_source(tmp_path, monkeypatch):
+    import cv2
+    import numpy as np
+    import cubos_api.services.campaign_presentation as module
+
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    source = image_root / "well.tiff"
+    pixels = np.array([
+        [[0, 10, 255], [30, 20, 10]],
+        [[255, 0, 40], [80, 90, 100]],
+    ], dtype=np.uint8)
+    assert cv2.imwrite(str(source), pixels)
+    monkeypatch.setattr(module, "default_images_dir", lambda: image_root)
+    record = campaign(tmp_path, [trial(0, 2.0, measurement={"image_path": str(source)})])
+    service = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    )
+    projection = service.project("campaign-1")
+    asset_id = projection.attempts[0]["raw_image_asset_id"]
+    rendered, media_type = service.browser_asset("campaign-1", asset_id)
+    assert isinstance(rendered, bytes)
+    assert media_type == "image/png"
+    decoded = cv2.imdecode(np.frombuffer(rendered, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    assert np.array_equal(decoded, pixels)
+    with zipfile.ZipFile(io.BytesIO(service.export_zip("campaign-1"))) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        raw = next(item for item in manifest["assets"] if item["role"] == "raw")
+        assert archive.read(raw["file"]) == source.read_bytes()
+
+
+def test_browser_asset_rejects_unsupported_format(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_presentation as module
+
+    image_root = tmp_path / "images"
+    image_root.mkdir()
+    source = image_root / "well.xyz"
+    source.write_bytes(b"unknown")
+    monkeypatch.setattr(module, "default_images_dir", lambda: image_root)
+    record = campaign(tmp_path, [trial(0, 2.0, measurement={"image_path": str(source)})])
+    service = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    )
+    asset_id = service.project("campaign-1").attempts[0]["raw_image_asset_id"]
+    with pytest.raises(module.AssetPreviewError, match="Unsupported"):
+        service.browser_asset("campaign-1", asset_id)
+
+
 def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
     record = campaign(tmp_path, [])
     record.spec.target_mode = "camera"
@@ -239,9 +294,14 @@ def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
         run_dir.mkdir(parents=True)
         (run_dir / "color-target-source.tiff").write_bytes(run_id.encode())
         (run_dir / "color-target-analysis-2.png").write_bytes(b"annotated")
-        (run_dir / "color-target-analysis-2.json").write_text(
-            json.dumps({"schema": "cubos.color-target-reanalysis.v1", "revision": 2})
-        )
+        (run_dir / "color-target-analysis-2.json").write_text(json.dumps({
+            "schema": "cubos.color-target-reanalysis.v1", "revision": 2,
+            "analysis": {
+                "quality": {"accepted": True},
+                "frame_metadata": {"width": 800, "height": 600},
+                "roi": {"center_x_px": 401, "center_y_px": 302, "radius_px": 24},
+            },
+        }))
         records[run_id] = SimpleNamespace(
             metadata={"color_target_source_artifact": "color-target-source.tiff"},
             started_at=None, finished_at=None,
@@ -252,6 +312,10 @@ def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
     )
     projection = service.project("campaign-1")
     assert set(projection.target["assets"]) == {"target_raw", "target_annotated"}
+    assert projection.target["raw_image_asset_id"]
+    assert projection.target["annotated_image_asset_id"]
+    assert projection.target["measurement"]["frame"]["width_px"] == 800
+    assert projection.target["measurement"]["roi"]["radius_px"] == 24
     selected_ids = set(projection.target["assets"].values())
     other_path = tmp_path / "runs" / "other-target" / "color-target-source.tiff"
     unlinked_id = service._asset_id("campaign-1", "target", "raw", other_path)
@@ -375,6 +439,11 @@ def test_native_campaign_and_run_store_roundtrip_exports_frozen_evidence(tmp_pat
     (target_dir / "color-target-analysis-0.json").write_text(json.dumps({
         "schema": "cubos.color-target-reanalysis.v1", "revision": 0,
         "source_image_sha256": "0" * 64,
+        "analysis": {
+            "quality": {"accepted": True},
+            "frame_metadata": {"width": 800, "height": 600},
+            "roi": {"center_x_px": 400, "center_y_px": 300, "radius_px": 25},
+        },
     }))
     target.metadata.update({
         "color_target_source_artifact": "color-target-source.tiff",
@@ -395,6 +464,8 @@ def test_native_campaign_and_run_store_roundtrip_exports_frozen_evidence(tmp_pat
         "delta_e_00": 2.0, "measurement_status": "accepted",
         "comparison_status": "accepted", "quality": {"accepted": True},
         "reference_processing_profile_id": "profile-v1",
+        "frame_metadata": {"width": 800, "height": 600},
+        "roi": {"center_x_px": 399, "center_y_px": 301, "radius_px": 26},
     }
     child = RunRecord(
         run_id="trial-native", state="succeeded", created_at=100.0,
@@ -447,7 +518,11 @@ def test_native_campaign_and_run_store_roundtrip_exports_frozen_evidence(tmp_pat
     service = CampaignPresentationService(campaigns, runs)
     projection = service.project(record.campaign_id)
     assert projection.target["accepted"] is True
+    assert projection.campaign_name == "native evidence"
+    assert projection.target["measurement"]["roi"]["radius_px"] == 25
     assert projection.attempts[0]["score_eligible"] is True
+    assert projection.attempts[0]["raw_image_asset_id"]
+    assert projection.attempts[0]["measurement"]["roi"]["radius_px"] == 26
     assert projection.attempts[0]["reveal_event_sequence"] is not None
     with zipfile.ZipFile(io.BytesIO(service.export_zip(record.campaign_id))) as archive:
         manifest = json.loads(archive.read("manifest.json"))

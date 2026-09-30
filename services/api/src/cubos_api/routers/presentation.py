@@ -7,7 +7,10 @@ from fastapi.responses import FileResponse, Response
 
 from cubos_api.models.presentation import DemoMarker, DemoMarkerRequest, PresentationResponse
 from cubos_api.services.campaign_manager import get_campaign_manager
-from cubos_api.services.campaign_presentation import CampaignPresentationService
+from cubos_api.services.campaign_presentation import (
+    AssetPreviewError,
+    CampaignPresentationService,
+)
 from cubos_api.services.run_manager import get_run_manager
 
 router = APIRouter(prefix="/api/v1/campaigns", tags=["campaign-presentation"])
@@ -36,14 +39,19 @@ def create_marker(campaign_id: str, body: DemoMarkerRequest) -> DemoMarker:
 
 
 @router.get("/{campaign_id}/presentation/assets/{asset_id}", response_class=FileResponse)
-def get_asset(campaign_id: str, asset_id: str) -> FileResponse:
+def get_asset(campaign_id: str, asset_id: str) -> Response:
     try:
-        path = _service().resolve_asset(campaign_id, asset_id)
+        payload, media_type = _service().browser_asset(campaign_id, asset_id)
     except KeyError as exc:
         raise HTTPException(404, "Campaign not found") from exc
-    if path is None:
+    except FileNotFoundError:
         raise HTTPException(404, "Presentation asset not found")
-    return FileResponse(path, headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+    except AssetPreviewError as exc:
+        raise HTTPException(415, str(exc)) from exc
+    headers = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+    if isinstance(payload, Path):
+        return FileResponse(payload, media_type=media_type, headers=headers)
+    return Response(payload, media_type=media_type, headers=headers)
 
 
 @router.get("/{campaign_id}/presentation/export.zip")

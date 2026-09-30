@@ -23,9 +23,15 @@ SCHEMA_VERSION = "1"
 EXPORT_SCHEMA_VERSION = "cubos.campaign-presentation-export.v1"
 MAX_EXPORT_BYTES = 128 * 1024 * 1024
 MAX_JSON_BYTES = 8 * 1024 * 1024
+MAX_BROWSER_SOURCE_BYTES = 64 * 1024 * 1024
+MAX_BROWSER_PIXELS = 25_000_000
 MAX_ASSETS = 256
 _annotation_locks: dict[str, threading.Lock] = {}
 _annotation_locks_guard = threading.Lock()
+
+
+class AssetPreviewError(ValueError):
+    pass
 
 
 def _lock_for(campaign_id: str) -> threading.Lock:
@@ -73,6 +79,38 @@ def _image_paths(measurement: dict[str, Any] | None) -> list[tuple[str, Path]]:
         if isinstance(value, str) and value:
             result.append((role, Path(value)))
     return result
+
+
+def _frame_and_roi(measurement: dict[str, Any] | None) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    if not isinstance(measurement, dict):
+        return None, None
+    raw_roi = measurement.get("roi")
+    roi = None
+    if isinstance(raw_roi, dict):
+        roi = {
+            key: raw_roi.get(key)
+            for key in (
+                "center_x_px", "center_y_px", "radius_px", "sample_radius_px",
+                "expected_center_x_px", "expected_center_y_px",
+            )
+        }
+    metadata = measurement.get("frame_metadata")
+    width = metadata.get("width") if isinstance(metadata, dict) else None
+    height = metadata.get("height") if isinstance(metadata, dict) else None
+    profile = measurement.get("processing_profile")
+    configuration = profile.get("configuration") if isinstance(profile, dict) else None
+    properties = (
+        configuration.get("image_properties")
+        if isinstance(configuration, dict) else None
+    )
+    if isinstance(properties, dict):
+        width = width if width is not None else properties.get("width_px")
+        height = height if height is not None else properties.get("height_px")
+    frame = (
+        {"width_px": width, "height_px": height}
+        if width is not None and height is not None else None
+    )
+    return frame, roi
 
 
 class CampaignPresentationService:
@@ -180,11 +218,65 @@ class CampaignPresentationService:
                 catalog[asset_id] = {"path": path, "role": role, "trial_id": trial_id}
         return catalog
 
+    def _target_analysis(self, record) -> dict[str, Any] | None:
+        run_id = getattr(record.spec, "target_run_id", None)
+        revision = getattr(record.spec, "target_analysis_revision", None)
+        if not run_id or revision is None:
+            return None
+        path = self.runs.store.artifact_path(
+            run_id, f"color-target-analysis-{revision}.json",
+        )
+        path = self._allowed_path(path) if path else None
+        if path is None:
+            return None
+        payload = _read_snapshot(path, MAX_JSON_BYTES)
+        if payload is None:
+            return None
+        try:
+            document = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        analysis = document.get("analysis") if isinstance(document, dict) else None
+        return analysis if isinstance(analysis, dict) else None
+
     def resolve_asset(self, campaign_id: str, asset_id: str) -> Path | None:
         if len(asset_id) != 32 or any(ch not in "0123456789abcdef" for ch in asset_id):
             return None
         entry = self._asset_catalog(campaign_id).get(asset_id)
         return self._allowed_path(entry["path"]) if entry else None
+
+    def browser_asset(self, campaign_id: str, asset_id: str) -> tuple[Path | bytes, str]:
+        """Return a browser-safe rendition while preserving source assets for export."""
+        path = self.resolve_asset(campaign_id, asset_id)
+        if path is None:
+            raise FileNotFoundError(asset_id)
+        suffix = path.suffix.lower()
+        browser_types = {
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif",
+        }
+        if suffix in browser_types:
+            return path, browser_types[suffix]
+        if suffix not in {".tif", ".tiff"}:
+            raise AssetPreviewError(f"Unsupported presentation image format: {suffix or 'none'}")
+        source = _read_snapshot(path, MAX_BROWSER_SOURCE_BYTES)
+        if source is None:
+            raise AssetPreviewError("Presentation image exceeds the browser preview limit")
+        try:
+            import cv2
+            import numpy as np
+        except ImportError as exc:
+            raise AssetPreviewError("TIFF preview requires the camera image dependency") from exc
+        frame = cv2.imdecode(np.frombuffer(source, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+        if frame is None or frame.ndim not in {2, 3}:
+            raise AssetPreviewError("Presentation TIFF could not be decoded")
+        height, width = frame.shape[:2]
+        if width <= 0 or height <= 0 or width * height > MAX_BROWSER_PIXELS:
+            raise AssetPreviewError("Presentation image dimensions exceed the preview limit")
+        encoded, payload = cv2.imencode(".png", frame)
+        if not encoded:
+            raise AssetPreviewError("Presentation TIFF could not be encoded as PNG")
+        return payload.tobytes(), "image/png"
 
     def project(self, campaign_id: str) -> PresentationResponse:
         record = self.campaigns.get(campaign_id)
@@ -194,6 +286,8 @@ class CampaignPresentationService:
             entry["role"]: asset_id
             for asset_id, entry in catalog.items() if entry["trial_id"] == "target"
         }
+        target_analysis = self._target_analysis(record)
+        target_frame, target_roi = _frame_and_roi(target_analysis)
         target_rgb = list(record.spec.target_rgb) if record.spec.target_rgb else None
         target_lab = (
             list(rgb_to_lab(record.spec.target_rgb))
@@ -214,10 +308,12 @@ class CampaignPresentationService:
                 "rgb": target_rgb,
                 "lab": target_lab,
                 "delta_e": 0.0,
-                "quality": None,
+                "quality": _measurement_quality(target_analysis),
                 "profile": (
                     {"id": profile_id} if isinstance(profile_id, str) else profile_id
                 ),
+                "frame": target_frame,
+                "roi": target_roi,
             },
             "processing_profile_id": profile_id,
             "accepted": bool(
@@ -235,6 +331,8 @@ class CampaignPresentationService:
                 target_assets.get("target_annotated")
                 or target_assets.get("target_raw")
             ),
+            "raw_image_asset_id": target_assets.get("target_raw"),
+            "annotated_image_asset_id": target_assets.get("target_annotated"),
             "assets": target_assets,
         }
         if record.spec.target_mode == "camera" and "target_raw" not in target_assets:
@@ -253,6 +351,7 @@ class CampaignPresentationService:
                 missing.append(f"{trial_id}.raw_image")
             run = self.runs.get(trial.run_id)
             quality = _measurement_quality(measurement)
+            frame, roi = _frame_and_roi(measurement)
             objective_finite = (
                 isinstance(trial.objective, (int, float))
                 and not isinstance(trial.objective, bool)
@@ -296,8 +395,12 @@ class CampaignPresentationService:
                     "reference_lab": measurement.get("reference_lab"),
                     "quality": _measurement_quality(measurement),
                     "profile": _profile(measurement),
+                    "frame": frame,
+                    "roi": roi,
                 } if measurement else None),
                 "image_asset_id": assets.get("annotated") or assets.get("raw"),
+                "raw_image_asset_id": assets.get("raw"),
+                "annotated_image_asset_id": assets.get("annotated"),
                 "assets": assets,
                 "started_at": run.started_at if run else None,
                 "completed_at": run.finished_at if run else None,
@@ -346,7 +449,8 @@ class CampaignPresentationService:
                 attempt["reveal_at"] = reveal["server_time"]
         partial = record.state not in {"completed", "stopped", "failed", "interrupted"} or bool(missing)
         return PresentationResponse(
-            campaign_id=campaign_id, status=record.state, target=target,
+            campaign_id=campaign_id, campaign_name=record.spec.name,
+            status=record.state, target=target,
             attempts=attempts, best=best, events=events,
             markers=self._read_markers(campaign_id), partial=partial,
             missing=sorted(set(missing)),
