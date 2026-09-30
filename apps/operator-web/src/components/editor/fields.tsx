@@ -270,6 +270,68 @@ export function CoordinateField({ id, name, label, value, onChange, required }: 
   );
 }
 
+interface Coordinate2DFieldProps {
+  id?: string;
+  name?: string;
+  label: string;
+  value: { x: number; y: number };
+  onChange: (v: { x: number; y: number }) => void;
+  required?: boolean;
+}
+
+/** XY-only variant of CoordinateField for calibration points whose Z is
+ * defined elsewhere (e.g. a tip rack's pickup_z). */
+export function Coordinate2DField({ id, name, label, value, onChange, required }: Coordinate2DFieldProps) {
+  const [state, setState] = useState({
+    rx: String(value.x),
+    ry: String(value.y),
+    x: value.x,
+    y: value.y,
+  });
+  if (value.x !== state.x || value.y !== state.y) {
+    setState({ rx: String(value.x), ry: String(value.y), x: value.x, y: value.y });
+  }
+  const { rx, ry } = state;
+  const setRx = (next: string) => setState({ ...state, rx: next });
+  const setRy = (next: string) => setState({ ...state, ry: next });
+
+  return (
+    <div style={{ fontSize: 12 }}>
+      <span style={theme.fieldLabel}>{label}{required && <span style={{ color: theme.color.danger }}> *</span>}</span>
+      <div style={{ ...coordinateGridStyle, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+        <label style={axisFieldStyle}>
+          <span style={axisLabelStyle}>X</span>
+          <input
+            id={id ? `${id}-x` : undefined}
+            name={name ? `${name}_x` : undefined}
+            aria-label={`${label} X`}
+            type="text"
+            inputMode="decimal"
+            value={rx}
+            onChange={(e) => { setRx(e.target.value); const n = tryParse(e.target.value); if (n !== null) onChange({ ...value, x: n }); }}
+            onBlur={() => setRx(String(value.x))}
+            style={{ ...inputStyle, width: "100%" }}
+          />
+        </label>
+        <label style={axisFieldStyle}>
+          <span style={axisLabelStyle}>Y</span>
+          <input
+            id={id ? `${id}-y` : undefined}
+            name={name ? `${name}_y` : undefined}
+            aria-label={`${label} Y`}
+            type="text"
+            inputMode="decimal"
+            value={ry}
+            onChange={(e) => { setRy(e.target.value); const n = tryParse(e.target.value); if (n !== null) onChange({ ...value, y: n }); }}
+            onBlur={() => setRy(String(value.y))}
+            style={{ ...inputStyle, width: "100%" }}
+          />
+        </label>
+      </div>
+    </div>
+  );
+}
+
 const inputStyle: React.CSSProperties = {
   ...theme.input,
 };
