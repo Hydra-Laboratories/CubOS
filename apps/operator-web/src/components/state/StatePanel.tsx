@@ -30,6 +30,7 @@ function formatVolume(value: number): string {
 }
 
 interface ResolveFormState {
+  fluid_state_id: number;
   operation: OperationView;
   resolution: string;
   operator: string;
@@ -37,6 +38,7 @@ interface ResolveFormState {
 }
 
 interface EditingCellState {
+  fluid_state_id: number;
   labware_key: string;
   location_id: string;
   version: number;
@@ -44,6 +46,7 @@ interface EditingCellState {
 }
 
 interface CorrectFormState {
+  fluid_state_id: number;
   labware_key: string;
   location_id: string;
   version: number;
@@ -85,12 +88,21 @@ export default function StatePanel() {
   );
 
   const openResolveForm = (operation: OperationView) => {
+    if (selectedId === null) return;
+    // Keep the fallback selection stable while the operator is reviewing a
+    // state-scoped action.  A refreshed list may otherwise choose a newer
+    // state before the form is submitted.
+    setExplicitSelectedId(selectedId);
     setResolveError(null);
-    setResolveForm({ operation, resolution: "applied", operator: "", reason: "" });
+    setResolveForm({ fluid_state_id: selectedId, operation, resolution: "applied", operator: "", reason: "" });
   };
 
   const submitResolve = async () => {
     if (!resolveForm) return;
+    if (resolveForm.fluid_state_id !== selectedId) {
+      setResolveForm(null);
+      return;
+    }
     if (!resolveForm.operator.trim() || !resolveForm.reason.trim()) {
       setResolveError("Operator and reason are both required.");
       return;
@@ -112,9 +124,14 @@ export default function StatePanel() {
   };
 
   const beginEditingVolume = (container: ContainerView) => {
+    if (selectedId === null) return;
+    // Keep the fallback selection stable while this draft is open; the
+    // correction must be sent to the state that supplied this container.
+    setExplicitSelectedId(selectedId);
     setCorrectError(null);
     suppressNextBlurRef.current = false;
     setEditingCell({
+      fluid_state_id: selectedId,
       labware_key: container.labware_key,
       location_id: container.location_id,
       version: container.version,
@@ -139,6 +156,7 @@ export default function StatePanel() {
     setEditingCell(null);
     if (!changed) return;
     setCorrectForm({
+      fluid_state_id: editing.fluid_state_id,
       labware_key: editing.labware_key,
       location_id: editing.location_id,
       version: editing.version,
@@ -169,6 +187,10 @@ export default function StatePanel() {
 
   const submitCorrect = async () => {
     if (!correctForm) return;
+    if (correctForm.fluid_state_id !== selectedId) {
+      setCorrectForm(null);
+      return;
+    }
     if (!correctForm.operator.trim() || !correctForm.reason.trim()) {
       setCorrectError("Operator and reason are both required.");
       return;
@@ -203,7 +225,16 @@ export default function StatePanel() {
           <select
             aria-label="Fluid state"
             value={selectedId ?? ""}
-            onChange={(event) => setExplicitSelectedId(event.target.value ? Number(event.target.value) : null)}
+            onChange={(event) => {
+              setResolveForm(null);
+              setResolveError(null);
+              setEditingCell(null);
+              setEditingValue("");
+              setCorrectForm(null);
+              setCorrectError(null);
+              suppressNextBlurRef.current = false;
+              setExplicitSelectedId(event.target.value ? Number(event.target.value) : null);
+            }}
             style={selectStyle}
           >
             <option value="">Select a fluid state…</option>
@@ -260,7 +291,7 @@ export default function StatePanel() {
             </div>
           )}
 
-          {resolveForm && (
+          {resolveForm?.fluid_state_id === selectedId && (
             <div style={resolveFormStyle}>
               <div style={theme.sectionLabel}>
                 Resolve {resolveForm.operation.domain} operation {resolveForm.operation.operation_key}
@@ -328,6 +359,7 @@ export default function StatePanel() {
                   <tbody>
                     {detail.data.containers.map((container) => {
                       const isEditing =
+                        editingCell?.fluid_state_id === selectedId &&
                         editingCell?.labware_key === container.labware_key &&
                         editingCell?.location_id === container.location_id;
                       const editing = isEditing ? editingCell : null;
@@ -372,7 +404,7 @@ export default function StatePanel() {
               </div>
             )}
 
-            {correctForm && (
+            {correctForm?.fluid_state_id === selectedId && (
               <div style={resolveFormStyle}>
                 <div style={theme.sectionLabel}>
                   Correct volume for {correctForm.labware_key}

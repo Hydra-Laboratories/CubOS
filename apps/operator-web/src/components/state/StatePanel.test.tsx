@@ -31,6 +31,12 @@ const SUMMARY: FluidStateSummary = {
   operation_count: 1,
 };
 
+const SECOND_SUMMARY: FluidStateSummary = {
+  ...SUMMARY,
+  id: 2,
+  label: "other run",
+};
+
 const CONTAINERS: ContainerView[] = [
   {
     labware_key: "source",
@@ -72,6 +78,11 @@ const DETAIL: FluidStateDetail = {
   containers: CONTAINERS,
   pending_operation_count: 1,
   reconciliation_required_count: 1,
+};
+
+const SECOND_DETAIL: FluidStateDetail = {
+  ...DETAIL,
+  id: 2,
 };
 
 const TIPS: TipStateResponse = {
@@ -120,6 +131,7 @@ function installFetchMock(
   overrides: {
     reconciliation?: ReconciliationResponse;
     correctContainer?: () => Response;
+    fluidStates?: FluidStateSummary[];
   } = {},
 ) {
   const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -130,8 +142,11 @@ function installFetchMock(
     const path = url.pathname;
     const method = init?.method ?? "GET";
 
-    if (path === "/api/v1/fluid-states" && method === "GET") return jsonResponse([SUMMARY]);
+    if (path === "/api/v1/fluid-states" && method === "GET") {
+      return jsonResponse(overrides.fluidStates ?? [SUMMARY]);
+    }
     if (path === "/api/v1/fluid-states/1" && method === "GET") return jsonResponse(DETAIL);
+    if (path === "/api/v1/fluid-states/2" && method === "GET") return jsonResponse(SECOND_DETAIL);
     if (path === "/api/v1/fluid-states/1/tips") return jsonResponse(TIPS);
     if (path === "/api/v1/fluid-states/1/caps") return jsonResponse(CAPS);
     if (path === "/api/v1/fluid-states/1/reconciliation" && method === "GET") {
@@ -327,6 +342,37 @@ describe("StatePanel", () => {
       );
       expect(detailCalls.length).toBeGreaterThan(1);
     });
+  });
+
+  it("discards a correction draft when switching fluid states", async () => {
+    const fetchMock = installFetchMock({
+      reconciliation: { fluid_state_id: 1, items: [] },
+      fluidStates: [SECOND_SUMMARY, SUMMARY],
+    });
+    const user = userEvent.setup();
+    renderPanel();
+
+    const select = screen.getByLabelText("Fluid state") as HTMLSelectElement;
+    await waitFor(() => expect(select.options).toHaveLength(3));
+    await user.selectOptions(select, "1");
+
+    const cell = await screen.findByText("100.000 / 400.000");
+    await user.dblClick(cell);
+    const input = await screen.findByLabelText("Edit volume for source");
+    await user.clear(input);
+    await user.type(input, "80");
+    await user.keyboard("{Enter}");
+    expect(await screen.findByText(/Correct volume for source/)).toBeInTheDocument();
+
+    await user.selectOptions(select, "2");
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Correct volume for source/)).not.toBeInTheDocument();
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/v1/fluid-states/2/containers/source",
+      expect.objectContaining({ method: "PATCH" }),
+    );
   });
 
   it("blocks submitting a correction with a blank operator or reason", async () => {
