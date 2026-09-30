@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { demoApi } from "./api";
+import { sha256File } from "./hashFile";
 import { eventFootageTimeMs, eventIndexForFootage, friendlyEventLabel, visiblePresentation } from "./replay";
 import type { DemoAttempt, DemoColorMeasurement } from "./types";
 import "./DemoPresentation.css";
@@ -231,8 +232,7 @@ export default function DemoPresentation() {
     const identity = { name: file.name, size: file.size, lastModified: file.lastModified };
     setRecordingIdentity(identity);
     try {
-      const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
-      const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const sha256 = await sha256File(file);
       setRecordingIdentity({ ...identity, sha256 });
     } catch {
       setRecordingIdentity(identity);
@@ -244,7 +244,8 @@ export default function DemoPresentation() {
   const saveMarker = async () => {
     if (!campaignId || !replay?.event || !recordingIdentity?.sha256 || !videoRef.current) return;
     setMarkerState("saving");
-    const clientId = markerClientIdRef.current ?? crypto.randomUUID();
+    const clientId = markerClientIdRef.current ?? globalThis.crypto?.randomUUID?.()
+      ?? `marker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     markerClientIdRef.current = clientId;
     try {
       await demoApi.addMarker(campaignId, {
