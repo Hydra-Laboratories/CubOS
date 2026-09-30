@@ -33,12 +33,13 @@ def _lock_for(campaign_id: str) -> threading.Lock:
         return _annotation_locks.setdefault(campaign_id, threading.Lock())
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
+def _read_snapshot(path: Path, limit: int) -> bytes | None:
+    """Read one bounded point-in-time payload for both ZIP and digest."""
+    if limit < 0:
+        return None
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+        payload = handle.read(limit + 1)
+    return payload if len(payload) <= limit else None
 
 
 def _measurement_quality(measurement: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -381,13 +382,14 @@ class CampaignPresentationService:
             for name in ("campaign.json", "gantry.yaml", "deck.yaml", "protocol.yaml", "presentation-annotations.json"):
                 path = campaign_dir / name
                 if path.is_file():
-                    size = path.stat().st_size
-                    if total + size <= MAX_EXPORT_BYTES:
-                        archive.write(path, f"campaign/{name}")
-                        total += size
+                    payload = _read_snapshot(path, MAX_EXPORT_BYTES - total)
+                    if payload is not None:
+                        archive.writestr(f"campaign/{name}", payload)
+                        total += len(payload)
                         manifest["snapshots"].append({
-                            "file": f"campaign/{name}", "sha256": _sha256(path),
-                            "bytes": size,
+                            "file": f"campaign/{name}",
+                            "sha256": hashlib.sha256(payload).hexdigest(),
+                            "bytes": len(payload),
                         })
                     else:
                         manifest["missing"].append(f"campaign/{name}:size_limit")
@@ -411,13 +413,14 @@ class CampaignPresentationService:
                 for name in artifact_names:
                     path = run_dir / name
                     if path.is_file():
-                        size = path.stat().st_size
-                        if total + size <= MAX_EXPORT_BYTES:
-                            archive.write(path, f"runs/{run_id}/{name}")
-                            total += size
+                        payload = _read_snapshot(path, MAX_EXPORT_BYTES - total)
+                        if payload is not None:
+                            archive.writestr(f"runs/{run_id}/{name}", payload)
+                            total += len(payload)
                             manifest["snapshots"].append({
                                 "file": f"runs/{run_id}/{name}",
-                                "sha256": _sha256(path), "bytes": size,
+                                "sha256": hashlib.sha256(payload).hexdigest(),
+                                "bytes": len(payload),
                             })
                         else:
                             manifest["missing"].append(
@@ -433,17 +436,19 @@ class CampaignPresentationService:
                 if path is None:
                     manifest["missing"].append(f"asset:{asset_id}")
                     continue
-                size = path.stat().st_size
-                if total + size > MAX_EXPORT_BYTES:
+                payload = _read_snapshot(path, MAX_EXPORT_BYTES - total)
+                if payload is None:
                     manifest["missing"].append("assets:size_limit_exceeded")
                     break
-                total += size
+                total += len(payload)
                 suffix = path.suffix.lower() or ".bin"
                 member = f"assets/{asset_id}{suffix}"
-                archive.write(path, member)
+                archive.writestr(member, payload)
                 manifest["assets"].append({
                     "id": asset_id, "file": member, "role": entry["role"],
-                    "trial_id": entry["trial_id"], "sha256": _sha256(path), "bytes": size,
+                    "trial_id": entry["trial_id"],
+                    "sha256": hashlib.sha256(payload).hexdigest(),
+                    "bytes": len(payload),
                 })
             manifest["missing"] = sorted(set(manifest["missing"]))
             manifest["partial"] = bool(manifest["partial"] or manifest["missing"])

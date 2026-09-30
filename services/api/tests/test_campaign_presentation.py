@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import time
 import zipfile
@@ -320,6 +321,39 @@ def test_export_rejects_payload_over_final_size_limit(tmp_path, monkeypatch):
     )
     with pytest.raises(OverflowError, match="ZIP exceeds"):
         service.export_zip("campaign-1")
+
+
+def test_export_hashes_exact_snapshot_bytes_when_live_file_changes(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_presentation as module
+
+    record = campaign(tmp_path, [])
+    campaign_dir = tmp_path / "campaigns" / record.campaign_id
+    campaign_dir.mkdir(parents=True)
+    source = campaign_dir / "campaign.json"
+    source.write_bytes(b"before-snapshot")
+    service = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    )
+    original_reader = module._read_snapshot
+
+    def mutate_after_read(path, limit):
+        payload = original_reader(path, limit)
+        if path == source:
+            source.write_bytes(b"after-snapshot")
+        return payload
+
+    monkeypatch.setattr(module, "_read_snapshot", mutate_after_read)
+    with zipfile.ZipFile(io.BytesIO(service.export_zip("campaign-1"))) as archive:
+        archived = archive.read("campaign/campaign.json")
+        manifest = json.loads(archive.read("manifest.json"))
+    snapshot = next(
+        item for item in manifest["snapshots"]
+        if item["file"] == "campaign/campaign.json"
+    )
+    assert archived == b"before-snapshot"
+    assert snapshot["bytes"] == len(archived)
+    assert snapshot["sha256"] == hashlib.sha256(archived).hexdigest()
+    assert source.read_bytes() == b"after-snapshot"
 
 
 def test_native_campaign_and_run_store_roundtrip_exports_frozen_evidence(tmp_path):
