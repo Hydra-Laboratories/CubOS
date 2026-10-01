@@ -266,6 +266,21 @@ export default function DeckVisualization({
               </g>
             );
           }
+          if (item.config.type === "tip_disposal") {
+            return (
+              <HolderRenderer
+                key={item.key}
+                label={item.config.name ?? item.key}
+                geometry={tipDisposalGeometry(item)}
+                anchor={tipDisposalAnchor(item)}
+                childPositions={Object.values(item.positions ?? {})}
+                svgWidth={SVG_W}
+                svgHeight={SVG_H}
+                machineXRange={visualXRange}
+                machineYRange={visualYRange}
+              />
+            );
+          }
           if (item.config.type === "vial_grid") {
             const grid = item.config;
             return (
@@ -441,6 +456,16 @@ function expandForLabware(bounds: Bounds2D, item: LabwareResponse) {
     return;
   }
 
+  if (item.config.type === "tip_disposal") {
+    expandHolder(
+      bounds,
+      tipDisposalGeometry(item),
+      tipDisposalAnchor(item),
+      Object.values(item.positions ?? {}),
+    );
+    return;
+  }
+
   if (item.config.type === "vial") {
     expandPoint(
       bounds,
@@ -449,6 +474,32 @@ function expandForLabware(bounds: Bounds2D, item: LabwareResponse) {
       Math.max(6, item.config.diameter * 0.5),
     );
   }
+}
+
+// Server-computed geometry/anchor when available; otherwise fall back to
+// the raw config so a tip disposal added in the editor is visible before
+// the deck is saved.
+function tipDisposalGeometry(item: LabwareResponse): GeometryResponse | null {
+  if (item.geometry) return item.geometry;
+  if (item.config.type !== "tip_disposal") return null;
+  return {
+    length: finiteOrNull(item.config.length),
+    width: finiteOrNull(item.config.width),
+    height: finiteOrNull(item.config.height),
+  };
+}
+
+function tipDisposalAnchor(item: LabwareResponse): Coordinate3D | null {
+  if (item.location) return item.location;
+  if (item.config.type !== "tip_disposal") return null;
+  const location = item.config.location;
+  if (!location || !Number.isFinite(location.x) || !Number.isFinite(location.y)) return null;
+  return { x: location.x, y: location.y, z: location.z ?? 0 };
+}
+
+function finiteOrNull(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function expandHolder(

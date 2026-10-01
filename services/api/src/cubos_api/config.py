@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Literal
 
 from cubos.data import default_database_path
 from pydantic import Field, SecretStr
@@ -67,7 +67,9 @@ class CubOSSettings(BaseSettings):
     allowed_instruments: List[str] = Field(default_factory=list)
     expected_gantry_sha256: str | None = None
     expected_deck_sha256: str | None = None
+    update_mode: Literal["tag", "branch"] = "tag"
     update_branch: str = "main"
+    update_tag_pattern: str = r"^v\d{4}\.\d{2}\.\d{2}$"
     update_repo_dir: Path | None = None
     update_script: Path | None = None
     update_service: str = "cubos"

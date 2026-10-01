@@ -281,7 +281,7 @@ export default function App() {
     previewTimerRef.current = setTimeout(async () => {
       const result: Record<string, Record<string, WellPosition>> = {};
       for (const item of localDeck.labware) {
-        if (item.config.type === "well_plate") {
+        if (item.config.type === "well_plate" || item.config.type === "tip_rack") {
 	          try {
 	            result[item.key] = await deckApi.previewWells(item.config);
 	          } catch (err) {
@@ -363,11 +363,19 @@ export default function App() {
 	    const base = localDeck ?? deckQuery.data ?? null;
 	    if (!base) return null;
 	    // Merge server-computed or preview wells into each labware item.
+	    // Tip racks render from `positions` (their tip grid), so previews
+	    // land there instead of `wells`.
 	    return {
 	      ...base,
 	      labware: base.labware.map((item) => ({
 	        ...item,
 	        wells: localDeck ? previewWells[item.key] ?? item.wells ?? null : item.wells ?? previewWells[item.key] ?? null,
+	        positions:
+	          item.config.type === "tip_rack"
+	            ? (localDeck
+	                ? previewWells[item.key] ?? item.positions
+	                : item.positions ?? previewWells[item.key])
+	            : item.positions,
 	      })),
 	    };
 	  }, [localDeck, deckQuery.data, previewWells]);
