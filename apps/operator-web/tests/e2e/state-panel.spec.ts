@@ -24,7 +24,7 @@ test.describe("State view", () => {
 
     await page.getByLabel("Fluid state").selectOption("");
 
-    await expect(page.getByText(/No fluid state selected/)).toBeVisible();
+    await expect(page.getByText(/No saved state selected/)).toBeVisible();
     await expect(page.getByLabel("Fluid state")).toHaveValue("");
   });
 });
