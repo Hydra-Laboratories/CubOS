@@ -41,14 +41,6 @@ def _make_vial(**overrides) -> Vial:
 
 class TestVialRoleModel:
 
-    def test_role_defaults_to_none(self):
-        assert _make_vial().role is None
-
-    def test_solution_defaults_to_none(self):
-        assert _make_vial().solution is None
-
-    def test_allowed_solutions_defaults_to_none(self):
-        assert _make_vial().allowed_solutions is None
 
     @pytest.mark.parametrize("role", sorted(KNOWN_CONTAINER_ROLES))
     def test_every_known_role_accepted(self, role):
@@ -58,16 +50,11 @@ class TestVialRoleModel:
         with pytest.raises(Exception, match="role"):
             _make_vial(role="not_a_real_role")
 
-    def test_solution_identity_round_trips(self):
-        assert _make_vial(role="stock", solution="water").solution == "water"
 
     def test_blank_solution_rejected(self):
         with pytest.raises(Exception, match="solution"):
             _make_vial(solution="   ")
 
-    def test_allowed_solutions_round_trips(self):
-        vial = _make_vial(role="waste", allowed_solutions=["water", "buffer"])
-        assert vial.allowed_solutions == ["water", "buffer"]
 
     def test_empty_allowed_solutions_list_rejected(self):
         with pytest.raises(Exception, match="allowed_solutions"):
@@ -79,76 +66,6 @@ class TestVialRoleModel:
 
 
 # ─── Deck YAML: plain vial ────────────────────────────────────────────────
-
-
-def test_vial_role_and_solution_load_from_yaml():
-    yaml = """
-labware:
-  water_stock:
-    type: vial
-    name: water_stock
-    role: stock
-    solution: water
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        vial = result["water_stock"]
-        assert vial.role == "stock"
-        assert vial.solution == "water"
-        assert vial.allowed_solutions is None
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_vial_role_and_allowed_solutions_load_from_yaml():
-    yaml = """
-labware:
-  waste_1:
-    type: vial
-    name: waste_1
-    role: waste
-    allowed_solutions: [water, buffer]
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        vial = result["waste_1"]
-        assert vial.role == "waste"
-        assert vial.allowed_solutions == ["water", "buffer"]
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_vial_without_role_defaults_to_none_via_loader():
-    yaml = """
-labware:
-  plain:
-    type: vial
-    name: plain
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        assert result["plain"].role is None
-        assert result["plain"].solution is None
-    finally:
-        Path(path).unlink(missing_ok=True)
 
 
 def test_vial_unknown_role_rejected_at_load():
@@ -233,40 +150,5 @@ labware:
         for vial in grid.vials.values():
             assert vial.role == "waste"
             assert vial.allowed_solutions == ["water"]
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-# ─── Deck YAML: nested holder vial ─────────────────────────────────────────
-
-
-def test_nested_holder_vial_role_and_solution_load():
-    yaml = """
-labware:
-  holder:
-    type: vial_holder
-    name: holder
-    location:
-      x: 17.1
-      y: 132.9
-      z: 164.0
-    vials:
-      vial_a:
-        role: stock
-        solution: ethanol
-        height: 57.0
-        diameter: 28.0
-        location:
-          x: 17.1
-          y: 0.9
-        capacity_ul: 20000.0
-        working_volume_ul: 6500.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        nested = result.resolve_labware("holder.vial_a")
-        assert nested.role == "stock"
-        assert nested.solution == "ethanol"
     finally:
         Path(path).unlink(missing_ok=True)

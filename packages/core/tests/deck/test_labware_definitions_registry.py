@@ -67,53 +67,24 @@ def test_registry_is_not_empty():
 
 
 @pytest.mark.parametrize("definition", get_supported_definitions())
-def test_definition_class_and_module_resolve(definition: str):
-    """`module:` imports and `class_name:` names a real Labware subclass."""
+def test_definition_config_and_registered_class_are_consistent(definition: str):
     cls = get_labware_class(definition)
-
     assert isinstance(cls, type)
     assert issubclass(cls, Labware), f"{definition} does not resolve to a Labware subclass"
 
-
-@pytest.mark.parametrize("definition", get_supported_definitions())
-def test_definition_config_declares_a_known_type(definition: str):
     config = load_definition_config(definition)
-
     assert "type" in config, f"{definition} config is missing a `type:` key"
-    assert config["type"] in LABWARE_YAML_ENTRY_MODELS, (
-        f"{definition} declares unknown type {config['type']!r}; "
+    entry_type = config["type"]
+    assert entry_type in LABWARE_YAML_ENTRY_MODELS, (
+        f"{definition} declares unknown type {entry_type!r}; "
         f"known types: {sorted(LABWARE_YAML_ENTRY_MODELS)}"
     )
-
-
-@pytest.mark.parametrize("definition", get_supported_definitions())
-def test_definition_config_validates_against_its_entry_schema(definition: str):
-    """Every key in the config is accepted by the schema.
-
-    The entry models set ``extra="forbid"``, so this is what catches a stray
-    or misspelled key in a definition YAML.
-    """
-    config = load_definition_config(definition)
-    entry_type = config["type"]
     model = LABWARE_YAML_ENTRY_MODELS[entry_type]
-
-    # Definition config wins over the placeholders, so a definition that does
-    # supply its own calibration/location is validated as written.
-    payload = {**_MINIMAL_INSTANCE_FIELDS.get(entry_type, {}), **config}
-
-    model.model_validate(payload)
-
-
-@pytest.mark.parametrize("definition", get_supported_definitions())
-def test_definition_config_type_matches_registered_class(definition: str):
-    """The config's `type:` and the registry's `class_name:` agree."""
-    config = load_definition_config(definition)
-    entry_model = LABWARE_YAML_ENTRY_MODELS[config["type"]]
-    cls = get_labware_class(definition)
-
-    # The entry model name mirrors the labware class name for every current
-    # type (WellPlate/WellPlateYamlEntry, TipRack/TipRackYamlEntry, ...).
-    assert entry_model.__name__ == f"{cls.__name__}YamlEntry", (
-        f"{definition}: config type {config['type']!r} maps to "
-        f"{entry_model.__name__}, but the registry class is {cls.__name__}"
+    assert model.__name__ == f"{cls.__name__}YamlEntry", (
+        f"{definition}: config type {entry_type!r} maps to "
+        f"{model.__name__}, but the registry class is {cls.__name__}"
     )
+
+    # Definition values take precedence over per-instance placeholders.
+    payload = {**_MINIMAL_INSTANCE_FIELDS.get(entry_type, {}), **config}
+    model.model_validate(payload)

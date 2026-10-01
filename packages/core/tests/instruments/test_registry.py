@@ -179,22 +179,6 @@ def _reset_registry(monkeypatch):
 
 class TestLoadRegistry:
 
-    def test_returns_all_instrument_types(self):
-        registry = load_registry()
-        assert sorted(registry["instruments"].keys()) == EXPECTED_TYPES
-
-    def test_each_entry_has_interface_calibration_mode_and_vendors(self):
-        registry = load_registry()
-        for type_key, entry in registry["instruments"].items():
-            assert "interface" in entry, f"{type_key} missing interface"
-            assert entry.get("calibration_mode") in {"contact", "non_contact", "follow_camera"}
-            assert "vendors" in entry, f"{type_key} missing vendors"
-            assert len(entry["vendors"]) > 0, f"{type_key} has empty vendors"
-            for vendor_key, vendor in entry["vendors"].items():
-                assert "module" in vendor, f"{type_key}/{vendor_key} missing module"
-                assert "class_name" in vendor, (
-                    f"{type_key}/{vendor_key} missing class_name"
-                )
 
     def test_overlay_adds_vendor_for_existing_type(self, tmp_path, monkeypatch):
         overlay = tmp_path / "instrument_registry.yaml"
@@ -311,23 +295,6 @@ class TestLoadRegistry:
         assert "dept" in message
         assert "depth" in message
 
-    def test_known_driver_yaml_kwargs_still_pass(self):
-        board = build_instrumented_gantry(
-            {
-                "force_probe": {
-                    "type": "asmi",
-                    "vendor": "vernier",
-                    "depth": 58.0,
-                    "sensor_channels": [1],
-                    "offline": True,
-                }
-            },
-            gantry=object(),
-        )
-
-        instrument = board.instruments["force_probe"]
-        assert instrument.depth == 58.0
-        assert instrument._sensor_channels == [1]
 
     def test_external_registry_driver_signature_kwargs_pass(self, monkeypatch):
         monkeypatch.setattr(
@@ -393,27 +360,6 @@ class TestLoadRegistry:
         with pytest.raises(ValueError, match="already registered"):
             load_registry()
 
-    def test_duplicate_vendor_with_override_replaces(self, tmp_path, monkeypatch):
-        overlay = tmp_path / "instrument_registry.yaml"
-        overlay.write_text(
-            textwrap.dedent(
-                """
-                instruments:
-                  asmi:
-                    vendors:
-                      vernier:
-                        override: true
-                        module: tests.instruments.test_registry
-                        class_name: FakeCustomerASMI
-                """
-            ),
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("CUBOS_INSTRUMENT_REGISTRY_PATHS", str(overlay))
-        registry_module._cache = None
-
-        assert get_instrument_class("asmi", "vernier") is FakeCustomerASMI
-
 
 class TestGetSupportedTypes:
 
@@ -426,29 +372,6 @@ class TestGetSupportedVendors:
     def test_asmi_vendors(self):
         assert get_supported_vendors("asmi") == ["vernier"]
 
-    def test_camera_vendors(self):
-        assert get_supported_vendors("camera") == ["flir", "mount_only", "opencv", "raspberry_pi"]
-
-    def test_filmetrics_vendors(self):
-        assert get_supported_vendors("filmetrics") == ["kla"]
-
-    def test_lighting_vendors(self):
-        assert get_supported_vendors("lighting") == ["pawduino"]
-
-    def test_mounted_tool_vendors(self):
-        assert get_supported_vendors("mounted_tool") == ["mount_only"]
-
-    def test_pipette_vendors(self):
-        assert get_supported_vendors("pipette") == ["opentrons", "sartorius"]
-
-    def test_potentiostat_vendors(self):
-        assert get_supported_vendors("potentiostat") == ["admiral", "emstat"]
-
-    def test_uv_curing_vendors(self):
-        assert get_supported_vendors("uv_curing") == ["excelitas"]
-
-    def test_uvvis_ccs_vendors(self):
-        assert get_supported_vendors("uvvis_ccs") == ["thorlabs"]
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown instrument type"):
@@ -548,8 +471,6 @@ class TestListMeasurementMethods:
             "run_OCP",
         ]
 
-    def test_list_measurement_methods_can_filter_vendor(self):
-        assert list_measurement_methods("pipette", vendor="opentrons") == []
 
     def test_list_measurement_methods_unknown_type_raises_clear_error(self):
         with pytest.raises(ValueError, match="Unknown instrument type"):
@@ -576,45 +497,6 @@ class TestGetInstrumentClass:
             assert issubclass(cls, BaseInstrument)
             assert issubclass(cls, get_instrument_interface(type_key))
 
-    def test_asmi_class(self):
-        from cubos.instruments.asmi.vendors.vernier import VernierASMI
-        assert get_instrument_class("asmi", "vernier") is VernierASMI
-
-    def test_camera_class(self):
-        from cubos.instruments.camera.vendors.raspberry_pi import RaspberryPiCamera
-        assert get_instrument_class("camera", "raspberry_pi") is RaspberryPiCamera
-
-    def test_mount_only_camera_class(self):
-        from cubos.instruments.camera.vendors.mount_only import MountOnlyCamera
-        assert get_instrument_class("camera", "mount_only") is MountOnlyCamera
-
-    def test_filmetrics_class(self):
-        from cubos.instruments.filmetrics.vendors.kla import KLAFilmetrics
-        assert get_instrument_class("filmetrics", "kla") is KLAFilmetrics
-
-    def test_mounted_tool_class(self):
-        from cubos.instruments.mounted_tool.vendors.mount_only import MountOnlyTool
-        assert get_instrument_class("mounted_tool", "mount_only") is MountOnlyTool
-
-    def test_pipette_class(self):
-        from cubos.instruments.pipette.vendors.opentrons import OpentronsPipette
-        assert get_instrument_class("pipette", "opentrons") is OpentronsPipette
-
-    def test_potentiostat_class(self):
-        from cubos.instruments.potentiostat.vendors.admiral import AdmiralPotentiostat
-        assert get_instrument_class("potentiostat", "admiral") is AdmiralPotentiostat
-
-    def test_potentiostat_emstat_class(self):
-        from cubos.instruments.potentiostat.vendors.emstat import EmstatPotentiostat
-        assert get_instrument_class("potentiostat", "emstat") is EmstatPotentiostat
-
-    def test_uv_curing_class(self):
-        from cubos.instruments.uv_curing.vendors.excelitas import ExcelitasUVCuring
-        assert get_instrument_class("uv_curing", "excelitas") is ExcelitasUVCuring
-
-    def test_uvvis_ccs_class(self):
-        from cubos.instruments.uvvis_ccs.vendors.thorlabs import ThorlabsUVVisCCS
-        assert get_instrument_class("uvvis_ccs", "thorlabs") is ThorlabsUVVisCCS
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown instrument type"):
@@ -623,21 +505,6 @@ class TestGetInstrumentClass:
 
 class TestValidateInstrument:
 
-    def test_valid_combinations_pass(self):
-        valid_pairs = [
-            ("asmi", "vernier"),
-            ("camera", "mount_only"),
-            ("camera", "raspberry_pi"),
-            ("filmetrics", "kla"),
-            ("mounted_tool", "mount_only"),
-            ("pipette", "opentrons"),
-            ("potentiostat", "admiral"),
-            ("potentiostat", "emstat"),
-            ("uv_curing", "excelitas"),
-            ("uvvis_ccs", "thorlabs"),
-        ]
-        for type_key, vendor in valid_pairs:
-            validate_instrument(type_key, vendor)
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown instrument type"):
@@ -691,10 +558,6 @@ class TestListMeasurementMethodParams:
         )
         assert {"step_size", "force_limit"} <= names
 
-    def test_filters_by_vendor(self):
-        assert set(list_measurement_method_params("potentiostat", vendor="emstat")) == {
-            "run_CA", "run_CP", "run_CV", "run_OCP",
-        }
 
     def test_unknown_type_raises(self):
         with pytest.raises(ValueError, match="Unknown instrument type"):

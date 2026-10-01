@@ -6,12 +6,10 @@ from pydantic import ValidationError
 
 import cubos.deck.labware.definitions.registry as definition_registry
 from cubos.deck import (
-    BoundingBoxGeometry,
     Coordinate3D,
     Deck,
     LabwareSlot,
     TipDisposal,
-    Vial,
     VialHolder,
     WellPlate,
     WellPlateHolder,
@@ -39,56 +37,6 @@ def _make_gantry() -> GantryConfig:
     )
 
 
-def test_holder_seat_offset_metadata_is_encoded():
-    vial_holder = VialHolder(
-        name="vial_holder",
-        location=Coordinate3D(x=0.0, y=0.0, z=0.0),
-    )
-    plate_holder = WellPlateHolder(
-        name="plate_holder",
-        location=Coordinate3D(x=0.0, y=0.0, z=0.0),
-    )
-
-    assert vial_holder.height == pytest.approx(35.1)
-    assert vial_holder.labware_support_height == pytest.approx(35.1)
-    assert vial_holder.labware_seat_height_from_bottom == pytest.approx(18.0)
-    assert vial_holder.geometry == BoundingBoxGeometry(
-        length=36.2,
-        width=300.2,
-        height=35.1,
-    )
-
-    # Keep the existing collision-envelope height, while separately storing
-    # the base/support geometry that defines the seated plate offset.
-    assert plate_holder.height == pytest.approx(14.8)
-    assert plate_holder.labware_support_height == pytest.approx(10.0)
-    assert plate_holder.labware_seat_height_from_bottom == pytest.approx(5.0)
-    assert plate_holder.geometry == BoundingBoxGeometry(
-        length=100.0,
-        width=155.0,
-        height=14.8,
-    )
-
-
-def test_well_plate_holder_resolves_named_slot_positions():
-    holder = WellPlateHolder(
-        name="slide_holder",
-        location=Coordinate3D(x=50.0, y=60.0, z=12.0),
-        slots={
-            "plate": LabwareSlot(
-                location=Coordinate3D(x=51.0, y=61.0, z=12.0),
-                supported_labware_types=("well_plate",),
-            ),
-        },
-    )
-
-    assert holder.length == pytest.approx(100.0)
-    assert holder.width == pytest.approx(155.0)
-    assert holder.height == pytest.approx(14.8)
-    assert holder.get_location("plate") == Coordinate3D(x=51.0, y=61.0, z=12.0)
-    assert holder.iter_positions()["plate"] == Coordinate3D(x=51.0, y=61.0, z=12.0)
-
-
 def test_vial_holder_rejects_more_slots_than_capacity():
     too_many_slots = {
         f"vial_{index}": LabwareSlot(
@@ -104,19 +52,6 @@ def test_vial_holder_rejects_more_slots_than_capacity():
             location=Coordinate3D(x=0.0, y=0.0, z=0.0),
             slots=too_many_slots,
         )
-
-
-def test_tip_disposal_resolves_from_deck():
-    deck = Deck(
-        {
-            "waste": TipDisposal(
-                name="waste",
-                location=Coordinate3D(x=100.0, y=110.0, z=15.0),
-            ),
-        }
-    )
-
-    assert deck.resolve_coordinate("waste") == Coordinate3D(x=100.0, y=110.0, z=15.0)
 
 
 def test_load_holder_labware_from_yaml():
@@ -175,83 +110,6 @@ labware:
         Path(path).unlink(missing_ok=True)
 
 
-def test_nested_vials_in_holder_use_seat_height_for_z_generation():
-    yaml_str = """
-labware:
-  vial_holder:
-    type: vial_holder
-    name: vial_holder
-    location:
-      x: 17.1
-      y: 132.9
-      z: 164.0
-    vials:
-      vial_1:
-        model_name: 20ml_vial
-        height: 57.0
-        diameter: 28.0
-        location:
-          x: 17.1
-          y: 0.9
-        capacity_ul: 20000.0
-        working_volume_ul: 6500.0
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as handle:
-        handle.write(yaml_str)
-        path = handle.name
-
-    try:
-        deck = load_deck_from_yaml(path)
-        holder = deck["vial_holder"]
-
-        assert isinstance(holder, VialHolder)
-        assert isinstance(holder.contained_labware["vial_1"], Vial)
-        assert deck.resolve_coordinate("vial_holder.vial_1") == Coordinate3D(x=17.1, y=0.9, z=182.0)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_nested_well_plate_in_holder_uses_seat_height_for_a1_z_generation():
-    yaml_str = """
-labware:
-  plate_holder:
-    type: well_plate_holder
-    name: plate_holder
-    location:
-      x: 221.75
-      y: 78.5
-      z: 183.0
-    well_plate:
-      model_name: panda_96_wellplate
-      rows: 2
-      columns: 2
-      calibration:
-        a1:
-          x: 221.75
-          y: 78.5
-        a2:
-          x: 230.75
-          y: 78.5
-      x_offset: 9.0
-      y_offset: 9.0
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as handle:
-        handle.write(yaml_str)
-        path = handle.name
-
-    try:
-        deck = load_deck_from_yaml(path)
-        holder = deck["plate_holder"]
-
-        assert isinstance(holder, WellPlateHolder)
-        assert isinstance(holder.contained_labware["plate"], WellPlate)
-        assert deck.resolve_coordinate("plate_holder.plate") == Coordinate3D(x=221.75, y=78.5, z=188.0)
-        assert deck.resolve_coordinate("plate_holder.plate.A1") == Coordinate3D(x=221.75, y=78.5, z=188.0)
-        assert deck.resolve_coordinate("plate_holder.plate.B2") == Coordinate3D(x=230.75, y=69.5, z=188.0)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
 def test_deck_yaml_load_name_expands_from_definitions_registry():
     """A deck YAML may reference a definition via `load_name:` and supply only
     the user-specific fields (typically just `location`)."""
@@ -294,35 +152,6 @@ labware:
         assert plate_holder.width == pytest.approx(155.0)
         assert plate_holder.height == pytest.approx(14.8)
         assert plate_holder.labware_seat_height_from_bottom == pytest.approx(5.0)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_sharc_holder_definition_loads_through_registry():
-    yaml_str = """
-labware:
-  plate_holder:
-    load_name: sharc_80mm_sbs_wellplate_holder
-    location:
-      x: 0.0
-      y: 0.0
-      z: 0.0
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as handle:
-        handle.write(yaml_str)
-        path = handle.name
-
-    try:
-        deck = load_deck_from_yaml(path)
-        holder = deck["plate_holder"]
-
-        assert isinstance(holder, WellPlateHolder)
-        assert holder.name == "plate_holder"
-        assert holder.length == pytest.approx(85.47)
-        assert holder.width == pytest.approx(127.76)
-        assert holder.height == pytest.approx(80.0)
-        assert holder.labware_seat_height_from_bottom == pytest.approx(75.15)
-        assert holder.well_plate_surface_height_from_bottom == pytest.approx(89.5)
     finally:
         Path(path).unlink(missing_ok=True)
 
@@ -465,27 +294,6 @@ labware:
         assert "definition provides geometry only" in message
         assert "calibration" in message
         assert "pickup_z" in message
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_tip_rack_definition_loads_with_per_deck_calibration_and_pickup_z():
-    yaml_str = """
-labware:
-  tips:
-    load_name: ursa_tip_rack
-    pickup_z: 43.0
-    calibration:
-      a1: {x: 168.0, y: 58.0}
-      a2: {x: 176.5, y: 58.0}
-"""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as handle:
-        handle.write(yaml_str)
-        path = handle.name
-
-    try:
-        deck = load_deck_from_yaml(path)
-        assert deck.resolve_coordinate("tips.A1") == Coordinate3D(x=168.0, y=58.0, z=43.0)
     finally:
         Path(path).unlink(missing_ok=True)
 

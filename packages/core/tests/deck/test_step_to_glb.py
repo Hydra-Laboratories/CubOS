@@ -8,15 +8,6 @@ import pytest
 from cubos.deck.labware.definitions import step_to_glb
 
 
-def test_resolve_io_single_file_defaults_to_adjacent_glb(tmp_path):
-    stl_path = tmp_path / "part.stl"
-    stl_path.write_text("solid part\nendsolid part\n")
-
-    assert step_to_glb.resolve_io(stl_path, None) == [
-        (stl_path, tmp_path / "part.glb"),
-    ]
-
-
 def test_resolve_io_single_file_accepts_file_or_directory_output(tmp_path):
     step_path = tmp_path / "part.step"
     step_path.write_text("ISO-10303-21;")

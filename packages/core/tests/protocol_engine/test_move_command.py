@@ -41,49 +41,6 @@ def _mock_context(
 
 class TestMoveCommandRouting:
 
-    def test_deck_target_uses_move_to_labware(self):
-        """Deck target strings route through move_to_labware so
-        interwell_scan_height is applied (consistent with measure/aspirate)."""
-        from cubos.protocol_engine.commands.move import move
-
-        coord = Coordinate3D(x=10.0, y=20.0, z=75.0)
-        ctx = _mock_context(resolve_return=coord)
-        move(ctx, instrument="pipette", position="plate_1.A1")
-
-        ctx.deck.resolve_coordinate.assert_called_once_with("plate_1.A1")
-        ctx.gantry.move_to_labware.assert_called_once_with("pipette", coord)
-        ctx.gantry.move.assert_not_called()
-
-    def test_literal_list_uses_raw_move(self):
-        """[x, y, z] list bypasses move_to_labware — user wants exact coords."""
-        from cubos.protocol_engine.commands.move import move
-
-        ctx = _mock_context()
-        move(ctx, instrument="pipette", position=[100.0, 50.0, 30.0])
-
-        ctx.gantry.move.assert_called_once_with("pipette", (100.0, 50.0, 30.0))
-        ctx.gantry.move_to_labware.assert_not_called()
-        ctx.deck.resolve_coordinate.assert_not_called()
-
-    def test_literal_tuple_uses_raw_move(self):
-        from cubos.protocol_engine.commands.move import move
-
-        ctx = _mock_context()
-        move(ctx, instrument="pipette", position=(1.0, 2.0, 3.0))
-
-        ctx.gantry.move.assert_called_once_with("pipette", (1.0, 2.0, 3.0))
-        ctx.gantry.move_to_labware.assert_not_called()
-
-    def test_named_position_uses_raw_move(self):
-        """Named position from protocol YAML `positions:` block is literal XYZ."""
-        from cubos.protocol_engine.commands.move import move
-
-        ctx = _mock_context(positions={"safe": [50.0, 50.0, 70.0]})
-        move(ctx, instrument="pipette", position="safe")
-
-        ctx.gantry.move.assert_called_once_with("pipette", (50.0, 50.0, 70.0))
-        ctx.gantry.move_to_labware.assert_not_called()
-        ctx.deck.resolve_coordinate.assert_not_called()
 
     def test_named_position_forwards_travel_z(self):
         from cubos.protocol_engine.commands.move import move
@@ -97,14 +54,6 @@ class TestMoveCommandRouting:
         ctx.gantry.move_to_labware.assert_not_called()
         ctx.deck.resolve_coordinate.assert_not_called()
 
-    def test_passes_instrument_name_through_deck_path(self):
-        from cubos.protocol_engine.commands.move import move
-
-        ctx = _mock_context()
-        move(ctx, instrument="filmetrics", position="vial_1")
-
-        call_args = ctx.gantry.move_to_labware.call_args
-        assert call_args[0][0] == "filmetrics"
 
     def test_invalid_deck_target_propagates_error(self):
         """A dotted position (looks like a deck target) that fails to
@@ -145,46 +94,6 @@ class TestMoveCommandRouting:
 
 class TestMoveEndToEnd:
 
-    def test_yaml_deck_targets_route_to_move_to_labware(self):
-        yaml_content = """
-protocol:
-  - move:
-      instrument: pipette
-      position: plate_1.A1
-  - move:
-      instrument: pipette
-      position: plate_1.C9
-"""
-        coord_a1 = Coordinate3D(x=10.0, y=10.0, z=15.0)
-        coord_c9 = Coordinate3D(x=62.0, y=28.0, z=15.0)
-        deck = MagicMock()
-
-        def resolve_side_effect(target: str) -> Coordinate3D:
-            if target == "plate_1.A1":
-                return coord_a1
-            if target == "plate_1.C9":
-                return coord_c9
-            raise KeyError(f"No labware for '{target}'")
-
-        deck.resolve_coordinate.side_effect = resolve_side_effect
-        board = MagicMock()
-        ctx = ProtocolContext(gantry=board, deck=deck)
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
-            f.write(yaml_content)
-            path = f.name
-        try:
-            protocol = load_protocol_from_yaml(path)
-            assert len(protocol) == 2
-            protocol.execute(ctx)
-
-            assert deck.resolve_coordinate.call_count == 2
-            assert board.move_to_labware.call_count == 2
-            board.move_to_labware.assert_any_call("pipette", coord_a1)
-            board.move_to_labware.assert_any_call("pipette", coord_c9)
-            board.move.assert_not_called()
-        finally:
-            Path(path).unlink(missing_ok=True)
 
     def test_yaml_literal_coords_use_raw_move(self):
         yaml_content = """

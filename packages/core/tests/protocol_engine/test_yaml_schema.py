@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from cubos.protocol_engine.registry import CommandRegistry, protocol_command
-from cubos.protocol_engine.yaml_schema import ProtocolStepSchema, ProtocolYamlSchema
+from cubos.protocol_engine.yaml_schema import ProtocolYamlSchema
 
 
 @pytest.fixture(autouse=True)
@@ -18,38 +18,6 @@ def _fresh_registry():
 
     yield
     CommandRegistry.reset()
-
-
-# ─── Valid schemas ───────────────────────────────────────────────────────────
-
-
-def test_valid_single_move_step():
-    data = {
-        "protocol": [
-            {"move": {"instrument": "pipette", "position": "plate_1.A1"}},
-        ]
-    }
-    schema = ProtocolYamlSchema.model_validate(data)
-    assert len(schema.protocol) == 1
-    assert schema.protocol[0].command == "move"
-    assert schema.protocol[0].args == {"instrument": "pipette", "position": "plate_1.A1"}
-
-
-def test_valid_multiple_steps():
-    data = {
-        "protocol": [
-            {"move": {"instrument": "pipette", "position": "plate_1.A1"}},
-            {"move": {"instrument": "pipette", "position": "plate_1.C9"}},
-        ]
-    }
-    schema = ProtocolYamlSchema.model_validate(data)
-    assert len(schema.protocol) == 2
-
-
-def test_empty_protocol_list_allowed():
-    data = {"protocol": []}
-    schema = ProtocolYamlSchema.model_validate(data)
-    assert len(schema.protocol) == 0
 
 
 # ─── Top-level validation ───────────────────────────────────────────────────

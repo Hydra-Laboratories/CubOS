@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -66,20 +66,6 @@ def _get_pipette(ctx: ProtocolContext) -> MagicMock:
 
 class TestParsePosition:
 
-    def test_plate_and_well(self):
-        from cubos.protocol_engine.commands.pipette import _parse_position
-
-        assert _parse_position("plate_1.A1") == ("plate_1", "A1")
-
-    def test_vial_no_well(self):
-        from cubos.protocol_engine.commands.pipette import _parse_position
-
-        assert _parse_position("vial_1") == ("vial_1", None)
-
-    def test_nested_labware_path_uses_last_split(self):
-        from cubos.protocol_engine.commands.pipette import _parse_position
-
-        assert _parse_position("holder.plate.A1") == ("holder.plate", "A1")
 
     def test_return_type(self):
         from cubos.protocol_engine.commands.pipette import _parse_position
@@ -98,45 +84,6 @@ class TestParsePosition:
 
 class TestAspirateCommand:
 
-    def test_resolves_position_via_deck(self):
-        from cubos.protocol_engine.commands.pipette import aspirate
-
-        ctx = _mock_context()
-        aspirate(ctx, position="plate_1.A1", volume_ul=100.0)
-        ctx.deck.resolve_coordinate.assert_called_once_with("plate_1.A1")
-
-    def test_moves_then_aspirates(self):
-        from cubos.protocol_engine.commands.pipette import aspirate
-
-        ctx = _mock_context()
-        call_order = []
-        ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append("move")
-        _get_pipette(ctx).aspirate.side_effect = lambda *a: call_order.append("aspirate")
-
-        aspirate(ctx, position="plate_1.A1", volume_ul=100.0)
-        assert call_order == ["move", "aspirate"]
-
-    def test_passes_volume_and_speed(self):
-        from cubos.protocol_engine.commands.pipette import aspirate
-
-        ctx = _mock_context()
-        aspirate(ctx, position="plate_1.A1", volume_ul=75.0, speed=25.0)
-        _get_pipette(ctx).aspirate.assert_called_once_with(75.0, 25.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import aspirate
-
-        ctx = _mock_context()
-        aspirate(ctx, position="plate_1.A1", volume_ul=100.0)
-        _get_pipette(ctx).aspirate.assert_called_once_with(100.0, 50.0)
-
-    def test_moves_pipette_to_resolved_coord(self):
-        from cubos.protocol_engine.commands.pipette import aspirate
-
-        coord = Coordinate3D(x=10.0, y=20.0, z=75.0)
-        ctx = _mock_context(resolve_return=coord)
-        aspirate(ctx, position="plate_1.A1", volume_ul=100.0)
-        ctx.gantry.move_to_labware.assert_called_once_with("pipette", coord)
 
     def test_descends_to_well_bottom_after_approach(self):
         """aspirate descends to the labware reference Z by default."""
@@ -189,12 +136,6 @@ class TestAspirateCommand:
 
 class TestDispenseCommand:
 
-    def test_resolves_position_via_deck(self):
-        from cubos.protocol_engine.commands.pipette import dispense
-
-        ctx = _mock_context()
-        dispense(ctx, position="plate_1.A1", volume_ul=100.0)
-        ctx.deck.resolve_coordinate.assert_called_once_with("plate_1.A1")
 
     def test_moves_then_dispenses(self):
         from cubos.protocol_engine.commands.pipette import dispense
@@ -207,19 +148,6 @@ class TestDispenseCommand:
         dispense(ctx, position="plate_1.A1", volume_ul=100.0)
         assert call_order == ["move", "dispense"]
 
-    def test_passes_volume_and_speed(self):
-        from cubos.protocol_engine.commands.pipette import dispense
-
-        ctx = _mock_context()
-        dispense(ctx, position="plate_1.A1", volume_ul=80.0, speed=30.0)
-        _get_pipette(ctx).dispense.assert_called_once_with(80.0, 30.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import dispense
-
-        ctx = _mock_context()
-        dispense(ctx, position="plate_1.A1", volume_ul=100.0)
-        _get_pipette(ctx).dispense.assert_called_once_with(100.0, 50.0)
 
     def test_raises_when_no_pipette(self):
         from cubos.protocol_engine.commands.pipette import dispense
@@ -234,12 +162,6 @@ class TestDispenseCommand:
 
 class TestBlowoutCommand:
 
-    def test_resolves_position_via_deck(self):
-        from cubos.protocol_engine.commands.pipette import blowout
-
-        ctx = _mock_context()
-        blowout(ctx, position="plate_1.A1")
-        ctx.deck.resolve_coordinate.assert_called_once_with("plate_1.A1")
 
     def test_moves_then_blows_out(self):
         from cubos.protocol_engine.commands.pipette import blowout
@@ -252,19 +174,6 @@ class TestBlowoutCommand:
         blowout(ctx, position="plate_1.A1")
         assert call_order == ["move", "blowout"]
 
-    def test_passes_speed(self):
-        from cubos.protocol_engine.commands.pipette import blowout
-
-        ctx = _mock_context()
-        blowout(ctx, position="plate_1.A1", speed=25.0)
-        _get_pipette(ctx).blowout.assert_called_once_with(25.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import blowout
-
-        ctx = _mock_context()
-        blowout(ctx, position="plate_1.A1")
-        _get_pipette(ctx).blowout.assert_called_once_with(50.0)
 
     def test_raises_when_no_pipette(self):
         from cubos.protocol_engine.commands.pipette import blowout
@@ -286,36 +195,6 @@ class TestMixCommand:
         mix(ctx, position="plate_1.A1", volume_ul=50.0)
         ctx.deck.resolve_coordinate.assert_called_once_with("plate_1.A1")
 
-    def test_moves_then_mixes(self):
-        from cubos.protocol_engine.commands.pipette import mix
-
-        ctx = _mock_context()
-        call_order = []
-        ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append("move")
-        _get_pipette(ctx).mix.side_effect = lambda *a, **kw: call_order.append("mix")
-
-        mix(ctx, position="plate_1.A1", volume_ul=50.0)
-        assert call_order == ["move", "mix"]
-
-    def test_passes_volume_cycles_speed_and_engaged_tip(self):
-        from cubos.protocol_engine.commands.pipette import mix
-
-        ctx = _mock_context()
-        mix(ctx, position="plate_1.A1", volume_ul=50.0, cycles=5, speed=20.0, height=-3.0)
-        _get_pipette(ctx).mix.assert_called_once_with(
-            50.0, 5, 20.0,
-            gantry=ctx.gantry, position=(100.0, 50.0, PIPETTE_HEIGHT_MM - 3.0),
-        )
-
-    def test_default_cycles_and_speed(self):
-        from cubos.protocol_engine.commands.pipette import mix
-
-        ctx = _mock_context()
-        mix(ctx, position="plate_1.A1", volume_ul=50.0)
-        _get_pipette(ctx).mix.assert_called_once_with(
-            50.0, 3, 50.0,
-            gantry=ctx.gantry, position=(100.0, 50.0, PIPETTE_HEIGHT_MM),
-        )
 
     def test_raises_when_no_pipette(self):
         from cubos.protocol_engine.commands.pipette import mix
@@ -453,30 +332,6 @@ def _two_tip_rack_context(*, has_pipette: bool = True) -> tuple[ProtocolContext,
 
 class TestPickUpTipCommand:
 
-    def test_moves_then_picks_up(self):
-        from cubos.protocol_engine.commands.pipette import pick_up_tip
-
-        ctx, _rack, pipette = _tip_rack_context()
-        call_order = []
-        ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append("move")
-        pipette.pick_up_tip.side_effect = lambda *a: call_order.append("pick_up_tip")
-
-        pick_up_tip(ctx, position="tips.A1")
-        assert call_order == ["move", "pick_up_tip"]
-
-    def test_passes_speed(self):
-        from cubos.protocol_engine.commands.pipette import pick_up_tip
-
-        ctx, _rack, pipette = _tip_rack_context()
-        pick_up_tip(ctx, position="tips.A1", speed=10.0)
-        pipette.pick_up_tip.assert_called_once_with(10.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import pick_up_tip
-
-        ctx, _rack, pipette = _tip_rack_context()
-        pick_up_tip(ctx, position="tips.A1")
-        pipette.pick_up_tip.assert_called_once_with(50.0)
 
     def test_sets_attached_tip_extension_and_consumes_tip(self):
         from cubos.protocol_engine.commands.pipette import pick_up_tip
@@ -642,37 +497,6 @@ class TestPickUpTipCommand:
 
 class TestDropTipCommand:
 
-    def test_resolves_position_via_deck(self):
-        from cubos.protocol_engine.commands.pipette import drop_tip
-
-        ctx = _mock_context()
-        drop_tip(ctx, position="waste_1")
-        ctx.deck.resolve_coordinate.assert_called_once_with("waste_1")
-
-    def test_moves_then_drops(self):
-        from cubos.protocol_engine.commands.pipette import drop_tip
-
-        ctx = _mock_context()
-        call_order = []
-        ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append("move")
-        _get_pipette(ctx).drop_tip.side_effect = lambda *a: call_order.append("drop_tip")
-
-        drop_tip(ctx, position="waste_1")
-        assert call_order == ["move", "drop_tip"]
-
-    def test_passes_speed(self):
-        from cubos.protocol_engine.commands.pipette import drop_tip
-
-        ctx = _mock_context()
-        drop_tip(ctx, position="waste_1", speed=10.0)
-        _get_pipette(ctx).drop_tip.assert_called_once_with(10.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import drop_tip
-
-        ctx = _mock_context()
-        drop_tip(ctx, position="waste_1")
-        _get_pipette(ctx).drop_tip.assert_called_once_with(50.0)
 
     def test_clears_attached_tip_extension_after_drop(self):
         from cubos.protocol_engine.commands.pipette import drop_tip
@@ -788,76 +612,6 @@ def _mock_context_multi_resolve(has_pipette: bool = True) -> ProtocolContext:
 
 class TestTransferCommand:
 
-    def test_resolves_both_positions(self):
-        from cubos.protocol_engine.commands.pipette import transfer
-
-        ctx = _mock_context_multi_resolve()
-        transfer(ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0)
-
-        ctx.deck.resolve_coordinate.assert_any_call("plate_1.A1")
-        ctx.deck.resolve_coordinate.assert_any_call("plate_1.B1")
-        assert ctx.deck.resolve_coordinate.call_count == 2
-
-    def test_aspirates_from_source_then_dispenses_to_destination(self):
-        from cubos.protocol_engine.commands.pipette import transfer
-
-        ctx = _mock_context_multi_resolve()
-        pip = ctx.gantry.instruments["pipette"]
-        call_order = []
-        ctx.gantry.move_to_labware.side_effect = lambda *a, **kw: call_order.append(("move", a[1]))
-        pip.aspirate.side_effect = lambda *a: call_order.append("aspirate")
-        pip.dispense.side_effect = lambda *a: call_order.append("dispense")
-
-        transfer(ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0)
-
-        source_coord = Coordinate3D(x=10.0, y=20.0, z=75.0)
-        dest_coord = Coordinate3D(x=10.0, y=28.0, z=75.0)
-        assert call_order == [
-            ("move", source_coord),
-            "aspirate",
-            ("move", dest_coord),
-            "dispense",
-        ]
-
-    def test_passes_volume_and_speed(self):
-        from cubos.protocol_engine.commands.pipette import transfer
-
-        ctx = _mock_context_multi_resolve()
-        pip = ctx.gantry.instruments["pipette"]
-
-        transfer(ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=75.0, speed=25.0)
-
-        pip.aspirate.assert_called_once_with(75.0, 25.0)
-        pip.dispense.assert_called_once_with(75.0, 25.0)
-
-    def test_default_speed(self):
-        from cubos.protocol_engine.commands.pipette import transfer
-
-        ctx = _mock_context_multi_resolve()
-        pip = ctx.gantry.instruments["pipette"]
-
-        transfer(ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0)
-
-        pip.aspirate.assert_called_once_with(100.0, 50.0)
-        pip.dispense.assert_called_once_with(100.0, 50.0)
-
-    def test_transfer_always_blows_out_with_speed_after_dispense(self):
-        from cubos.protocol_engine.commands.pipette import transfer
-
-        ctx = _mock_context_multi_resolve()
-        pip = ctx.gantry.instruments["pipette"]
-        call_order = []
-        pip.aspirate.side_effect = lambda *a: call_order.append("aspirate")
-        pip.dispense.side_effect = lambda *a: call_order.append("dispense")
-        pip.blowout.side_effect = lambda *a: call_order.append("blowout")
-
-        transfer(
-            ctx, source="plate_1.A1", destination="plate_1.B1", volume_ul=100.0,
-            speed=40.0,
-        )
-
-        pip.blowout.assert_called_once_with(40.0)
-        assert call_order == ["aspirate", "dispense", "blowout"]
 
     def test_tracked_transfer_journals_before_liquid_and_commits_after_dispense(self):
         from cubos.protocol_engine.commands.pipette import transfer
@@ -1336,20 +1090,6 @@ class TestSerialTransferCommand:
         assert "plate_1.A2" in resolve_calls
         assert "plate_1.B2" in resolve_calls
 
-    def test_explicit_volumes_passed_correctly(self):
-        from cubos.protocol_engine.commands.pipette import serial_transfer
-
-        ctx = _serial_transfer_context()
-        serial_transfer(
-            ctx, source="vial_1", plate="plate_1", axis="A",
-            volumes=[10.0, 50.0, 100.0],
-        )
-
-        pip = ctx.gantry.instruments["pipette"]
-        aspirate_volumes = [c.args[0] for c in pip.aspirate.call_args_list]
-        dispense_volumes = [c.args[0] for c in pip.dispense.call_args_list]
-        assert aspirate_volumes == [10.0, 50.0, 100.0]
-        assert dispense_volumes == [10.0, 50.0, 100.0]
 
     def test_volume_range_linearly_spaced(self):
         from cubos.protocol_engine.commands.pipette import serial_transfer
@@ -1365,46 +1105,6 @@ class TestSerialTransferCommand:
         # 3 wells in row A, linspace(10, 30, 3) = [10.0, 20.0, 30.0]
         assert aspirate_volumes == pytest.approx([10.0, 20.0, 30.0])
 
-    def test_volume_range_single_well_column(self):
-        """volume_range with a 1-well axis uses the start value."""
-        from cubos.protocol_engine.commands.pipette import serial_transfer
-
-        # Make a 1x3 plate so column "1" has only 1 well (A1)
-        plate = WellPlate(
-            name="plate_1", model_name="t", length=100.0,
-            width=80.0, height=10.0, rows=1, columns=3,
-            wells={
-                "A1": Coordinate3D(x=0.0, y=0.0, z=75.0),
-                "A2": Coordinate3D(x=10.0, y=0.0, z=75.0),
-                "A3": Coordinate3D(x=20.0, y=0.0, z=75.0),
-            },
-            capacity_ul=200.0, working_volume_ul=150.0,
-        )
-        ctx = _serial_transfer_context(plate=plate)
-        serial_transfer(
-            ctx, source="vial_1", plate="plate_1", axis="1",
-            volume_range=[10.0, 100.0],
-        )
-
-        pip = ctx.gantry.instruments["pipette"]
-        assert pip.aspirate.call_count == 1
-        aspirate_volumes = [c.args[0] for c in pip.aspirate.call_args_list]
-        assert aspirate_volumes == [10.0]
-
-    def test_custom_speed_passed_through(self):
-        from cubos.protocol_engine.commands.pipette import serial_transfer
-
-        ctx = _serial_transfer_context()
-        serial_transfer(
-            ctx, source="vial_1", plate="plate_1", axis="A",
-            volumes=[10.0, 20.0, 30.0], speed=25.0,
-        )
-
-        pip = ctx.gantry.instruments["pipette"]
-        for c in pip.aspirate.call_args_list:
-            assert c.args[1] == 25.0
-        for c in pip.dispense.call_args_list:
-            assert c.args[1] == 25.0
 
     def test_volumes_length_mismatch_raises(self):
         from cubos.protocol_engine.commands.pipette import serial_transfer

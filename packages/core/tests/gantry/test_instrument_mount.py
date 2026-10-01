@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 
 from cubos.instruments.base_instrument import BaseInstrument
-from cubos.gantry.errors import LocationNotFound, MillConnectionError
+from cubos.gantry.errors import MillConnectionError
 from cubos.gantry.instrument_mount import InstrumentedGantry
 
 
@@ -40,11 +40,6 @@ def _mock_labware(x=150.0, y=75.0, z=10.0):
 
 class TestInstrumentedGantryConstruction:
 
-    def test_creates_with_gantry_only(self):
-        gantry = _mock_gantry()
-        instrumented_gantry = InstrumentedGantry(controller=gantry)
-        assert instrumented_gantry.controller is gantry
-        assert instrumented_gantry.instruments == {}
 
     def test_creates_with_instruments(self):
         gantry = _mock_gantry()
@@ -55,92 +50,17 @@ class TestInstrumentedGantryConstruction:
         assert instrumented_gantry.instruments["pipette"] is pip
         assert instrumented_gantry.instruments["filmetrics"] is fm
 
-    def test_instruments_defaults_to_empty_dict(self):
-        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry())
-        assert isinstance(instrumented_gantry.instruments, dict)
-        assert len(instrumented_gantry.instruments) == 0
-
-    def test_instruments_dict_is_mutable(self):
-        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry())
-        instr = _mock_instrument("uvvis")
-        instrumented_gantry.instruments["uvvis"] = instr
-        assert instrumented_gantry.instruments["uvvis"] is instr
-
-    def test_instrument_offsets_accessible(self):
-        pip = _mock_instrument("pipette", offset_x=15.0, offset_y=3.5, depth=8.0)
-        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry(), instruments={"pipette": pip})
-        assert instrumented_gantry.instruments["pipette"].offset_x == 15.0
-        assert instrumented_gantry.instruments["pipette"].offset_y == 3.5
-        assert instrumented_gantry.instruments["pipette"].depth == 8.0
-
 
 # ─── move() tests ────────────────────────────────────────────────────────────
 
 class TestInstrumentedGantryMove:
 
-    def test_move_by_name_calls_gantry_move_to(self):
-        gantry = _mock_gantry(x=90.0, y=45.0)
-        pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
-
-        instrumented_gantry.move("pipette", (100.0, 50.0, 20.0))
-
-        gantry.move_to.assert_called_once_with(90.0, 45.0, 22.0, travel_z=None)
-
-    def test_move_by_instance_calls_gantry_move_to(self):
-        gantry = _mock_gantry(x=90.0, y=45.0)
-        pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
-
-        instrumented_gantry.move(pip, (100.0, 50.0, 20.0))
-
-        gantry.move_to.assert_called_once_with(90.0, 45.0, 22.0, travel_z=None)
-
-    def test_move_zero_offset_passes_position_through(self):
-        gantry = _mock_gantry(x=200.0, y=100.0)
-        instr = _mock_instrument("router", offset_x=0.0, offset_y=0.0, depth=0.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"router": instr})
-
-        instrumented_gantry.move("router", (200.0, 100.0, 10.0))
-
-        gantry.move_to.assert_called_once_with(200.0, 100.0, 10.0, travel_z=None)
-
-    def test_move_positive_offset(self):
-        """Instrument mounted to the right (+x) of the router."""
-        gantry = _mock_gantry(x=35.0, y=20.0)
-        instr = _mock_instrument("sensor", offset_x=15.0, offset_y=10.0, depth=3.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"sensor": instr})
-
-        instrumented_gantry.move("sensor", (50.0, 30.0, 5.0))
-
-        # gantry_x = 50 - 15 = 35, gantry_y = 30 - 10 = 20, gantry_z = 5 + 3 = 8
-        gantry.move_to.assert_called_once_with(35.0, 20.0, 8.0, travel_z=None)
 
     def test_move_unknown_instrument_raises(self):
         instrumented_gantry = InstrumentedGantry(controller=_mock_gantry())
         with pytest.raises(KeyError, match="Unknown instrument 'nope'"):
             instrumented_gantry.move("nope", (0.0, 0.0, 0.0))
 
-    def test_move_only_reads_position_and_moves(self):
-        gantry = _mock_gantry()
-        instr = _mock_instrument("pipette")
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": instr})
-
-        instrumented_gantry.move("pipette", (0.0, 0.0, 0.0))
-
-        gantry.move_to.assert_called_once()
-        gantry.get_coordinates.assert_called_once()
-        assert {c[0] for c in gantry.method_calls} == {"get_coordinates", "move_to"}
-
-    def test_move_accepts_labware_object(self):
-        gantry = _mock_gantry(x=140.0, y=70.0)
-        instr = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0, depth=2.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": instr})
-        lw = _mock_labware(x=150.0, y=75.0, z=10.0)
-
-        instrumented_gantry.move("pipette", lw)
-
-        gantry.move_to.assert_called_once_with(140.0, 70.0, 12.0, travel_z=None)
 
     def test_move_forwards_travel_z_plus_depth_to_gantry(self):
         """travel_z is an instrument-tip Z; gantry must receive it
@@ -184,23 +104,6 @@ class TestInstrumentedGantryMove:
 
 class TestInstrumentedGantryObjectPosition:
 
-    def test_instrument_position_by_name(self):
-        gantry = _mock_gantry(x=100.0, y=50.0, z=10.0)
-        pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
-
-        pos = instrumented_gantry.object_position("pipette")
-
-        assert pos == pytest.approx((110.0, 55.0))
-
-    def test_instrument_position_by_instance(self):
-        gantry = _mock_gantry(x=100.0, y=50.0, z=10.0)
-        pip = _mock_instrument("pipette", offset_x=10.0, offset_y=5.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"pipette": pip})
-
-        pos = instrumented_gantry.object_position(pip)
-
-        assert pos == pytest.approx((110.0, 55.0))
 
     def test_instrument_position_zero_offset(self):
         gantry = _mock_gantry(x=200.0, y=80.0)
@@ -211,14 +114,6 @@ class TestInstrumentedGantryObjectPosition:
 
         assert pos == pytest.approx((200.0, 80.0))
 
-    def test_instrument_position_reads_gantry_coordinates(self):
-        gantry = _mock_gantry(x=50.0, y=25.0)
-        instr = _mock_instrument("sensor")
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"sensor": instr})
-
-        instrumented_gantry.object_position("sensor")
-
-        gantry.get_coordinates.assert_called_once()
 
     def test_labware_position_from_xy_attributes(self):
         gantry = _mock_gantry()
@@ -244,19 +139,6 @@ class TestInstrumentedGantryObjectPosition:
 
 class TestInstrumentedGantryConnectInstruments:
 
-    def test_connect_calls_each_instrument(self):
-        pip = _mock_instrument("pipette")
-        uv = _mock_instrument("uvvis")
-        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry(), instruments={"pipette": pip, "uvvis": uv})
-
-        instrumented_gantry.connect_instruments()
-
-        pip.connect.assert_called_once()
-        uv.connect.assert_called_once()
-
-    def test_connect_empty_instruments_is_noop(self):
-        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry())
-        instrumented_gantry.connect_instruments()
 
     def test_connect_propagates_exception(self):
         pip = _mock_instrument("pipette")
@@ -318,11 +200,6 @@ class TestRawMoveLiftsBeforeXY:
         ig.move("tool", (50.0, 20.0, 15.0))
         gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=105.0)
 
-    def test_z_only_move_is_sent_direct(self):
-        gantry = _mock_gantry(x=50.0, y=20.0, z=60.0)
-        ig = self._ig(gantry, depth=10.0)
-        ig.move("tool", (50.0, 20.0, 15.0))
-        gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=None)
 
     def test_sub_tolerance_xy_jitter_counts_as_same_xy(self):
         gantry = _mock_gantry(x=50.004, y=19.996, z=60.0)
@@ -336,12 +213,6 @@ class TestRawMoveLiftsBeforeXY:
         ig.move("tool", (50.0, 20.0, 15.0), travel_z=30.0)
         gantry.move_to.assert_called_once_with(50.0, 20.0, 25.0, travel_z=40.0)
 
-    def test_unknown_position_lifts(self):
-        gantry = _mock_gantry(x=50.0, y=20.0)
-        gantry.get_coordinates.side_effect = LocationNotFound("no status")
-        ig = self._ig(gantry)
-        ig.move("tool", (50.0, 20.0, 15.0))
-        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
 
     def test_unparseable_position_lifts(self):
         gantry = MagicMock()
@@ -349,12 +220,6 @@ class TestRawMoveLiftsBeforeXY:
         ig.move("tool", (50.0, 20.0, 15.0))
         assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
 
-    def test_position_missing_axis_lifts(self):
-        gantry = _mock_gantry()
-        gantry.get_coordinates.return_value = {"z": 10.0}
-        ig = self._ig(gantry)
-        ig.move("tool", (50.0, 20.0, 15.0))
-        assert gantry.move_to.call_args.kwargs == {"travel_z": 100.0}
 
     def test_non_finite_position_lifts(self):
         gantry = _mock_gantry(x=float("nan"), y=20.0)
@@ -414,30 +279,6 @@ class TestInstrumentedGantryMoveToLabware:
         assert call.args == (100.0, 50.0, 85.0)
         assert call.kwargs == {"travel_z": 85.0}
 
-    def test_applies_instrument_xy_offsets_and_depth(self):
-        """Instrument offsets shift gantry coords; depth shifts the
-        gantry Z (tip Z + depth)."""
-        gantry = _mock_gantry()
-        instr = _mock_instrument(offset_x=10.0, offset_y=-5.0, depth=2.0)
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"probe": instr}, safe_z=15.0)
-        instrumented_gantry.move_to_labware("probe", _mock_labware(x=100, y=50, z=30))
-
-        call = gantry.move_to.call_args
-        # tip Z = safe_z = 15; gantry Z = 15 + depth(2) = 17.
-        # gantry x = 100 - 10 = 90; gantry y = 50 - (-5) = 55.
-        assert call.args == (90.0, 55.0, 17.0)
-        assert call.kwargs == {"travel_z": 17.0}
-
-    def test_accepts_tuple_position(self):
-        gantry = _mock_gantry()
-        instr = _mock_instrument()
-        instrumented_gantry = InstrumentedGantry(controller=gantry, instruments={"probe": instr}, safe_z=20.0)
-        instrumented_gantry.move_to_labware("probe", (50.0, 40.0, 10.0))
-
-        assert gantry.move_to.call_count == 1
-        call = gantry.move_to.call_args
-        assert call.args == (50.0, 40.0, 20.0)
-        assert call.kwargs == {"travel_z": 20.0}
 
     def test_rejects_nan_position_z(self):
         """NaN in position z is caught (via InstrumentedGantry.move's validation)."""

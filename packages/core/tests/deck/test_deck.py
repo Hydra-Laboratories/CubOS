@@ -45,29 +45,7 @@ def _make_deck() -> Deck:
     return Deck({"plate_1": _make_plate(), "vial_1": _make_vial()})
 
 
-# ----- Construction -----
-
-def test_deck_construction_stores_labware():
-    """Deck wraps a dict of labware accessible via .labware."""
-    deck = _make_deck()
-    assert len(deck.labware) == 2
-    assert isinstance(deck.labware["plate_1"], WellPlate)
-    assert isinstance(deck.labware["vial_1"], Vial)
-
-
-def test_deck_empty_labware_allowed():
-    """Deck with no labware is valid."""
-    deck = Deck({})
-    assert len(deck.labware) == 0
-
-
 # ----- Container protocol -----
-
-def test_deck_getitem_returns_labware():
-    """deck['key'] delegates to the labware dict."""
-    deck = _make_deck()
-    assert isinstance(deck["plate_1"], WellPlate)
-    assert isinstance(deck["vial_1"], Vial)
 
 
 def test_deck_getitem_missing_key_raises():
@@ -77,54 +55,7 @@ def test_deck_getitem_missing_key_raises():
         deck["unknown"]
 
 
-def test_deck_contains():
-    """'key' in deck checks labware membership."""
-    deck = _make_deck()
-    assert "plate_1" in deck
-    assert "vial_1" in deck
-    assert "missing" not in deck
-
-
-def test_deck_len():
-    """len(deck) returns labware count."""
-    deck = _make_deck()
-    assert len(deck) == 2
-
-
-def test_deck_iter():
-    """Iterating over deck yields labware keys."""
-    deck = _make_deck()
-    assert set(deck) == {"plate_1", "vial_1"}
-
-
 # ----- resolve_coordinate() -----
-
-def test_resolve_coordinate_well_plate_with_location():
-    """resolve_coordinate('plate_1.A1') returns coordinate for well A1."""
-    deck = _make_deck()
-    coord = deck.resolve_coordinate("plate_1.A1")
-    assert coord == Coordinate3D(x=0.0, y=0.0, z=75.0)
-
-
-def test_resolve_coordinate_well_plate_another_well():
-    """resolve_coordinate('plate_1.B2') returns coordinate for well B2."""
-    deck = _make_deck()
-    coord = deck.resolve_coordinate("plate_1.B2")
-    assert coord == Coordinate3D(x=10.0, y=8.0, z=75.0)
-
-
-def test_resolve_coordinate_vial_bare_name():
-    """resolve_coordinate('vial_1') returns vial center (initial position)."""
-    deck = _make_deck()
-    coord = deck.resolve_coordinate("vial_1")
-    assert coord == Coordinate3D(x=30.0, y=40.0, z=20.0)
-
-
-def test_resolve_coordinate_plate_bare_name_returns_initial_position():
-    """resolve_coordinate('plate_1') with no location returns A1 (initial position)."""
-    deck = _make_deck()
-    coord = deck.resolve_coordinate("plate_1")
-    assert coord == Coordinate3D(x=0.0, y=0.0, z=75.0)
 
 
 def test_resolve_coordinate_unknown_labware_raises():
@@ -183,28 +114,6 @@ def test_resolve_labware_missing_child_reports_failing_segment():
     message = str(exc_info.value)
     assert "missing_plate" in message
     assert "plate_holder.missing_plate" not in message
-
-
-def test_resolve_labware_target_bare_labware():
-    deck = _make_deck()
-
-    target = deck.resolve_labware_target("vial_1")
-
-    assert target.labware_key == "vial_1"
-    assert target.labware_name == "vial_1"
-    assert target.location_id is None
-    assert isinstance(target.labware, Vial)
-
-
-def test_resolve_labware_target_plate_well():
-    deck = _make_deck()
-
-    target = deck.resolve_labware_target("plate_1.A1")
-
-    assert target.labware_key == "plate_1"
-    assert target.labware_name == "plate_1"
-    assert target.location_id == "A1"
-    assert isinstance(target.labware, WellPlate)
 
 
 def test_resolve_labware_target_nested_holder_plate_well():

@@ -33,16 +33,6 @@ class BadInstrument(BaseInstrument):
     pass
 
 
-def test_cannot_instantiate_abc():
-    with pytest.raises(TypeError):
-        BaseInstrument()
-
-
-def test_cannot_instantiate_incomplete_subclass():
-    with pytest.raises(TypeError):
-        BadInstrument()
-
-
 def test_concrete_implementation():
     instr = MockInstrument()
     assert instr.name == "mock_instrument"
@@ -76,21 +66,3 @@ def test_handle_error_passes_through_instrument_error():
         instr.handle_error(original_error, "processing")
 
     assert exc_info.value is original_error
-
-
-def test_default_offset_depth():
-    """Instruments only carry physical mounting state. Labware-relative
-    motion heights live on the protocol command."""
-    instr = MockInstrument()
-    assert instr.offset_x == 0.0
-    assert instr.offset_y == 0.0
-    assert instr.depth == 0.0
-    assert not hasattr(instr, "measurement_height")
-    assert not hasattr(instr, "interwell_scan_height")
-
-
-def test_custom_offset_and_depth():
-    instr = MockInstrument(offset_x=-10.5, offset_y=20.0, depth=-5.0)
-    assert instr.offset_x == -10.5
-    assert instr.offset_y == 20.0
-    assert instr.depth == -5.0

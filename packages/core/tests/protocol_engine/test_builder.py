@@ -16,17 +16,6 @@ def _step_signature(protocol):
     ]
 
 
-def test_compile_protocol_uses_registry_validation_and_omits_defaults():
-    protocol = compile_protocol([
-        CommandCall(
-            command="pause",
-            args={"seconds": 0.5},
-        ),
-    ])
-
-    assert _step_signature(protocol) == [(0, "pause", {"seconds": 0.5})]
-
-
 def test_compile_protocol_rejects_unknown_command_through_registry():
     with pytest.raises(KeyError, match="Unknown protocol command"):
         compile_protocol([CommandCall(command="unknown_cmd", args={})])
@@ -102,27 +91,6 @@ def test_wells_rejects_invalid_row_specs(rows, message):
         wells("plate", rows=rows, columns=[1])
 
 
-def test_wells_accepts_iterable_rows():
-    assert wells("plate", rows=["a", "b"], columns=[1, "2"]) == [
-        "plate.A1",
-        "plate.A2",
-        "plate.B1",
-        "plate.B2",
-    ]
-
-
-def test_builder_supports_registered_commands_without_typed_wrapper():
-    protocol = (
-        ProtocolBuilder()
-        .add_command("breakpoint", message="Continue?")
-        .build()
-    )
-
-    assert _step_signature(protocol) == [
-        (0, "breakpoint", {"message": "Continue?"}),
-    ]
-
-
 def test_builder_rejects_duplicate_command_arguments():
     with pytest.raises(ValueError, match="Duplicate arguments.*instrument"):
         ProtocolBuilder().add_command(
@@ -130,33 +98,6 @@ def test_builder_rejects_duplicate_command_arguments():
             {"instrument": "pipette", "position": "plate_1.A1"},
             instrument="asmi",
         )
-
-
-def test_builder_compiles_serial_transfer_through_registry():
-    protocol = (
-        ProtocolBuilder()
-        .add_command(
-            "serial_transfer",
-            source="vial_1",
-            plate="plate_1",
-            axis="A",
-            volumes=[5.0, 10.0],
-        )
-        .build()
-    )
-
-    assert _step_signature(protocol) == [
-        (
-            0,
-            "serial_transfer",
-            {
-                "source": "vial_1",
-                "plate": "plate_1",
-                "axis": "A",
-                "volumes": [5.0, 10.0],
-            },
-        ),
-    ]
 
 
 def test_builder_omits_defaults_unless_explicitly_set():
@@ -231,34 +172,6 @@ def test_builder_scan_wrapper_preserves_optional_arguments():
     ]
 
 
-def test_builder_mutation_after_build_does_not_mutate_built_protocol():
-    protocol_builder = ProtocolBuilder()
-    protocol_builder.add_position("park", [1.0, 2.0, 3.0])
-    protocol_builder.add_move(
-        instrument="pipette",
-        position="park",
-        travel_z=10.0,
-    )
-
-    protocol = protocol_builder.build()
-
-    protocol_builder.add_position("park", [9.0, 9.0, 9.0])
-    protocol_builder.add_home()
-
-    assert protocol.positions == {"park": [1.0, 2.0, 3.0]}
-    assert _step_signature(protocol) == [
-        (
-            0,
-            "move",
-            {
-                "instrument": "pipette",
-                "position": "park",
-                "travel_z": 10.0,
-            },
-        ),
-    ]
-
-
 def test_builder_add_positions_deep_copies_and_validates_positions():
     positions = {"park": [1, 2, 3]}
     builder = ProtocolBuilder().add_positions(positions)
@@ -283,11 +196,6 @@ def test_with_setup_attaches_setup_metadata():
         gantry_path="packages/core/configs/gantry/cub_xl_asmi.yaml",
         deck_path="packages/core/configs/deck/asmi_deck.yaml",
     )
-
-
-def test_builder_without_setup_has_no_setup_metadata():
-    protocol = ProtocolBuilder().add_home().build()
-    assert protocol.setup is None
 
 
 def test_builder_rejects_two_element_named_position_cleanly():

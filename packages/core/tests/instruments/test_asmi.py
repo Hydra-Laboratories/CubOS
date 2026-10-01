@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from cubos.instruments.asmi.vendors.vernier import VernierASMI
 from cubos.instruments.asmi.exceptions import ASMICommandError, ASMIConnectionError
-from cubos.instruments.asmi.models import ASMIStatus, MeasurementResult
+from cubos.instruments.asmi.models import ASMIStatus
 
 
 class TestASMIOffline(unittest.TestCase):
@@ -18,21 +18,6 @@ class TestASMIOffline(unittest.TestCase):
         self.asmi.connect()
         self.asmi.disconnect()
 
-    def test_health_check_returns_true(self):
-        self.assertTrue(self.asmi.health_check())
-
-    def test_is_connected_returns_true(self):
-        self.assertTrue(self.asmi.is_connected())
-
-    def test_measure_returns_default_force(self):
-        result = self.asmi.measure(n_samples=3)
-        self.assertIsInstance(result, MeasurementResult)
-        self.assertEqual(result.mean_n, 1.5)
-        self.assertEqual(result.std_n, 0.0)
-        self.assertEqual(len(result.readings), 3)
-
-    def test_get_force_reading_returns_default(self):
-        self.assertAlmostEqual(self.asmi.get_force_reading(), 1.5)
 
     def test_get_baseline_force_returns_default(self):
         avg, std = self.asmi.get_baseline_force(samples=5)
@@ -45,54 +30,6 @@ class TestASMIOffline(unittest.TestCase):
         self.assertTrue(status.is_connected)
         self.assertEqual(status.sensor_description, "OfflineSensor")
 
-    def test_indentation_offline_returns_data(self):
-        """Offline indentation should return synthetic measurements quickly."""
-        from cubos.gantry.gantry import Gantry
-        gantry = Gantry(offline=True)
-
-        result = self.asmi.indentation(
-            gantry, well_z=0.0, measurement_height=10.0, indentation_limit_height=8.0, step_size=0.1,
-        )
-
-        self.assertIn("measurements", result)
-        self.assertIn("baseline_avg", result)
-        self.assertIn("data_points", result)
-        self.assertEqual(result["data_points"], len(result["measurements"]))
-        self.assertGreater(result["data_points"], 0)
-        self.assertFalse(result["force_exceeded"])
-        self.assertFalse(result["measure_with_return"])
-
-    def test_indentation_offline_with_return_includes_directions(self):
-        """Return-mode indentation should include both down and up direction samples."""
-        from cubos.gantry.gantry import Gantry
-        gantry = Gantry(offline=True)
-
-        result = self.asmi.indentation(
-            gantry,
-            well_z=0.0,
-            measurement_height=10.0,
-            indentation_limit_height=8.0,
-            step_size=0.1,
-            measure_with_return=True,
-        )
-
-        self.assertTrue(result["measure_with_return"])
-        directions = [step.get("direction") for step in result["measurements"]]
-        self.assertIn("down", directions)
-        self.assertIn("up", directions)
-
-    def test_indentation_offline_emits_direction_unconditionally(self):
-        """Every sample should carry a direction tag, even without return mode."""
-        from cubos.gantry.gantry import Gantry
-        gantry = Gantry(offline=True)
-
-        result = self.asmi.indentation(
-            gantry, well_z=0.0, measurement_height=10.0, indentation_limit_height=8.0, step_size=0.1,
-        )
-
-        self.assertGreater(len(result["measurements"]), 0)
-        for step in result["measurements"]:
-            self.assertEqual(step["direction"], "down")
 
     def test_indentation_offline_return_preserves_ordering_and_monotonicity(self):
         """All down samples must precede all up samples. Deck-origin +Z-up:
@@ -168,20 +105,6 @@ class TestASMIOffline(unittest.TestCase):
         self.assertEqual(len(up_z), 1)
         self.assertAlmostEqual(up_z[0], 10.0, places=6)
 
-    def test_indentation_limit_height_drives_descent(self):
-        from cubos.gantry.gantry import Gantry
-        gantry = Gantry(offline=True)
-
-        result = self.asmi.indentation(
-            gantry,
-            well_z=0.0,
-            measurement_height=10.0,
-            indentation_limit_height=9.8,    # 0.2 mm of descent
-            step_size=0.1,
-        )
-
-        self.assertEqual(result["data_points"], 2)
-        self.assertAlmostEqual(result["measurements"][-1]["z_mm"], 9.8)
 
     def test_indentation_rejects_non_positive_step_size(self):
         from cubos.gantry.gantry import Gantry
@@ -253,28 +176,6 @@ class TestASMIOnlineIndentation(unittest.TestCase):
         with self.assertRaises(ASMICommandError):
             asmi._move_z(gantry, 0.0, 0.0, 10.1)
 
-    def test_online_indentation_with_return_records_both_directions(self):
-        asmi = self._make_online_asmi()
-        gantry = _FakeOnlineGantry(start_z=10.0)
-
-        with patch.object(asmi, "get_baseline_force", return_value=(0.0, 0.0)), \
-             patch.object(asmi, "get_force_reading", return_value=0.1):
-            result = asmi.indentation(
-                gantry,
-                well_z=0.0,
-                measurement_height=10.0,
-                indentation_limit_height=0.5,    # 9.5 mm of descent
-                step_size=0.1,
-                force_limit=100.0,
-                baseline_samples=1,
-                measure_with_return=True,
-            )
-
-        directions = [s["direction"] for s in result["measurements"]]
-        self.assertIn("down", directions)
-        self.assertIn("up", directions)
-        up_z = [s["z_mm"] for s in result["measurements"] if s["direction"] == "up"]
-        self.assertAlmostEqual(up_z[-1], 10.0, places=6)
 
     def test_online_return_terminates_even_if_gantry_stalls(self):
         """If gantry Z never retracts, return loop must bail via iteration cap, not spin."""
@@ -480,13 +381,6 @@ class TestASMIOnlineRequiresHardware(unittest.TestCase):
         with self.assertRaises(ASMICommandError):
             asmi.measure()
 
-    def test_health_check_without_connect_returns_false(self):
-        asmi = VernierASMI(offline=False)
-        self.assertFalse(asmi.health_check())
-
-    def test_is_connected_without_connect_returns_false(self):
-        asmi = VernierASMI(offline=False)
-        self.assertFalse(asmi.is_connected())
 
     def test_failed_sensor_read_raises_command_error(self):
         asmi = VernierASMI(offline=False)

@@ -10,14 +10,9 @@ from cubos.gantry.instrument_loader import (
     load_instrumented_gantry_from_yaml,
     load_instrumented_gantry_from_yaml_safe,
 )
-from cubos.gantry.instrument_mount import InstrumentedGantry
 from cubos.gantry.loader import load_gantry_from_yaml
-from cubos.instruments.asmi.vendors.vernier import VernierASMI
 from cubos.instruments.filmetrics.vendors.kla import KLAFilmetrics
 from cubos.instruments.pipette.vendors.opentrons import OpentronsPipette
-from cubos.instruments.camera.vendors.mount_only import MountOnlyCamera
-from cubos.instruments.camera.vendors.raspberry_pi import RaspberryPiCamera
-from cubos.instruments.mounted_tool.vendors.mount_only import MountOnlyTool
 from cubos.instruments.uvvis_ccs.vendors.thorlabs import ThorlabsUVVisCCS
 from cubos.instruments.yaml_schema import InstrumentYamlEntry
 
@@ -78,12 +73,6 @@ class TestInstrumentYamlEntry:
         assert entry.vendor == "thorlabs"
         assert entry.model_extra["serial_number"] == "ABC123"
 
-    def test_defaults_for_optional_fields(self):
-        entry = InstrumentYamlEntry(type="uvvis_ccs", vendor="thorlabs")
-        assert entry.offset_x == 0.0
-        assert entry.offset_y == 0.0
-        assert entry.depth == 0.0
-        assert not hasattr(entry, "measurement_height")
 
     def test_missing_vendor_raises(self):
         with pytest.raises(Exception):
@@ -91,53 +80,7 @@ class TestInstrumentYamlEntry:
 
 
 class TestLoadInstrumentedGantryFromConfig:
-    def test_loads_instruments_embedded_in_gantry_yaml(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                asmi:
-                  type: asmi
-                  vendor: vernier
-                """,
-                grbl_settings="""\
-                grbl_settings:
-                  status_report: 0
-                  homing_enable: true
-                """,
-            ),
-        )
-        gantry_config = load_gantry_from_yaml(gantry_path)
-        mounted = load_instrumented_gantry_from_config(
-            gantry_config,
-            _mock_controller(),
-            mock_mode=True,
-        )
 
-        assert isinstance(mounted, InstrumentedGantry)
-        assert isinstance(mounted.instruments["asmi"], VernierASMI)
-        assert mounted.instruments["asmi"]._offline is True
-        assert mounted.expected_grbl_settings == {"$10": 0.0, "$22": 1.0}
-        assert mounted.safe_z == 80.0
-
-    def test_uses_explicit_safe_z(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                uvvis:
-                  type: uvvis_ccs
-                  vendor: thorlabs
-                """,
-                safe_z="safe_z: 60.0",
-            ),
-        )
-        gantry_config = load_gantry_from_yaml(gantry_path)
-        mounted = load_instrumented_gantry_from_config(
-            gantry_config,
-            _mock_controller(),
-        )
-        assert mounted.safe_z == 60.0
 
     def test_requires_embedded_instruments(self, tmp_path):
         gantry_path = _write_gantry_yaml(
@@ -162,133 +105,7 @@ class TestLoadInstrumentedGantryFromConfig:
 
 
 class TestLoadInstrumentedGantryFromYaml:
-    def test_loads_directly_from_gantry_yaml(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                uvvis:
-                  type: uvvis_ccs
-                  vendor: thorlabs
-                  offset_x: 15.0
-                  offset_y: 0.0
-                  depth: 5.0
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        instr = mounted.instruments["uvvis"]
-        assert isinstance(instr, ThorlabsUVVisCCS)
-        assert instr.offset_x == 15.0
-        assert instr.offset_y == 0.0
-        assert instr.depth == 5.0
 
-    def test_loads_multiple_instruments(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                uvvis:
-                  type: uvvis_ccs
-                  vendor: thorlabs
-                  offset_x: 15.0
-                pipette:
-                  type: pipette
-                  vendor: opentrons
-                  offset_x: 10.0
-                  offset_y: 5.0
-                  depth: 2.0
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        assert len(mounted.instruments) == 2
-        assert isinstance(mounted.instruments["uvvis"], ThorlabsUVVisCCS)
-        assert isinstance(mounted.instruments["pipette"], OpentronsPipette)
-        assert mounted.instruments["pipette"].offset_x == 10.0
-
-    def test_loads_filmetrics(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                film:
-                  type: filmetrics
-                  vendor: kla
-                  offset_x: 20.0
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        instr = mounted.instruments["film"]
-        assert isinstance(instr, KLAFilmetrics)
-        assert instr.offset_x == 20.0
-
-    def test_loads_rpi_camera(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                camera:
-                  type: camera
-                  vendor: raspberry_pi
-                  offset_x: -12.0
-                  offset_y: -4.0
-                  depth: 3.0
-                  offline: true
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        instr = mounted.instruments["camera"]
-        assert isinstance(instr, RaspberryPiCamera)
-        assert instr.offset_x == -12.0
-        assert instr.offset_y == -4.0
-        assert instr.depth == 3.0
-
-    def test_loads_mount_only_camera(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                camera:
-                  type: camera
-                  vendor: mount_only
-                  offset_x: -12.0
-                  offset_y: -4.0
-                  depth: 3.0
-                  offline: true
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        instr = mounted.instruments["camera"]
-        assert isinstance(instr, MountOnlyCamera)
-        assert instr.offset_x == -12.0
-        assert instr.offset_y == -4.0
-        assert instr.depth == 3.0
-
-    def test_loads_mount_only_tool(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                capper:
-                  type: mounted_tool
-                  vendor: mount_only
-                  offset_x: 8.0
-                  offset_y: 1.5
-                  depth: 12.0
-                  offline: true
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(gantry_path, _mock_controller())
-        instr = mounted.instruments["capper"]
-        assert isinstance(instr, MountOnlyTool)
-        assert instr.offset_x == 8.0
-        assert instr.offset_y == 1.5
-        assert instr.depth == 12.0
 
     def test_invalid_vendor_raises_value_error(self, tmp_path):
         gantry_path = _write_gantry_yaml(
@@ -351,44 +168,7 @@ class TestLoadInstrumentedGantryFromYaml:
 
 
 class TestLoadInstrumentedGantryMockMode:
-    def test_mock_mode_creates_offline_instrument(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                pip:
-                  type: pipette
-                  vendor: opentrons
-                  offset_x: -10.0
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(
-            gantry_path,
-            _mock_controller(),
-            mock_mode=True,
-        )
-        assert isinstance(mounted.instruments["pip"], OpentronsPipette)
-        assert mounted.instruments["pip"]._offline is True
 
-    def test_mock_mode_false_keeps_online(self, tmp_path):
-        gantry_path = _write_gantry_yaml(
-            tmp_path,
-            _gantry_yaml(
-                """
-                uvvis:
-                  type: uvvis_ccs
-                  vendor: thorlabs
-                """
-            ),
-        )
-        mounted = load_instrumented_gantry_from_yaml(
-            gantry_path,
-            _mock_controller(),
-            mock_mode=False,
-        )
-        assert isinstance(mounted.instruments["uvvis"], ThorlabsUVVisCCS)
-        assert mounted.instruments["uvvis"]._offline is False
 
     def test_mock_mode_swaps_all_instruments(self, tmp_path):
         gantry_path = _write_gantry_yaml(

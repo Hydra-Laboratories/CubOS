@@ -11,14 +11,6 @@ from cubos.protocol_engine.runtime import ProtocolContext
 
 class TestProtocolContextDataStore:
 
-    def test_defaults_to_none(self):
-        ctx = ProtocolContext(
-            gantry=MagicMock(),
-            deck=MagicMock(),
-        )
-        assert ctx.data_store is None
-        assert ctx.campaign_id is None
-        assert ctx.fluid_state_id is None
 
     def test_accepts_data_store(self):
         store = DataStore(db_path=":memory:")

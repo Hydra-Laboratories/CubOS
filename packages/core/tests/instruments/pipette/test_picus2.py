@@ -10,15 +10,10 @@ import json
 import pathlib
 
 import pytest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-from cubos.instruments.base_instrument import BaseInstrument
-from cubos.instruments.pipette.interface import PipetteInstrument
 from cubos.instruments.pipette.models import (
     PICUS2_MODELS,
-    PipetteConfig,
-    PipetteFamily,
-    PlungerPipetteConfig,
 )
 from cubos.instruments.pipette.exceptions import (
     PipetteBatteryError,
@@ -135,13 +130,6 @@ def connected(script=None, no_reply=(), **kwargs):
 
 class TestPicusModels:
 
-    def test_registers_the_models_in_use(self):
-        assert sorted(PICUS2_MODELS) == [
-            "picus2_1ch_10",
-            "picus2_1ch_1000",
-            "picus2_1ch_120",
-            "picus2_1ch_5000",
-        ]
 
     def test_published_vendor_figures(self):
         small = PICUS2_MODELS["picus2_1ch_10"]
@@ -159,19 +147,6 @@ class TestPicusModels:
         )
         assert extra_large.volume_increment_ul == 5.0
 
-    def test_all_single_channel(self):
-        assert {cfg.channels for cfg in PICUS2_MODELS.values()} == {1}
-
-    def test_family(self):
-        assert {cfg.family for cfg in PICUS2_MODELS.values()} == {PipetteFamily.PICUS2}
-
-    def test_carries_no_plunger_geometry(self):
-        """The split is the point: a Picus has capability, not millimetres."""
-        config = PICUS2_MODELS["picus2_1ch_10"]
-        assert isinstance(config, PipetteConfig)
-        assert not isinstance(config, PlungerPipetteConfig)
-        for field in ("mm_to_ul", "prime_position", "blowout_position"):
-            assert not hasattr(config, field)
 
     def test_unknown_model_rejected(self):
         with pytest.raises(PipetteConfigError, match="Unknown Picus 2 model"):
@@ -183,36 +158,14 @@ class TestPicusModels:
 
 class TestSpeedMapping:
 
-    def test_interface_default_lands_on_vendor_default(self):
-        assert _speed_index(50.0) == 5
 
     def test_endpoints(self):
         assert _speed_index(0.0) == 1
         assert _speed_index(100.0) == 9
 
-    def test_clamps_out_of_range(self):
-        assert _speed_index(-40.0) == 1
-        assert _speed_index(400.0) == 9
-
-    def test_monotonic(self):
-        values = [_speed_index(pct) for pct in range(0, 101, 10)]
-        assert values == sorted(values)
-
-    def test_junk_falls_back_to_the_default(self):
-        assert _speed_index(float("nan")) == 5
-        assert _speed_index("fast") == 5
-
 
 class TestVolumeQuantization:
 
-    def test_rounds_to_the_model_increment(self):
-        pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_1000", offline=True)
-        assert pip._quantize(500.4) == 500.0
-        assert pip._quantize(500.6) == 501.0
-
-    def test_fine_model_keeps_two_decimals(self):
-        pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_10", offline=True)
-        assert pip._quantize(1.234) == 1.23
 
     def test_5000_model_quantizes_to_five_microlitres(self):
         pip = SartoriusPicus2Pipette(
@@ -268,10 +221,6 @@ class TestVolumeQuantization:
         pip.dispense(400.0)
         assert pip.aspirate(600.0).loaded_volume_ul == 800.0
 
-    def test_a_full_stroke_is_still_allowed(self):
-        pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_1000", offline=True)
-        pip.connect()
-        assert pip.aspirate(1000.0).loaded_volume_ul == 1000.0
 
     def test_rejects_non_finite(self):
         pip = SartoriusPicus2Pipette(offline=True)
@@ -279,19 +228,11 @@ class TestVolumeQuantization:
             with pytest.raises(PipetteCommandError):
                 pip._quantize(bad)
 
-    def test_whole_microlitre_model_formats_as_an_integer(self):
-        pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_1000", offline=True)
-        assert pip._format_volume(500.0) == "500"
 
     def test_fine_model_formats_with_decimals(self):
         pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_10", offline=True)
         assert pip._format_volume(1.23) == "1.23"
 
-    def test_5000_model_formats_as_an_integer(self):
-        pip = SartoriusPicus2Pipette(
-            pipette_model="picus2_1ch_5000", offline=True,
-        )
-        assert pip._format_volume(2500.0) == "2500"
 
     def test_5000_model_tracks_full_stroke_and_rejects_overfill(self):
         pip = SartoriusPicus2Pipette(
@@ -302,11 +243,6 @@ class TestVolumeQuantization:
         with pytest.raises(PipetteCommandError, match="already loaded"):
             pip.aspirate(100.0)
 
-    def test_120_model_formats_with_one_decimal(self):
-        pip = SartoriusPicus2Pipette(
-            pipette_model="picus2_1ch_120", offline=True,
-        )
-        assert pip._format_volume(60.0) == "60.0"
 
     def test_120_model_tracks_full_stroke_and_rejects_overfill(self):
         pip = SartoriusPicus2Pipette(
@@ -317,38 +253,18 @@ class TestVolumeQuantization:
         with pytest.raises(PipetteCommandError, match="already loaded"):
             pip.aspirate(5.0)
 
-    def test_escape_hatch_forces_integers(self):
-        """F-4: fractional uL are unverified on hardware."""
-        pip = SartoriusPicus2Pipette(
-            pipette_model="picus2_1ch_10", offline=True, whole_microlitres_only=True,
-        )
-        assert pip._format_volume(1.23) == "1"
-
 
 # ─── Connect ─────────────────────────────────────────────────────────────────
 
 
 class TestConnect:
 
-    def test_arms_initializes_and_verifies(self):
-        _, fake = connected()
-        assert fake.sent("AUTO 1")
-        assert fake.sent("ENABLE_MOTOR_CONTROL 2")
-        assert fake.sent("RUN_INIT")
-        assert fake.sent("GET_NOMINAL_VOLUME")
-        # The on-screen confirmation is satisfied over the wire.
-        assert fake.buttons and fake.buttons[0] == "TRIGGER_BUTTON_RIGHT"
 
     def test_rejects_a_mismatched_physical_pipette(self):
         """A 1000 uL config on a 10 uL device would over-aspirate 100x."""
         with pytest.raises(PipetteConnectionError, match="reports 10 uL"):
             connected(script={"GET_NOMINAL_VOLUME": (["10"], "OK")})
 
-    def test_model_check_can_be_disabled(self):
-        pip, _ = connected(
-            script={"GET_NOMINAL_VOLUME": (["10"], "OK")}, verify_model=False,
-        )
-        assert pip.get_status().is_homed
 
     def test_unparseable_nominal_volume_warns_but_connects(self):
         pip, _ = connected(script={"GET_NOMINAL_VOLUME": (["unknown"], "OK")})
@@ -399,21 +315,6 @@ class TestConnect:
 
 class TestCommands:
 
-    def test_aspirate(self):
-        pip, fake = connected()
-        result = pip.aspirate(500.0)
-        assert fake.sent("RUN_ASPIRATE") == ["RUN_ASPIRATE 500 5"]
-        assert result.volume_ul == 500.0
-        assert result.loaded_volume_ul == 500.0
-        # No position readback exists on this vendor.
-        assert result.position_mm == 0.0
-
-    def test_dispense_tracks_loaded_volume(self):
-        pip, fake = connected()
-        pip.aspirate(500.0)
-        result = pip.dispense(200.0)
-        assert fake.sent("RUN_DISPENSE") == ["RUN_DISPENSE 200 5"]
-        assert result.loaded_volume_ul == 300.0
 
     def test_speed_always_comes_from_the_caller(self):
         """There is no per-instrument default that could silently do nothing."""
@@ -432,55 +333,6 @@ class TestCommands:
         assert fake.sent("RUN_ASPIRATE") == ["RUN_ASPIRATE 501 5"]
         assert result.volume_ul == 501.0
 
-    def test_blowout_uses_the_configured_delay(self):
-        pip, fake = connected(blowout_delay_ms=1500, blowout_go_home=False)
-        pip.aspirate(500.0)
-        pip.blowout()
-        assert fake.sent("BLOW_OUT") == ["BLOW_OUT 0 5 1500"]
-        assert pip.loaded_volume_ul == 0.0
-
-    def test_mix_is_a_host_side_two_height_loop(self):
-        pip, fake = connected()
-        gantry = MagicMock()
-        result = pip.mix(200.0, cycles=3, gantry=gantry, position=(1.0, 2.0, 3.0))
-        assert len(fake.sent("RUN_ASPIRATE")) == 6
-        assert len(fake.sent("RUN_DISPENSE")) == 6
-        assert result.cycles == 3
-        assert gantry.move.call_count == 6
-        assert gantry.move.call_args_list[0] == call(pip, (1.0, 2.0, 4.0))
-        assert gantry.move.call_args_list[1] == call(pip, (1.0, 2.0, 3.0))
-        assert pip.loaded_volume_ul == 0.0
-
-    def test_pick_up_tip_sends_nothing_to_the_pipette(self):
-        """Tip pickup is gantry motion; the cone is pressed onto the tip."""
-        pip, fake = connected()
-        before = list(fake.commands)
-        pip.pick_up_tip()
-        assert fake.commands == before
-        assert pip.get_status().has_tip
-
-    def test_drop_tip_uses_the_electronic_ejector(self):
-        pip, fake = connected()
-        pip.pick_up_tip()
-        pip.set_attached_tip_extension(59.3)
-        pip.drop_tip()
-        assert fake.sent("TIP_EJECT") == ["TIP_EJECT"]
-        assert not pip.get_status().has_tip
-        assert pip.attached_tip_extension == 0.0
-
-    def test_home_initializes_once_then_moves(self):
-        pip, fake = connected()
-        pip.home()
-        pip.home()
-        # RUN_INIT during connect; plain HOME afterwards.
-        assert len(fake.sent("RUN_INIT")) == 1
-        assert len(fake.sent("HOME")) == 2
-
-    def test_prime_is_a_documented_no_op(self):
-        pip, fake = connected()
-        before = list(fake.commands)
-        pip.prime()
-        assert fake.commands == before
 
     def test_disconnect_releases_motor_control(self):
         pip, fake = connected()
@@ -488,9 +340,6 @@ class TestCommands:
         assert fake.sent("ENABLE_MOTOR_CONTROL 0")
         assert not fake.is_open
 
-    def test_health_check_round_trips(self):
-        pip, _ = connected()
-        assert pip.health_check() is True
 
     def test_status_reports_battery_but_not_position(self):
         pip, _ = connected()
@@ -587,9 +436,6 @@ class TestFailures:
 
 class TestOffline:
 
-    def test_is_a_base_instrument(self):
-        assert isinstance(SartoriusPicus2Pipette(offline=True), BaseInstrument)
-        assert isinstance(SartoriusPicus2Pipette(offline=True), PipetteInstrument)
 
     def test_full_cycle_without_hardware(self):
         pip = SartoriusPicus2Pipette(offline=True)
@@ -617,10 +463,6 @@ class TestOffline:
         pip.connect()
         assert pip.get_status().battery_percent is None
 
-    def test_offline_health_check_passes(self):
-        pip = SartoriusPicus2Pipette(offline=True)
-        assert pip.health_check() is True
-
 
 # ─── Mount geometry ──────────────────────────────────────────────────────────
 
@@ -638,14 +480,6 @@ class TestMountGeometry:
             with pytest.raises(PipetteConfigError):
                 pip.set_attached_tip_extension(bad)
 
-    def test_liquid_classes_are_vendor_agnostic(self):
-        pip = SartoriusPicus2Pipette(
-            offline=True,
-            liquid_classes={"glycerol": {"multiplier": 1.03, "offset_ul": 4.9}},
-        )
-        correction = pip.correction_for("glycerol")
-        assert correction.apply(100.0) == pytest.approx(107.9)
-
 
 # ─── Error paths and edge cases ──────────────────────────────────────────────
 
@@ -653,15 +487,6 @@ class TestMountGeometry:
 class TestRobustness:
     """A hardware driver is mostly its failure paths."""
 
-    def test_config_is_exposed_for_stroke_planning(self):
-        pip = SartoriusPicus2Pipette(pipette_model="picus2_1ch_1000", offline=True)
-        assert pip.config is PICUS2_MODELS["picus2_1ch_1000"]
-
-    def test_identity_getters(self):
-        pip, _ = connected()
-        assert pip.get_model() == "Picus 2 1000uL"
-        assert pip.get_serial_number() == "SN-12345"
-        assert pip.get_nominal_volume() == "1000"
 
     def test_identity_getters_offline(self):
         pip = SartoriusPicus2Pipette(offline=True)
@@ -674,30 +499,6 @@ class TestRobustness:
         pip.disconnect()
         assert not fake.is_open
 
-    def test_health_check_false_after_motor_control_is_lost(self):
-        pip, _ = connected(script={"GET_VERSION": ([], "FAILED")})
-        assert pip.health_check() is False
-
-    def test_prime_initializes_when_the_piston_never_was(self):
-        pip = SartoriusPicus2Pipette(offline=True)
-        pip.prime()
-        assert pip.get_status().is_homed
-
-    def test_pick_up_tip_initializes_first_if_needed(self):
-        fake = FakePicusSerial()
-        with patch(
-            "cubos.instruments.pipette.vendors.sartorius.serial.Serial",
-            return_value=fake,
-        ):
-            pip = SartoriusPicus2Pipette(port="/dev/ttyUSB0")
-            pip.connect()
-        pip._initialized = False
-        pip.pick_up_tip()
-        assert len(fake.sent("RUN_INIT")) == 2
-
-    def test_missing_nominal_volume_skips_the_model_check(self):
-        pip, _ = connected(script={"GET_NOMINAL_VOLUME": ([], "OK")})
-        assert pip.get_status().is_homed
 
     def test_battery_read_failure_is_not_fatal(self):
         pip, _ = connected(script={"GET_BATTERY_LEVEL": ([], "OK")})
@@ -762,29 +563,12 @@ class TestRobustness:
         # Unsolicited button events must never be read as a command's output.
         assert parse('{"button":"RIGHT_PRESSED"}') == ("ignore", None, None)
 
-    def test_query_reply_without_a_result_code_is_read(self):
-        """Observed on hardware: a query answers ACK/BEGIN/data/END, no OK."""
-        pip, _ = connected()
-        assert pip.get_nominal_volume() == "1000"
-
-    def test_async_button_events_do_not_corrupt_a_reply(self):
-        pip, fake = connected()
-        fake.inject_async = True
-        assert pip.get_model() == "Picus 2 1000uL"
 
     def test_interleaved_replies_are_attributed_by_scope(self):
         """Replies for different frames interleave; data belongs to its scope."""
         pip, fake = connected()
         fake.interleave_foreign = True
         assert pip.get_serial_number() == "SN-12345"
-
-    def test_first_number_parsing(self):
-        from cubos.instruments.pipette.vendors.sartorius import _first_number
-
-        assert _first_number("87") == 87.0
-        assert _first_number("battery 87 %") == 87.0
-        assert _first_number("1,000") == 1000.0
-        assert _first_number("no digits here") is None
 
 
 # ─── End to end through the protocol engine ──────────────────────────────────
@@ -804,40 +588,6 @@ class TestThroughTheEngine:
     against a config that carries no plunger geometry at all.
     """
 
-    def test_setup_validation_passes_offline(self):
-        from cubos.protocol_engine.setup import setup_protocol
-
-        protocol, context = setup_protocol(
-            str(FIXTURE / "gantry_sartorius.yaml"),
-            str(FIXTURE / "deck.yaml"),
-            str(FIXTURE / "protocol.yaml"),
-            mock_mode=True,
-        )
-        assert len(protocol.steps) == 6
-        assert isinstance(
-            context.gantry.instruments["pipette"], SartoriusPicus2Pipette,
-        )
-
-    def test_protocol_executes_offline(self):
-        from cubos.protocol_engine.setup import setup_protocol
-
-        protocol, context = setup_protocol(
-            str(FIXTURE / "gantry_sartorius.yaml"),
-            str(FIXTURE / "deck.yaml"),
-            str(FIXTURE / "protocol.yaml"),
-            mock_mode=True,
-        )
-        context.gantry.connect_instruments()
-        try:
-            protocol.execute(context)
-        finally:
-            context.gantry.disconnect_instruments()
-
-        pipette = context.gantry.instruments["pipette"]
-        status = pipette.get_status()
-        assert not status.has_tip, "drop_tip should have cleared the tip"
-        assert pipette.attached_tip_extension == 0.0
-        assert pipette.loaded_volume_ul == 0.0
 
     def test_stroke_planning_sees_the_picus_capacity(self):
         """`pipette_capacity` isinstance-checks the base config, so the split

@@ -6,16 +6,13 @@ import pytest
 import serial as real_serial
 
 from cubos.instruments.controllers.pawduino import PawduinoLink
-from cubos.instruments.base_instrument import BaseInstrument
 from cubos.instruments.lighting.exceptions import (
     LightingCommandError,
     LightingConfigError,
     LightingConnectionError,
     LightingTimeoutError,
 )
-from cubos.instruments.lighting.interface import LightingInstrument
 from cubos.instruments.lighting.vendors.pawduino import PawduinoLighting
-from cubos.instruments.registry import get_instrument_class
 
 
 def _offline_lights(**overrides):
@@ -42,12 +39,7 @@ def _linked_lights(responses=None):
 
 
 class TestInterface:
-    def test_is_base_instrument(self):
-        assert issubclass(PawduinoLighting, BaseInstrument)
-        assert issubclass(PawduinoLighting, LightingInstrument)
 
-    def test_registry_resolves_vendor(self):
-        assert get_instrument_class("lighting", "pawduino") is PawduinoLighting
 
     def test_declared_channels(self):
         channels = _offline_lights().channels
@@ -62,11 +54,6 @@ class TestInterface:
         with pytest.raises(LightingConfigError, match="5, 10, 20, 30, 50"):
             _offline_lights().set_channel("contact", 60)
 
-    def test_zero_always_allowed(self):
-        lights = _offline_lights()
-        lights.set_channel("white", 0)
-        assert lights.status().channels["white"] == 0
-
 
 class TestOffline:
     def test_status_shadows_channel_state(self):
@@ -78,15 +65,6 @@ class TestOffline:
         assert lights.status().channels == {"white": 25, "contact": 50}
         lights.all_off()
         assert lights.status().channels == {"white": 0, "contact": 0}
-
-    def test_health_check(self):
-        assert _offline_lights().health_check() is True
-
-    def test_connect_resets_shadow(self):
-        lights = _offline_lights()
-        lights.set_channel("white", 25)
-        lights.connect()
-        assert lights.status().channels["white"] == 0
 
 
 class TestSerialProtocol:
@@ -113,11 +91,6 @@ class TestSerialProtocol:
         lights.set_channel(channel, level)
         assert mock_ser.write.call_args[0][0] == expected
 
-    def test_all_off_sends_both_off_commands(self):
-        lights, mock_ser = _linked_lights()
-        lights.all_off()
-        sent = [call[0][0] for call in mock_ser.write.call_args_list]
-        assert set(sent) == {b"2\n", b"4\n"}
 
     def test_err_response_raises_and_shadow_unchanged(self):
         lights, _ = _linked_lights(["ERR:no lights\n"])

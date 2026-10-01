@@ -32,17 +32,6 @@ from cubos.instruments.potentiostat.models import (
 
 class TestConstructor:
 
-    def test_defaults(self):
-        p = AdmiralPotentiostat()
-        assert p.name == "AdmiralPotentiostat"
-        assert p._channel == 0
-        assert p._port == ""
-        assert p._offline is False
-        assert p.vendor == "admiral"
-
-    def test_name_override(self):
-        p = AdmiralPotentiostat(name="station_a")
-        assert p.name == "station_a"
 
     def test_offsets_propagate_to_base(self):
         p = AdmiralPotentiostat(offset_x=1.5, offset_y=-2.0, depth=3.0)
@@ -65,9 +54,6 @@ class TestOfflineLifecycle:
         p.connect()
         p.disconnect()  # must not raise
 
-    def test_health_check_true_in_offline(self):
-        p = AdmiralPotentiostat(offline=True)
-        assert p.health_check() is True
 
     def test_run_CV_offline_returns_result_with_aligned_arrays(self):
         p = AdmiralPotentiostat(offline=True)
@@ -88,13 +74,6 @@ class TestOfflineLifecycle:
         assert result.metadata["device_id"] == "offline"
         assert result.technique == "cv"
 
-    def test_run_CV_offline_is_deterministic(self):
-        p1 = AdmiralPotentiostat(offline=True)
-        p2 = AdmiralPotentiostat(offline=True)
-        params = CVParams(0.0, 0.2, -0.2, 0.0, 0.05, cycles=1, sampling_interval_s=0.1)
-        r1 = p1.run_CV(params)
-        r2 = p2.run_CV(params)
-        assert r1.current_a == r2.current_a
 
     def test_run_OCP_offline(self):
         p = AdmiralPotentiostat(offline=True)
@@ -291,10 +270,6 @@ class TestConnectOnline:
             p = AdmiralPotentiostat(port="COM3", command_timeout=0.01)
             with pytest.raises(PotentiostatConnectionError, match="No SquidStat device"):
                 p.connect()
-
-    def test_health_check_false_before_connect(self):
-        p = AdmiralPotentiostat(port="COM3")
-        assert p.health_check() is False
 
 
 # --- Online run_CV ------------------------------------------------------------

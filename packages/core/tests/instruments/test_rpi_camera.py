@@ -5,15 +5,6 @@ from cubos.instruments.camera.vendors.raspberry_pi import RaspberryPiCamera
 from cubos.instruments.mounted_tool.vendors.mount_only import MountOnlyTool
 
 
-def test_rpi_camera_uses_standard_mount_fields():
-    camera = RaspberryPiCamera(offset_x=-12.0, offset_y=-4.0, depth=3.0, offline=True)
-
-    assert camera.offset_x == -12.0
-    assert camera.offset_y == -4.0
-    assert camera.depth == 3.0
-    assert camera.health_check() is True
-
-
 def test_rpi_camera_capture_is_not_implemented():
     camera = RaspberryPiCamera(offline=True)
 

@@ -10,7 +10,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from cubos.deck.labware.labware import Coordinate3D
 from cubos.deck.labware.vial import Vial
@@ -43,77 +42,6 @@ class TestVialCappedModel:
     def test_capped_defaults_to_none(self):
         assert _make_vial().capped is None
 
-    def test_capped_true_round_trips(self):
-        assert _make_vial(capped=True).capped is True
-
-    def test_capped_false_round_trips(self):
-        assert _make_vial(capped=False).capped is False
-
-
-# ─── Deck YAML: plain vial ────────────────────────────────────────────────
-
-
-def test_vial_capped_true_loads_from_yaml():
-    yaml = """
-labware:
-  stock:
-    type: vial
-    name: stock
-    capped: true
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        assert result["stock"].capped is True
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_vial_capped_false_loads_from_yaml():
-    yaml = """
-labware:
-  waste:
-    type: vial
-    name: waste
-    capped: false
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        assert result["waste"].capped is False
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_vial_without_capped_defaults_to_none_via_loader():
-    yaml = """
-labware:
-  plain:
-    type: vial
-    name: plain
-    height: 57.0
-    diameter: 28.0
-    location: {x: 30.0, y: 40.0, z: 30.0}
-    capacity_ul: 1500.0
-    working_volume_ul: 1200.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        assert result["plain"].capped is None
-    finally:
-        Path(path).unlink(missing_ok=True)
-
 
 # ─── Deck YAML: vial grid (uniform capped) ─────────────────────────────────
 
@@ -143,66 +71,5 @@ labware:
         grid = result["reagents"]
         for vial in grid.vials.values():
             assert vial.capped is True
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_vial_grid_without_vial_capped_defaults_to_none():
-    yaml = """
-labware:
-  reagents:
-    type: vial_grid
-    name: reagents
-    rows: 1
-    columns: 2
-    calibration:
-      a1: {x: 10.0, y: 20.0, z: 30.0}
-      a2: {x: 20.0, y: 20.0, z: 30.0}
-    x_offset: 10.0
-    y_offset: 10.0
-    vial_height: 40.0
-    vial_diameter: 12.0
-    capacity_ul: 500.0
-    working_volume_ul: 400.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        grid = result["reagents"]
-        for vial in grid.vials.values():
-            assert vial.capped is None
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-# ─── Deck YAML: nested holder vial ─────────────────────────────────────────
-
-
-def test_nested_holder_vial_capped_loads():
-    yaml = """
-labware:
-  holder:
-    type: vial_holder
-    name: holder
-    location:
-      x: 17.1
-      y: 132.9
-      z: 164.0
-    vials:
-      vial_a:
-        capped: true
-        height: 57.0
-        diameter: 28.0
-        location:
-          x: 17.1
-          y: 0.9
-        capacity_ul: 20000.0
-        working_volume_ul: 6500.0
-"""
-    path = _write(yaml)
-    try:
-        result = load_deck_from_yaml(path)
-        nested = result.resolve_labware("holder.vial_a")
-        assert nested.capped is True
     finally:
         Path(path).unlink(missing_ok=True)

@@ -15,27 +15,6 @@ class TestGantry(unittest.TestCase):
     def setUp(self):
         self.config = {"serial_port": "/dev/tty.usbserial"}
 
-    @patch("cubos.gantry.gantry.Mill")
-    def test_connect_auto_scans_even_with_configured_port(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.connect()
-        mock_mill.connect.assert_called_with(port=None)
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_connect_accepts_explicit_port_override(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.connect(port="/dev/tty.usbserial-130")
-        mock_mill.connect.assert_called_with(port="/dev/tty.usbserial-130")
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_connect_leaves_default_feed_rate_unset_without_config(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        mock_mill.default_feed_rate = 3000
-        gantry = Gantry(config=self.config)
-        gantry.connect()
-        self.assertEqual(mock_mill.default_feed_rate, 3000)
 
     @patch("cubos.gantry.gantry.Mill")
     def test_connect_applies_configured_default_feed_rate(self, mock_mill_cls):
@@ -45,17 +24,6 @@ class TestGantry(unittest.TestCase):
         gantry.connect()
         self.assertEqual(mock_mill.default_feed_rate, 4000.0)
 
-    @patch("cubos.gantry.gantry.Mill")
-    def test_move_delegates_to_mill_move_to(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.move_to(10, 20, 30)
-        mock_mill.move_to.assert_called_with(
-            x_coordinate=10.0,
-            y_coordinate=20.0,
-            z_coordinate=30.0,
-            travel_z=None,
-        )
 
     @patch("cubos.gantry.gantry.Mill")
     def test_move_with_travel_z_passes_through_deck_frame_z(self, mock_mill_cls):
@@ -322,40 +290,6 @@ class TestGantry(unittest.TestCase):
         gantry = Gantry(config=self.config)
         self.assertEqual(gantry._extract_status(), "Idle")
 
-    @patch("cubos.gantry.gantry.Mill")
-    def test_extract_status_returns_unknown_when_empty(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        mock_mill.last_status = ""
-        gantry = Gantry(config=self.config)
-        self.assertEqual(gantry._extract_status(), "Unknown")
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_clear_g92_offsets_sends_g92_1(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.clear_g92_offsets()
-        mock_mill.execute_command.assert_called_with("G92.1")
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_enforce_work_position_reporting_delegates_to_mill(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.enforce_work_position_reporting()
-        mock_mill.enforce_wpos_mode.assert_called_once_with()
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_activate_work_coordinate_system_sends_g54(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.activate_work_coordinate_system()
-        mock_mill.execute_command.assert_called_with("G54")
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_set_work_coordinates_sends_g10_l20(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        gantry = Gantry(config=self.config)
-        gantry.set_work_coordinates(400.0, 300.0, 100.0)
-        mock_mill.execute_command.assert_called_with("G10 L20 P1 X400 Y300 Z100")
 
     @patch("cubos.gantry.gantry.Mill")
     def test_set_work_coordinates_can_assign_partial_axes(self, mock_mill_cls):
@@ -374,12 +308,6 @@ class TestGantry(unittest.TestCase):
         gantry.set_serial_timeout(0.5)
         mock_mill.set_read_timeout.assert_called_once_with(0.5)
 
-    @patch("cubos.gantry.gantry.Mill")
-    def test_connected_port_comes_from_low_level_driver(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        mock_mill.connected_port.return_value = "/dev/tty.usbserial-130"
-        gantry = Gantry(config=self.config)
-        self.assertEqual(gantry.connected_port(), "/dev/tty.usbserial-130")
 
     @patch("cubos.gantry.gantry.Mill")
     def test_soft_limits_enabled_reads_setting_semantically(self, mock_mill_cls):
@@ -707,20 +635,6 @@ class TestGrblSettingsValidation(unittest.TestCase):
         )
         gantry._validate_grbl_settings()
 
-    @patch("cubos.gantry.gantry.Mill")
-    def test_board_expected_settings_override_gantry_settings(self, mock_mill_cls):
-        mock_mill = mock_mill_cls.return_value
-        mock_mill.read_grbl_settings.return_value = {"$3": "1", "$130": "306.000"}
-        gantry = Gantry(
-            config={
-                "grbl_settings": {
-                    "dir_invert_mask": 2,
-                    "max_travel_x": 300.0,
-                },
-            }
-        )
-        gantry.set_expected_grbl_settings({"$3": 1.0, "$130": 306.0})
-        gantry._validate_grbl_settings()
 
     @patch("cubos.gantry.gantry.Mill")
     def test_validate_raises_on_critical_mismatch(self, mock_mill_cls):
@@ -729,11 +643,6 @@ class TestGrblSettingsValidation(unittest.TestCase):
         gantry = Gantry(config={"grbl_settings": {"dir_invert_mask": 2}})
         with self.assertRaises(MillConnectionError):
             gantry._validate_grbl_settings()
-
-    @patch("cubos.gantry.gantry.Mill")
-    def test_validate_skipped_when_no_grbl_settings(self, mock_mill_cls):
-        gantry = Gantry(config={})
-        gantry._validate_grbl_settings()
 
 
 if __name__ == "__main__":

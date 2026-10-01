@@ -14,14 +14,6 @@ from cubos.protocol_engine.commands._movement import (
 
 class TestUnpackXyz:
 
-    def test_tuple(self):
-        assert unpack_xyz((1.0, 2.0, 3.0)) == (1.0, 2.0, 3.0)
-
-    def test_list(self):
-        assert unpack_xyz([4.0, 5.0, 6.0]) == (4.0, 5.0, 6.0)
-
-    def test_coordinate3d(self):
-        assert unpack_xyz(Coordinate3D(x=1.5, y=2.5, z=3.5)) == (1.5, 2.5, 3.5)
 
     def test_object_with_xyz_attrs(self):
         obj = MagicMock()

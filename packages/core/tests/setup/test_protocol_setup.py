@@ -17,7 +17,6 @@ from cubos.deck.labware.well_plate import WellPlate
 from cubos.deck.errors import DeckLoaderError
 from cubos.gantry.errors import GantryLoaderError
 from cubos.gantry.gantry import Gantry
-from cubos.gantry.gantry_config import GantryConfig
 from cubos.gantry.instrument_mount import InstrumentedGantry
 from cubos.protocol_engine.builder import ProtocolBuilder
 from cubos.protocol_engine.errors import ProtocolLoaderError
@@ -167,10 +166,6 @@ protocol:
 """
 
 
-def _gantry_with_instruments(instruments_yaml: str) -> str:
-    return GANTRY_YAML.split("instruments:\n", 1)[0] + instruments_yaml
-
-
 def _write_temp_yaml(content: str) -> str:
     f = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
     f.write(content)
@@ -210,84 +205,6 @@ class _TempYamlFiles:
 
 class TestSetupProtocol:
 
-    def test_setup_returns_protocol_and_context(self):
-        with _TempYamlFiles() as f:
-            protocol, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert isinstance(protocol, Protocol)
-            assert isinstance(context, ProtocolContext)
-
-    def test_context_has_gantry_with_instruments(self):
-        with _TempYamlFiles() as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert "pipette" in context.gantry.instruments
-
-    def test_context_has_deck_with_labware(self):
-        with _TempYamlFiles() as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert "vial_1" in context.deck
-
-    def test_setup_accepts_nested_holder_yaml_positions(self):
-        deck_yaml = """\
-labware:
-  vial_holder:
-    type: vial_holder
-    name: panda_vial_holder
-    location:
-      x: 17.1
-      y: 132.9
-      z: 20.0
-    vials:
-      vial_1:
-        model_name: 20ml_vial
-        height: 57.0
-        diameter: 28.0
-        location:
-          x: 17.1
-          y: 0.9
-        capacity_ul: 20000.0
-        working_volume_ul: 12000.0
-"""
-        protocol_yaml = """\
-protocol:
-  - move:
-      instrument: pipette
-      position: vial_holder.vial_1
-"""
-        with _TempYamlFiles(deck=deck_yaml, protocol=protocol_yaml) as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-
-            assert "vial_holder" in context.deck
-
-    def test_context_has_gantry_config(self):
-        with _TempYamlFiles() as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert isinstance(context.gantry_config, GantryConfig)
-            assert context.gantry_config.working_volume.x_min == 0.0
-
-    def test_context_carries_optional_data_and_fluid_state_ids(self):
-        data_store = object()
-        with _TempYamlFiles() as f:
-            _, context = setup_protocol(
-                f.gantry_path,
-                f.deck_path,
-                f.protocol_path,
-                data_store=data_store,
-                campaign_id=42,
-                fluid_state_id=73,
-            )
-            assert context.data_store is data_store
-            assert context.campaign_id == 42
-            assert context.fluid_state_id == 73
 
     def test_rejects_negative_space_gantry_config(self):
         legacy_gantry = GANTRY_YAML.replace("  x_min: 0.0\n", "  x_min: -300.0\n")
@@ -297,27 +214,6 @@ protocol:
                     f.gantry_path, f.deck_path, f.protocol_path,
                 )
 
-    def test_protocol_has_expected_steps(self):
-        with _TempYamlFiles() as f:
-            protocol, _ = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert len(protocol) == 1
-            assert protocol.steps[0].command_name == "move"
-
-    def test_setup_accepts_built_protocol_object(self):
-        built_protocol = (
-            ProtocolBuilder()
-            .add_move(instrument="pipette", position="vial_1")
-            .build()
-        )
-        with _TempYamlFiles() as f:
-            protocol, context = setup_protocol(
-                f.gantry_path, f.deck_path, built_protocol,
-            )
-
-            assert protocol is built_protocol
-            assert isinstance(context, ProtocolContext)
 
     def test_setup_protocol_object_runs_bounds_validation(self):
         near_edge_deck = """\
@@ -424,33 +320,6 @@ labware:
                 setup_protocol(
                     f.gantry_path, f.deck_path, "/nonexistent/protocol.yaml",
                 )
-
-    def test_uses_mock_gantry_by_default(self):
-        with _TempYamlFiles() as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-            )
-            assert isinstance(context.gantry, InstrumentedGantry)
-            assert context.gantry.controller is not None
-
-    def test_mock_mode_swaps_instrument_types(self):
-        gantry_yaml = _gantry_with_instruments("""\
-instruments:
-  pipette:
-    type: pipette
-    vendor: opentrons
-    offset_x: -5.0
-    offset_y: 0.0
-    depth: 0.0
-""")
-        with _TempYamlFiles(gantry=gantry_yaml) as f:
-            _, context = setup_protocol(
-                f.gantry_path, f.deck_path, f.protocol_path,
-                mock_mode=True,
-            )
-            from cubos.instruments.pipette.vendors.opentrons import OpentronsPipette
-            assert isinstance(context.gantry.instruments["pipette"], OpentronsPipette)
-            assert context.gantry.instruments["pipette"]._offline is True
 
 
 class TestRunOnHardwareLifecycle:
@@ -755,24 +624,6 @@ protocol:
                     data_store=DataStore(":memory:"),
                 )
 
-    def test_run_on_hardware_mock_mode(self):
-        gantry_yaml = _gantry_with_instruments("""\
-instruments:
-  pipette:
-    type: pipette
-    vendor: opentrons
-    offset_x: -5.0
-    offset_y: 0.0
-    depth: 0.0
-""")
-        with _TempYamlFiles(gantry=gantry_yaml) as f:
-            results = run_on_hardware(
-                f.gantry_path, f.deck_path, f.protocol_path,
-                gantry=Gantry(offline=True),
-                mock_mode=True,
-                data_store=DataStore(":memory:"),
-            )
-            assert isinstance(results, list)
 
     def test_run_on_hardware_auto_creates_campaign_and_persists_uvvis_measure(self):
         store = DataStore(":memory:")

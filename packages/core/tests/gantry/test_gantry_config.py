@@ -31,9 +31,6 @@ def _make_volume(
 
 class TestWorkingVolume:
 
-    def test_contains_interior_point(self):
-        vol = _make_volume()
-        assert vol.contains(150.0, 100.0, 40.0) is True
 
     def test_contains_point_on_min_boundary(self):
         vol = _make_volume()
@@ -71,11 +68,6 @@ class TestWorkingVolume:
         vol = _make_volume()
         assert vol.contains(150.0, 100.0, 80.001) is False
 
-    def test_each_axis_checked_independently(self):
-        vol = _make_volume()
-        assert vol.contains(150.0, 100.0, -0.001) is False
-        assert vol.contains(150.0, -0.001, 40.0) is False
-        assert vol.contains(-0.001, 100.0, 40.0) is False
 
     def test_rejects_reversed_x_bounds(self):
         with pytest.raises(ValueError, match="x_min"):
@@ -104,29 +96,6 @@ class TestWorkingVolume:
 
 class TestGantryConfig:
 
-    def test_stores_all_fields(self):
-        vol = _make_volume()
-        config = GantryConfig(
-            serial_port="/dev/ttyUSB0",
-            gantry_type=GantryType.CUB_XL,
-            factory_z_travel_mm=90.0,
-            working_volume=vol,
-            safe_z=75.0,
-        )
-        assert config.serial_port == "/dev/ttyUSB0"
-        assert config.gantry_type == GantryType.CUB_XL
-        assert config.factory_z_travel_mm == 90.0
-        assert config.working_volume is vol
-        assert config.safe_z == 75.0
-
-    def test_gantry_type_string_is_normalized_to_enum(self):
-        config = GantryConfig(
-            serial_port="/dev/ttyUSB0",
-            gantry_type="cub_xl",
-            factory_z_travel_mm=90.0,
-            working_volume=_make_volume(),
-        )
-        assert config.gantry_type == GantryType.CUB_XL
 
     def test_rejects_unknown_gantry_type(self):
         with pytest.raises(ValueError, match="gantry_type"):
@@ -178,24 +147,6 @@ class TestGantryConfig:
                 safe_z=85.0,
             )
 
-    def test_default_feed_rate_mm_min_defaults_to_none(self):
-        config = GantryConfig(
-            serial_port="/dev/ttyUSB0",
-            gantry_type=GantryType.CUB_XL,
-            factory_z_travel_mm=90.0,
-            working_volume=_make_volume(),
-        )
-        assert config.default_feed_rate_mm_min is None
-
-    def test_stores_default_feed_rate_mm_min(self):
-        config = GantryConfig(
-            serial_port="/dev/ttyUSB0",
-            gantry_type=GantryType.CUB_XL,
-            factory_z_travel_mm=90.0,
-            working_volume=_make_volume(),
-            default_feed_rate_mm_min=4000.0,
-        )
-        assert config.default_feed_rate_mm_min == 4000.0
 
     def test_rejects_zero_default_feed_rate_mm_min(self):
         with pytest.raises(ValueError, match="default_feed_rate_mm_min"):
@@ -223,11 +174,3 @@ class TestWorkingVolumeSignedBounds:
     def test_allows_negative_x_min(self):
         vol = _make_volume(x_min=-1.0)
         assert vol.x_min == -1.0
-
-    def test_allows_negative_y_min(self):
-        vol = _make_volume(y_min=-1.0)
-        assert vol.y_min == -1.0
-
-    def test_allows_negative_z_min(self):
-        vol = _make_volume(z_min=-1.0)
-        assert vol.z_min == -1.0

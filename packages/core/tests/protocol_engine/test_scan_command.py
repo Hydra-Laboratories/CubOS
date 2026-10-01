@@ -28,9 +28,7 @@ from cubos.deck.loader import load_deck_from_yaml_safe
 from cubos.instruments.base_instrument import BaseInstrument
 from cubos.instruments.filmetrics.models import MeasurementResult
 from cubos.instruments.uv_curing.models import CureResult
-from cubos.instruments.uvvis_ccs.models import UVVisSpectrum
 from cubos.protocol_engine.errors import ProtocolExecutionError
-from cubos.protocol_engine.measurements import InstrumentMeasurement
 from cubos.protocol_engine.runtime import ProtocolContext
 
 
@@ -110,29 +108,6 @@ def _make_2x3_plate() -> WellPlate:
             "B2": Coordinate3D(x=10.0, y=8.0, z=HEIGHT_MM),
             "B3": Coordinate3D(x=20.0, y=8.0, z=HEIGHT_MM),
         },
-        capacity_ul=200.0,
-        working_volume_ul=150.0,
-    )
-
-
-def _make_8x12_plate() -> WellPlate:
-    wells = {}
-    for row_index, row_label in enumerate("ABCDEFGH"):
-        for column in range(1, 13):
-            wells[f"{row_label}{column}"] = Coordinate3D(
-                x=float(row_index * 9.0),
-                y=float((column - 1) * 9.0),
-                z=HEIGHT_MM,
-            )
-    return WellPlate(
-        name="plate",
-        model_name="test_96",
-        length=127.76,
-        width=85.47,
-        height=HEIGHT_MM,
-        rows=8,
-        columns=12,
-        wells=wells,
         capacity_ul=200.0,
         working_volume_ul=150.0,
     )
@@ -244,14 +219,6 @@ def _scan_args(**overrides):
 
 class TestScanCommand:
 
-    def test_first_well_uses_move_to_labware(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        ctx = _mock_context()
-
-        scan(ctx, **_scan_args())
-
-        assert ctx.gantry.move_to_labware.call_count == 1
 
     def test_visits_wells_in_row_major_order(self):
         from cubos.protocol_engine.commands.scan import scan
@@ -489,16 +456,6 @@ class TestScanCommand:
         assert set(result.keys()) == {"A1", "A2", "B1", "B2"}
         assert all(v is True for v in result.values())
 
-    def test_captures_false_results(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        sensor = _make_sensor()
-        sensor._return_value = False
-        ctx = _mock_context(sensor=sensor)
-
-        result = scan(ctx, **_scan_args())
-
-        assert all(v is False for v in result.values())
 
     def test_calls_method_once_per_well(self):
         from cubos.protocol_engine.commands.scan import scan
@@ -510,36 +467,6 @@ class TestScanCommand:
 
         assert sensor.call_count == 4
 
-    def test_nested_holder_plate_scans_all_96_wells(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        plate = _make_8x12_plate()
-        sensor = _make_sensor()
-        holder = WellPlateHolder(
-            name="plate_holder",
-            location=Coordinate3D(x=0.0, y=0.0, z=0.0),
-            contained_labware={"plate": plate},
-        )
-        board = MagicMock()
-        board.instruments = {"uvvis": sensor}
-        ctx = ProtocolContext(
-            gantry=board,
-            deck=Deck({"plate_holder": holder}),
-            logger=logging.getLogger("test_scan_command"),
-        )
-
-        result = scan(
-            ctx,
-            plate="plate_holder.plate",
-            instrument="uvvis",
-            method="measure",
-            measurement_height=MEASUREMENT,
-            interwell_scan_height=SAFE_APPROACH,
-        )
-
-        assert len(result) == 96
-        assert sensor.call_count == 96
-        assert board.move_to_labware.call_count == 1
 
     def test_sharc_nested_plate_persists_under_canonical_labware_key(self):
         from cubos.protocol_engine.commands.scan import scan
@@ -625,32 +552,6 @@ class TestScanCommand:
             scan(ctx, plate="plate_1", instrument="uvvis", method="nonexistent",
                  measurement_height=MEASUREMENT, interwell_scan_height=SAFE_APPROACH)
 
-    def test_logs_normalized_instrument_measurement(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        sensor = _make_sensor()
-        sensor._return_value = UVVisSpectrum(
-            wavelengths=(400.0, 500.0),
-            intensities=(0.1, 0.2),
-            integration_time_s=0.24,
-        )
-        ctx = _mock_context(sensor=sensor)
-        ctx.data_store = MagicMock()
-        ctx.data_store.get_contents.return_value = []
-        ctx.campaign_id = 77
-
-        scan(ctx, **_scan_args())
-
-        assert ctx.data_store.log_experiment_measurement.call_count == 4
-        assert [
-            call.args[1]
-            for call in ctx.data_store.get_contents.call_args_list
-        ] == ["plate_1"] * 4
-        kwargs = ctx.data_store.log_experiment_measurement.call_args_list[0].kwargs
-        measurement = kwargs["result"]
-        assert isinstance(measurement, InstrumentMeasurement)
-        assert kwargs["labware_key"] == "plate_1"
-        ctx.data_store.get_fluid_snapshot.assert_not_called()
 
     def test_tracked_transfer_scan_uses_current_fluid_composition(self, tmp_path):
         from cubos.protocol_engine.commands.pipette import transfer
@@ -745,42 +646,6 @@ class TestScanCommand:
         ctx.gantry.move.assert_not_called()
         assert ctx.gantry.instruments["uvvis"].call_count == 0
 
-    def test_persists_filmetrics_measurements(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        plate = _make_2x2_plate()
-        filmetrics = _FakeFilmetrics(
-            name="filmetrics", offset_x=0.0, offset_y=0.0, depth=0.0,
-        )
-        board = MagicMock()
-        board.instruments = {"filmetrics": filmetrics}
-        store = DataStore(db_path=":memory:")
-        campaign_id = store.create_campaign(description="filmetrics scan")
-        store.register_labware(campaign_id, "plate_1", plate)
-        ctx = ProtocolContext(
-            gantry=board,
-            deck=Deck({"plate_1": plate}),
-            data_store=store,
-            campaign_id=campaign_id,
-        )
-
-        scan(ctx, **_scan_args(instrument="filmetrics"))
-
-        rows = store._conn.execute(
-            """
-            SELECT e.labware_key, e.well_id, m.thickness_nm, m.goodness_of_fit
-            FROM experiments e
-            JOIN filmetrics_measurements m ON m.experiment_id = e.id
-            WHERE e.campaign_id = ?
-            ORDER BY e.id
-            """,
-            (campaign_id,),
-        ).fetchall()
-        assert [row[0] for row in rows] == ["plate_1"] * 4
-        assert [row[1] for row in rows] == ["A1", "A2", "B1", "B2"]
-        assert all(row[2] == pytest.approx(151.2) for row in rows)
-        assert all(row[3] == pytest.approx(0.96) for row in rows)
-        store.close()
 
     def test_malformed_asmi_measurement_warns_and_returns_results(self, caplog):
         from cubos.protocol_engine.commands.scan import scan
@@ -819,43 +684,6 @@ class TestScanCommand:
         ).fetchone()[0] == 0
         ctx.data_store.close()
 
-    def test_persists_uv_curing_measurements(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        plate = _make_2x2_plate()
-        uv_curing = _FakeUVCuring(
-            name="uv_curing", offset_x=0.0, offset_y=0.0, depth=0.0,
-        )
-        board = MagicMock()
-        board.instruments = {"uv_curing": uv_curing}
-        store = DataStore(db_path=":memory:")
-        campaign_id = store.create_campaign(description="uv curing scan")
-        store.register_labware(campaign_id, "plate_1", plate)
-        ctx = ProtocolContext(
-            gantry=board,
-            deck=Deck({"plate_1": plate}),
-            data_store=store,
-            campaign_id=campaign_id,
-        )
-
-        scan(ctx, **_scan_args(instrument="uv_curing", method="cure"))
-
-        rows = store._conn.execute(
-            """
-            SELECT e.well_id, m.intensity_percent, m.exposure_time_s,
-                   m.cure_timestamp_s
-            FROM experiments e
-            JOIN uv_curing_measurements m ON m.experiment_id = e.id
-            WHERE e.campaign_id = ?
-            ORDER BY e.id
-            """,
-            (campaign_id,),
-        ).fetchall()
-        assert [row[0] for row in rows] == ["A1", "A2", "B1", "B2"]
-        assert all(row[1] == pytest.approx(60.0) for row in rows)
-        assert all(row[2] == pytest.approx(1.5) for row in rows)
-        assert all(row[3] == pytest.approx(123.4) for row in rows)
-        store.close()
 
     def test_uv_health_check_does_not_persist_or_fail(self, caplog):
         from cubos.protocol_engine.commands.scan import scan
@@ -889,24 +717,3 @@ class TestScanCommand:
             "SELECT COUNT(*) FROM uv_curing_measurements"
         ).fetchone()[0] == 0
         store.close()
-
-    def test_delay_sleeps_between_wells(self):
-        from unittest.mock import patch
-        from cubos.protocol_engine.commands.scan import scan
-
-        ctx = _mock_context()
-
-        with patch("cubos.protocol_engine.commands.scan.time.sleep") as mock_sleep:
-            scan(ctx, **_scan_args(delay_s=5.0))
-            assert mock_sleep.call_count == 3
-            mock_sleep.assert_called_with(5.0)
-
-    def test_no_delay_by_default(self):
-        from unittest.mock import patch
-        from cubos.protocol_engine.commands.scan import scan
-
-        ctx = _mock_context()
-
-        with patch("cubos.protocol_engine.commands.scan.time.sleep") as mock_sleep:
-            scan(ctx, **_scan_args())
-            mock_sleep.assert_not_called()

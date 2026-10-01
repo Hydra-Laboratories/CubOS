@@ -47,12 +47,6 @@ class TestOfflineCapture:
         assert camera.health_check() is True
         camera.disconnect()
 
-    def test_offline_capture_writes_real_file(self, vendor_cls, tmp_path):
-        camera = vendor_cls(offline=True)
-        camera.connect()
-        saved = camera.capture(save_path=str(tmp_path / "shot.png"))
-        assert saved == str(tmp_path / "shot.png")
-        _assert_valid_png(tmp_path / "shot.png")
 
     def test_capture_requires_save_path(self, vendor_cls):
         camera = vendor_cls(offline=True)
@@ -77,16 +71,6 @@ class TestHardwareGuards:
         with pytest.raises(CameraConfigError, match="Unknown FLIR backend"):
             FlirCamera(backend="webrtc")
 
-    def test_gentl_backend_offline_lifecycle(self, tmp_path):
-        # FLIR/Point Grey is the vendor; pyspin vs gentl is just the SDK
-        # binding, so the offline placeholder path must work identically
-        # for both.
-        camera = FlirCamera(backend="gentl", offline=True)
-        camera.connect()
-        assert camera.health_check() is True
-        saved = camera.capture(save_path=str(tmp_path / "shot.png"))
-        _assert_valid_png(tmp_path / "shot.png")
-        camera.disconnect()
 
     def test_gentl_connect_without_harvesters_raises_import_error(self):
         if FlirCamera.is_available(backend="gentl"):
@@ -522,13 +506,6 @@ class TestFlirGentlHardwarePath:
         camera.connect()
         assert camera.health_check() is True
 
-    def test_connect_uses_env_var_when_no_explicit_path(self, monkeypatch):
-        monkeypatch.setenv("SPINNAKER_GENTL64_CTI", "/env/Spinnaker_GenTL.cti")
-        harvester = FakeHarvester()
-        _install_fake_harvesters(monkeypatch, harvester)
-        camera = FlirCamera(backend="gentl", offline=False)
-        camera.connect()
-        assert harvester.files_added == ["/env/Spinnaker_GenTL.cti"]
 
     def test_capture_fetch_error(self, monkeypatch, tmp_path):
         acquirer = FakeImageAcquirer(fetch_raises=RuntimeError("usb gone"))

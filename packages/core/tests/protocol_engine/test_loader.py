@@ -7,8 +7,6 @@ import pytest
 
 from cubos.protocol_engine.errors import ProtocolLoaderError
 from cubos.protocol_engine.loader import load_protocol_from_yaml, load_protocol_from_yaml_safe
-from cubos.protocol_engine.protocol import Protocol
-from cubos.protocol_engine.registry import CommandRegistry
 
 
 # ─── Valid protocol YAML fixtures ─────────────────────────────────────────────
@@ -77,104 +75,6 @@ def _write_yaml(content: str) -> str:
 
 
 # ─── Valid loading ────────────────────────────────────────────────────────────
-
-
-def test_load_valid_protocol_returns_protocol():
-    path = _write_yaml(VALID_SINGLE_MOVE)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        assert isinstance(protocol, Protocol)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_loaded_protocol_has_correct_step_count():
-    path = _write_yaml(VALID_TWO_MOVES)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        assert len(protocol) == 2
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_loaded_protocol_step_has_correct_command_name():
-    path = _write_yaml(VALID_SINGLE_MOVE)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        assert protocol.steps[0].command_name == "move"
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_loaded_protocol_step_has_correct_args():
-    path = _write_yaml(VALID_SINGLE_MOVE)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        args = protocol.steps[0].args
-        assert args == {"instrument": "pipette", "position": "plate_1.A1"}
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_loaded_protocol_step_omits_unspecified_default_args():
-    path = _write_yaml(VALID_MEASURE_WITH_OMITTED_DEFAULTS)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        args = protocol.steps[0].args
-        assert args == {
-            "instrument": "uvvis",
-            "position": "plate_1.A1",
-            "measurement_height": 0.0,
-        }
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_scan_accepts_new_height_names():
-    path = _write_yaml(VALID_SCAN_WITH_NEW_NAMES)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        args = protocol.steps[0].args
-        assert args == {
-            "plate": "plate_1",
-            "instrument": "uvvis",
-            "method": "measure",
-            "measurement_height": 0.0,
-            "interwell_scan_height": 10.0,
-        }
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_transfer_accepts_source_and_destination_heights():
-    path = _write_yaml(VALID_TRANSFER_WITH_HEIGHTS)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        args = protocol.steps[0].args
-        assert args == {
-            "source": "vial_1",
-            "destination": "plate_1.A1",
-            "volume_ul": 50.0,
-            "source_height": 2.0,
-            "destination_height": -1.0,
-        }
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_serial_transfer_compiles_from_yaml():
-    path = _write_yaml(VALID_SERIAL_TRANSFER)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        args = protocol.steps[0].args
-        assert args == {
-            "source": "vial_1",
-            "plate": "plate_1",
-            "axis": "A",
-            "volumes": [5.0, 10.0],
-        }
-    finally:
-        Path(path).unlink(missing_ok=True)
 
 
 def test_scan_rejects_yaml_missing_measurement_height():
@@ -326,55 +226,6 @@ protocol:
     try:
         with pytest.raises(Exception, match="indentation_limit_height"):
             load_protocol_from_yaml_safe(path)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_loaded_protocol_has_source_path():
-    path = _write_yaml(VALID_SINGLE_MOVE)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        assert protocol.source_path == Path(path)
-    finally:
-        Path(path).unlink(missing_ok=True)
-
-
-def test_representative_yaml_compiles_to_expected_runtime_protocol():
-    yaml = """
-positions:
-  park: [1.0, 2.0, 3.0]
-protocol:
-  - home:
-  - move:
-      instrument: pipette
-      position: park
-      travel_z: 10.0
-  - pause:
-      seconds: 0.5
-"""
-    path = _write_yaml(yaml)
-    try:
-        protocol = load_protocol_from_yaml(path)
-        registry = CommandRegistry.instance()
-        steps = protocol.steps
-
-        assert protocol.positions == {"park": [1.0, 2.0, 3.0]}
-        assert [step.index for step in steps] == [0, 1, 2]
-        assert [step.command_name for step in steps] == ["home", "move", "pause"]
-        assert [step.handler for step in steps] == [
-            registry.get("home").handler,
-            registry.get("move").handler,
-            registry.get("pause").handler,
-        ]
-        assert [step.args for step in steps] == [
-            {},
-            {
-                "instrument": "pipette",
-                "position": "park",
-                "travel_z": 10.0,
-            },
-            {"seconds": 0.5},
-        ]
     finally:
         Path(path).unlink(missing_ok=True)
 

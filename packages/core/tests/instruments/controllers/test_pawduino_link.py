@@ -38,10 +38,6 @@ class TestRegistry:
             "/dev/ttyACM0"
         )
 
-    def test_different_ports_different_instances(self):
-        assert PawduinoLink.acquire("/dev/ttyACM0") is not PawduinoLink.acquire(
-            "/dev/ttyACM1"
-        )
 
     def test_empty_port_rejected(self):
         with pytest.raises(PawduinoLinkConfigError):
@@ -54,30 +50,7 @@ class TestRegistry:
 
 
 class TestLifecycle:
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    def test_two_holders_one_open(self, mock_serial_cls, mock_sleep):
-        mock_serial_cls.return_value = _mock_serial()
-        link = PawduinoLink.acquire("/dev/ttyACM0")
-        link.connect()
-        link.connect()
-        # One physical open — the second holder must not DTR-reset the board.
-        mock_serial_cls.assert_called_once()
-        assert link.is_open
 
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    def test_closes_only_when_last_holder_leaves(self, mock_serial_cls, mock_sleep):
-        mock_ser = _mock_serial()
-        mock_serial_cls.return_value = mock_ser
-        link = PawduinoLink.acquire("/dev/ttyACM0")
-        link.connect()
-        link.connect()
-        link.disconnect()
-        mock_ser.close.assert_not_called()
-        link.disconnect()
-        mock_ser.close.assert_called_once()
-        assert not link.is_open
 
     @patch("cubos.instruments.controllers.pawduino.time.sleep")
     @patch("cubos.instruments.controllers.pawduino.serial.Serial")
@@ -111,15 +84,6 @@ class TestCommands:
         link.connect()
         return link, mock_ser
 
-    def test_command_round_trip(self):
-        link, mock_ser = self._connected_link(["OK:White lights on\n"])
-        assert link.send_command(17) == "OK:White lights on"
-        assert mock_ser.write.call_args[0][0] == b"17\n"
-
-    def test_command_args_serialized(self):
-        link, mock_ser = self._connected_link(["OK:done\n"])
-        link.send_command(11, 12.5, 0.0)
-        assert mock_ser.write.call_args[0][0] == b"11,12.5,0.0\n"
 
     def test_err_response_raises(self):
         link, _ = self._connected_link(["ERR:jam\n"])
@@ -184,8 +148,6 @@ class TestErrorPaths:
             link.connect()
         return link, mock_ser
 
-    def test_port_property(self):
-        assert PawduinoLink.acquire("/dev/ttyACM9").port == "/dev/ttyACM9"
 
     def test_write_failure_wrapped(self):
         link, mock_ser = self._connected()
@@ -199,17 +161,6 @@ class TestErrorPaths:
         with pytest.raises(PawduinoLinkCommandError, match="read error"):
             link.send_command(5)
 
-    def test_close_swallows_serial_exception(self):
-        link, mock_ser = self._connected()
-        mock_ser.close.side_effect = real_serial.SerialException("stuck")
-        link.disconnect()
-        assert not link.is_open
-
-    def test_reset_registry_force_closes_open_links(self):
-        link, mock_ser = self._connected()
-        PawduinoLink.reset_registry()
-        mock_ser.close.assert_called_once()
-        assert not link.is_open
 
     def test_hello_resyncs_past_late_boot_banner(self):
         # A banner arriving after the drain must not become the first

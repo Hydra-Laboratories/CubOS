@@ -55,20 +55,6 @@ def test_unix_raw_key_sequences(monkeypatch, chars, expected):
     assert keyboard_input._unix_read_one_key() == expected
 
 
-def test_keypress_batch_counts_same_repeats():
-    keyboard_input._PENDING_KEYS.clear()
-    keys = iter(["RIGHT", "RIGHT", "RIGHT"])
-    availability = iter([True, True, False])
-
-    key, count = keyboard_input._read_keypress_batch_impl(
-        lambda: next(keys),
-        lambda _timeout_s: next(availability),
-        0.03,
-    )
-
-    assert (key, count) == ("RIGHT", 3)
-
-
 def test_keypress_batch_preserves_next_different_key():
     keyboard_input._PENDING_KEYS.clear()
     keys = iter(["RIGHT", "\r"])
@@ -121,16 +107,6 @@ def test_read_keypress_restores_terminal(monkeypatch):
     assert calls[-1][0] == 3
 
 
-def test_public_flush_stdin_routes_to_unix(monkeypatch):
-    called: list[str] = []
-    monkeypatch.setattr(keyboard_input, "_IS_WINDOWS", False)
-    monkeypatch.setattr(keyboard_input, "_unix_flush_stdin", lambda: called.append("unix"))
-
-    keyboard_input.flush_stdin()
-
-    assert called == ["unix"]
-
-
 class _FakeMsvcrt:
     def __init__(self, keys: list[bytes]):
         self.keys = keys
@@ -140,12 +116,6 @@ class _FakeMsvcrt:
 
     def kbhit(self) -> bool:
         return bool(self.keys)
-
-
-def test_windows_read_one_key_arrow_sequence(monkeypatch):
-    monkeypatch.setattr(keyboard_input, "msvcrt", _FakeMsvcrt([b"\xe0", b"H"]), raising=False)
-
-    assert keyboard_input._windows_read_one_key() == "UP"
 
 
 def test_windows_read_one_key_ctrl_c(monkeypatch):

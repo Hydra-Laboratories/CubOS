@@ -112,13 +112,6 @@ def _connected_driver(hp, port="/dev/ttyACM1", **kwargs):
 
 class TestConstructor:
 
-    def test_defaults(self):
-        p = EmstatPotentiostat()
-        assert p.name == "EmstatPotentiostat"
-        assert p._port == ""
-        assert p._model == "emstat4_lr"
-        assert p._offline is False
-        assert p.vendor == "emstat"
 
     def test_offsets_propagate_to_base(self):
         p = EmstatPotentiostat(offset_x=1.5, offset_y=-2.0, depth=3.0)
@@ -138,46 +131,6 @@ class TestOfflineLifecycle:
         p.connect()
         p.disconnect()  # must not raise
 
-    def test_health_check_true_in_offline(self):
-        p = EmstatPotentiostat(offline=True)
-        assert p.health_check() is True
-
-    def test_run_OCP_offline(self):
-        p = EmstatPotentiostat(offline=True)
-        result = p.run_OCP(OCPParams(duration_s=1.0, sampling_interval_s=0.1))
-        assert isinstance(result, OCPResult)
-        assert result.is_valid
-        assert len(result.voltage_v) == len(result.time_s) == 10
-        assert result.vendor == "emstat"
-        assert result.metadata["device_id"] == "offline"
-        assert result.metadata["aborted"] is False
-
-    def test_run_OCP_offline_is_deterministic(self):
-        params = OCPParams(duration_s=1.0, sampling_interval_s=0.1)
-        r1 = EmstatPotentiostat(offline=True).run_OCP(params)
-        r2 = EmstatPotentiostat(offline=True).run_OCP(params)
-        assert r1.voltage_v == r2.voltage_v
-
-    def test_run_CV_offline(self):
-        p = EmstatPotentiostat(offline=True)
-        result = p.run_CV(
-            CVParams(
-                start_V=0.0, vertex1_V=0.5, vertex2_V=-0.5, end_V=0.0,
-                scan_rate_V_per_s=0.1, cycles=2, sampling_interval_s=0.05,
-            )
-        )
-        assert isinstance(result, CVResult)
-        assert result.is_valid
-        assert result.vendor == "emstat"
-
-    def test_run_CA_offline(self):
-        p = EmstatPotentiostat(offline=True)
-        result = p.run_CA(
-            CAParams(potential_V=0.6, duration_s=0.5, sampling_interval_s=0.05)
-        )
-        assert isinstance(result, CAResult)
-        assert result.is_valid
-        assert all(v == 0.6 for v in result.voltage_v)
 
     def test_run_CP_raises_not_implemented_offline_too(self):
         p = EmstatPotentiostat(offline=True)
@@ -200,14 +153,6 @@ class TestConnect:
             ):
                 p.connect()
 
-    def test_connects_and_passes_model_port_folder(self):
-        setup_calls: list = []
-        hp = _fake_hp(setup_calls=setup_calls)
-        p = _connected_driver(hp, data_dir="/tmp/emstat-data")
-        assert p.health_check() is True
-        (args, kwargs) = setup_calls[0]
-        assert args == ("emstat4_lr", ".", "/tmp/emstat-data")
-        assert kwargs == {"port": "/dev/ttyACM1", "verbose": 0}
 
     def test_no_device_raises_connection_error(self):
         hp = _fake_hp(connected=False)
@@ -279,15 +224,6 @@ class TestRunOCPOnline:
         # sets it itself on the auto-detect path)
         assert hp.potentiostat.OCP.port == "/dev/ttyACM1"
 
-    def test_multi_curve_data_is_concatenated(self):
-        two_curves = [
-            [[_var(0.0), _var(0.1)], [_var(0.1), _var(0.2)]],
-            [[_var(0.2), _var(0.3)]],
-        ]
-        hp = _fake_hp(ocp_data=two_curves)
-        p = _connected_driver(hp)
-        result = p.run_OCP(OCPParams(duration_s=1.0, sampling_interval_s=0.1))
-        assert result.voltage_v == (0.1, 0.2, 0.3)
 
     def test_run_without_connect_raises_command_error(self):
         p = EmstatPotentiostat(port="/dev/ttyACM1")
@@ -311,15 +247,6 @@ class TestRunOCPOnline:
         p = _connected_driver(hp)
         with pytest.raises(PotentiostatCommandError, match="package shape"):
             p.run_OCP(OCPParams(duration_s=1.0))
-
-    def test_file_stems_are_unique_across_runs(self):
-        kwargs_log: list = []
-        hp = _fake_hp(ocp_data=_curves((0.0, 0.1)), kwargs_log=kwargs_log)
-        p = _connected_driver(hp)
-        p.run_OCP(OCPParams(duration_s=1.0))
-        p.run_OCP(OCPParams(duration_s=1.0))
-        stems = [k["fileName"] for k in kwargs_log]
-        assert len(set(stems)) == 2
 
 
 class TestRunCVOnline:

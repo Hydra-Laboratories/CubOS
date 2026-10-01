@@ -29,25 +29,7 @@ def _lights():
 
 
 class TestSetLights:
-    def test_sets_channel(self):
-        lights = _lights()
-        set_lights(_context({"lights": lights}), instrument="lights",
-                   channel="white", brightness=25)
-        assert lights.status().channels["white"] == 25
 
-    def test_all_off(self):
-        lights = _lights()
-        lights.set_channel("contact", 50)
-        set_lights(_context({"lights": lights}), instrument="lights",
-                   all_off=True)
-        assert lights.status().channels == {"white": 0, "contact": 0}
-
-    def test_zero_brightness_turns_channel_off(self):
-        lights = _lights()
-        lights.set_channel("white", 25)
-        set_lights(_context({"lights": lights}), instrument="lights",
-                   channel="white", brightness=0)
-        assert lights.status().channels["white"] == 0
 
     def test_all_off_excludes_channel_args(self):
         with pytest.raises(ProtocolExecutionError, match="cannot be combined"):

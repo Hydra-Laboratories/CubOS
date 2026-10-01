@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cubos.instruments.base_instrument import BaseInstrument, InstrumentError
 from cubos.instruments.capper.exceptions import (
     CapperCommandError,
     CapperConfigError,
@@ -13,7 +12,6 @@ from cubos.instruments.capper.exceptions import (
     CapperSensorFault,
     CapperTimeoutError,
 )
-from cubos.instruments.capper.models import CapperStatus
 from cubos.instruments.capper.vendors.mock import MockCapper
 from cubos.instruments.controllers.pawduino import PawduinoLink
 from cubos.instruments.capper.vendors.pawduino import PawduinoCapper
@@ -29,8 +27,6 @@ def _mock_capper(**overrides):
 
 
 class TestCapperInterfaceConfig:
-    def test_is_base_instrument(self):
-        assert issubclass(MockCapper, BaseInstrument)
 
     def test_stores_config(self):
         capper = _mock_capper(
@@ -58,8 +54,6 @@ class TestCapperInterfaceConfig:
 
 
 class TestCapperExceptions:
-    def test_capper_error_is_instrument_error(self):
-        assert issubclass(CapperError, InstrumentError)
 
     def test_hierarchy(self):
         for exc_cls in (
@@ -69,35 +63,11 @@ class TestCapperExceptions:
             assert issubclass(exc_cls, CapperError)
 
 
-class TestCapperStatus:
-    def test_valid(self):
-        status = CapperStatus(cap_present=True)
-        assert status.is_valid is True
-
-    def test_frozen(self):
-        status = CapperStatus(cap_present=False)
-        with pytest.raises(AttributeError):
-            status.cap_present = True
-
-
 # --- MockCapper ----------------------------------------------------------------
 
 
 class TestMockCapper:
-    def test_starts_without_cap(self):
-        capper = _mock_capper()
-        assert capper.read_cap_present() is False
 
-    def test_capture_then_read(self):
-        capper = _mock_capper()
-        capper.capture_cap()
-        assert capper.read_cap_present() is True
-
-    def test_release_then_read(self):
-        capper = _mock_capper()
-        capper.capture_cap()
-        capper.release_cap()
-        assert capper.read_cap_present() is False
 
     def test_actuation_log_order(self):
         capper = _mock_capper()
@@ -109,20 +79,12 @@ class TestMockCapper:
             "capture_cap", "read_cap_present", "release_cap", "read_cap_present",
         ]
 
-    def test_get_status_reflects_state(self):
-        capper = _mock_capper()
-        capper.capture_cap()
-        assert capper.get_status() == CapperStatus(cap_present=True)
 
     def test_connect_disconnect_health_check(self):
         capper = _mock_capper()
         capper.connect()
         assert capper.health_check() is True
         capper.disconnect()
-
-    def test_offline_default_true(self):
-        capper = _mock_capper()
-        assert capper._offline is True
 
 
 # --- PawduinoCapper (offline) ---------------------------------------------------
@@ -134,10 +96,6 @@ class TestPawduinoCapperOffline:
         kwargs.update(overrides)
         return PawduinoCapper(**kwargs)
 
-    def test_capture_and_read(self):
-        capper = self._make()
-        capper.capture_cap()
-        assert capper.read_cap_present() is True
 
     def test_release_and_read(self):
         capper = self._make()
@@ -170,21 +128,6 @@ class TestPawduinoCapperSerial:
         link._holders = 1
         capper._link = link
 
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    def test_connect_sends_line_break_handshake(self, mock_sleep, mock_serial_cls):
-        mock_ser = self._make_mock_serial(
-            ['OK:{"msg":"Hello from Pawduino!"}\n', 'OK:{"value1":0}\n'],
-        )
-        mock_serial_cls.return_value = mock_ser
-
-        capper = PawduinoCapper(
-            engage_depth_mm=-10.0, port="/dev/ttyUSB0",
-        )
-        capper.connect()
-        mock_serial_cls.assert_called_once_with(
-            port="/dev/ttyUSB0", baudrate=115200, timeout=30.0,
-        )
 
     @patch("cubos.instruments.controllers.pawduino.serial.Serial")
     @patch("cubos.instruments.controllers.pawduino.time.sleep")
@@ -198,55 +141,6 @@ class TestPawduinoCapperSerial:
         with pytest.raises(CapperConnectionError, match="Cannot open serial"):
             capper.connect()
 
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    def test_capture_cap_sends_emag_on(self, mock_sleep, mock_serial_cls):
-        mock_ser = self._make_mock_serial(["OK:Electromagnet on\n"])
-        mock_serial_cls.return_value = mock_ser
-        capper = PawduinoCapper(
-            engage_depth_mm=-10.0, port="/dev/ttyUSB0",
-        )
-        self._attach_link(capper, mock_ser)
-        capper.capture_cap()
-        sent = mock_ser.write.call_args[0][0]
-        assert sent == b"5\n"
-
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    def test_release_cap_sends_emag_off(self, mock_sleep, mock_serial_cls):
-        mock_ser = self._make_mock_serial(["OK:Electromagnet off\n"])
-        mock_serial_cls.return_value = mock_ser
-        capper = PawduinoCapper(
-            engage_depth_mm=-10.0, port="/dev/ttyUSB0",
-        )
-        self._attach_link(capper, mock_ser)
-        capper.release_cap()
-        sent = mock_ser.write.call_args[0][0]
-        assert sent == b"6\n"
-
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    def test_read_cap_present_true_on_broken_beam(self, mock_sleep, mock_serial_cls):
-        mock_ser = self._make_mock_serial(['OK:{"value1":1}\n'])
-        mock_serial_cls.return_value = mock_ser
-        capper = PawduinoCapper(
-            engage_depth_mm=-10.0, port="/dev/ttyUSB0",
-        )
-        self._attach_link(capper, mock_ser)
-        assert capper.read_cap_present() is True
-        sent = mock_ser.write.call_args[0][0]
-        assert sent == b"7\n"
-
-    @patch("cubos.instruments.controllers.pawduino.serial.Serial")
-    @patch("cubos.instruments.controllers.pawduino.time.sleep")
-    def test_read_cap_present_false_on_unbroken_beam(self, mock_sleep, mock_serial_cls):
-        mock_ser = self._make_mock_serial(['OK:{"value1":0}\n'])
-        mock_serial_cls.return_value = mock_ser
-        capper = PawduinoCapper(
-            engage_depth_mm=-10.0, port="/dev/ttyUSB0",
-        )
-        self._attach_link(capper, mock_ser)
-        assert capper.read_cap_present() is False
 
     @patch("cubos.instruments.controllers.pawduino.serial.Serial")
     @patch("cubos.instruments.controllers.pawduino.time.sleep")

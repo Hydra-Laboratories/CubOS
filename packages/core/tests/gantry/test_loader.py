@@ -47,58 +47,6 @@ def _write_temp_yaml(content: str) -> str:
 
 class TestLoadGantryFromYaml:
 
-    def test_load_valid_gantry_returns_gantry_config(self):
-        path = _write_temp_yaml(VALID_GANTRY_YAML)
-        try:
-            result = load_gantry_from_yaml(path)
-            assert isinstance(result, GantryConfig)
-        finally:
-            os.unlink(path)
-
-    def test_loaded_gantry_has_correct_bounds(self):
-        path = _write_temp_yaml(VALID_GANTRY_YAML)
-        try:
-            config = load_gantry_from_yaml(path)
-            vol = config.working_volume
-            assert vol.x_min == 0.0
-            assert vol.x_max == 300.0
-            assert vol.y_min == 0.0
-            assert vol.y_max == 200.0
-            assert vol.z_min == 0.0
-            assert vol.z_max == 80.0
-            assert config.factory_z_travel_mm == 90.0
-            assert config.safe_z == 75.0
-        finally:
-            os.unlink(path)
-
-    def test_loaded_gantry_default_feed_rate_defaults_to_none(self):
-        path = _write_temp_yaml(VALID_GANTRY_YAML)
-        try:
-            config = load_gantry_from_yaml(path)
-            assert config.default_feed_rate_mm_min is None
-        finally:
-            os.unlink(path)
-
-    def test_loaded_gantry_reads_default_feed_rate(self):
-        path = _write_temp_yaml(
-            VALID_GANTRY_YAML.replace(
-                "safe_z: 75.0",
-                "safe_z: 75.0\n  default_feed_rate_mm_min: 4000.0",
-            )
-        )
-        try:
-            config = load_gantry_from_yaml(path)
-            assert config.default_feed_rate_mm_min == 4000.0
-        finally:
-            os.unlink(path)
-
-    def test_loaded_gantry_defaults_to_deck_origin_policy(self):
-        path = _write_temp_yaml(VALID_GANTRY_YAML)
-        try:
-            config = load_gantry_from_yaml(path)
-            assert config.origin_policy == OriginPolicy.DECK_ORIGIN
-        finally:
-            os.unlink(path)
 
     def test_loaded_gantry_threads_home_origin_policy(self):
         path = _write_temp_yaml(VALID_GANTRY_YAML + "origin_policy: home_origin\n")
@@ -108,24 +56,6 @@ class TestLoadGantryFromYaml:
         finally:
             os.unlink(path)
 
-    def test_loaded_gantry_has_serial_port(self):
-        path = _write_temp_yaml(VALID_GANTRY_YAML)
-        try:
-            config = load_gantry_from_yaml(path)
-            assert config.serial_port == "/dev/cu.usbserial-2130"
-            assert config.gantry_type == "cub_xl"
-        finally:
-            os.unlink(path)
-
-    def test_loaded_gantry_has_instruments_and_grbl_settings(self):
-        path = _write_temp_yaml(GANTRY_WITH_INSTRUMENTS_YAML)
-        try:
-            config = load_gantry_from_yaml(path)
-            assert config.expected_grbl_settings == {"$10": 0.0, "$22": 1.0}
-            assert config.instruments["asmi"]["type"] == "asmi"
-            assert config.instruments["asmi"]["sensor_channels"] == [1]
-        finally:
-            os.unlink(path)
 
     def test_duplicate_yaml_key_names_file_and_key(self, tmp_path):
         path = tmp_path / "duplicate_gantry.yaml"

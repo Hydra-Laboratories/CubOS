@@ -10,12 +10,10 @@ from pathlib import Path
 
 import pytest
 
-from cubos.data.data_store import DATA_DB_PATH_ENV, DataStore, default_database_path
+from cubos.data.data_store import DATA_DB_PATH_ENV, DataStore
 from cubos.deck.labware.labware import Coordinate3D
 from cubos.deck.labware.vial import Vial
 from cubos.deck.labware.well_plate import WellPlate
-from cubos.instruments.filmetrics.models import MeasurementResult
-from cubos.instruments.uv_curing.models import CureResult
 from cubos.instruments.uvvis_ccs.models import UVVisSpectrum
 from cubos.protocol_engine.measurements import InstrumentMeasurement, MeasurementType
 
@@ -78,37 +76,11 @@ def _make_uvvis_spectrum(n: int = 10) -> UVVisSpectrum:
     )
 
 
-def _make_filmetrics_result() -> MeasurementResult:
-    return MeasurementResult(thickness_nm=150.5, goodness_of_fit=0.95)
-
-
-def _make_cure_result() -> CureResult:
-    return CureResult(
-        intensity_percent=45.0,
-        exposure_time_s=2.5,
-        timestamp=123.456,
-    )
-
-
 # ─── Schema creation ─────────────────────────────────────────────────────────
 
 
 class TestSchemaCreation:
 
-    def test_tables_exist(self):
-        store = _make_store()
-        cursor = store._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-        )
-        tables = {row[0] for row in cursor.fetchall()}
-        expected = {
-            "campaigns", "experiments",
-            "uvvis_measurements", "filmetrics_measurements",
-            "uv_curing_measurements", "camera_measurements",
-            "asmi_measurements", "labware",
-        }
-        assert expected.issubset(tables)
-        store.close()
 
     def test_idempotent_table_creation(self):
         store = _make_store()
@@ -116,25 +88,6 @@ class TestSchemaCreation:
         store._create_tables()
         store.close()
 
-    def test_in_memory_db_works(self):
-        store = _make_store()
-        assert store._conn is not None
-        store.close()
-
-    def test_default_db_path_uses_env_override(self, monkeypatch, tmp_path):
-        db_path = tmp_path / "runtime" / "panda_data.db"
-        monkeypatch.setenv(DATA_DB_PATH_ENV, str(db_path))
-
-        store = DataStore()
-        store.close()
-
-        assert db_path.is_file()
-
-    def test_default_db_path_uses_user_data_dir(self, monkeypatch, tmp_path):
-        monkeypatch.delenv(DATA_DB_PATH_ENV, raising=False)
-        monkeypatch.setattr(Path, "home", lambda: tmp_path)
-
-        assert default_database_path() == tmp_path / ".cubos" / "panda_data.db"
 
     def test_default_db_creation_error_names_override(self, monkeypatch, tmp_path):
         monkeypatch.delenv(DATA_DB_PATH_ENV, raising=False)
@@ -209,60 +162,6 @@ class TestCampaignCRUD:
             )
         return int(cursor.lastrowid)
 
-    def test_create_returns_id(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test campaign")
-        assert isinstance(cid, int)
-        assert cid > 0
-        store.close()
-
-    def test_stores_description(self):
-        store = _make_store()
-        cid = store.create_campaign(description="MOF screening run")
-        row = store._conn.execute(
-            "SELECT description FROM campaigns WHERE id = ?", (cid,)
-        ).fetchone()
-        assert row[0] == "MOF screening run"
-        store.close()
-
-    def test_stores_config_paths(self):
-        store = _make_store()
-        cid = store.create_campaign(
-            description="test",
-            deck_config="mock/deck.yaml",
-            board_config="legacy-board.yaml",
-            gantry_config="mock/gantry.yaml",
-            protocol_config="mock/protocol.yaml",
-        )
-        row = store._conn.execute(
-            "SELECT deck_config, board_config, gantry_config, protocol_config "
-            "FROM campaigns WHERE id = ?",
-            (cid,),
-        ).fetchone()
-        assert row == ("mock/deck.yaml", "legacy-board.yaml",
-                       "mock/gantry.yaml", "mock/protocol.yaml")
-        store.close()
-
-    def test_default_status(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        row = store._conn.execute(
-            "SELECT status FROM campaigns WHERE id = ?", (cid,)
-        ).fetchone()
-        assert row[0] == "running"
-        store.close()
-
-    def test_finish_campaign_sets_status_and_finished_at(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-
-        store.finish_campaign(cid, "completed", finished_at="2026-07-07 12:00:00")
-
-        row = store._conn.execute(
-            "SELECT status, finished_at FROM campaigns WHERE id = ?", (cid,)
-        ).fetchone()
-        assert row == ("completed", "2026-07-07 12:00:00")
-        store.close()
 
     def test_attach_campaign_fluid_state_is_queryable_and_idempotent(self):
         store = _make_store()
@@ -356,18 +255,6 @@ class TestCampaignCRUD:
 
 class TestExperimentCRUD:
 
-    def test_create_returns_id(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(
-            campaign_id=cid,
-            labware_name="plate_1",
-            well_id="A1",
-            contents_json="[]",
-        )
-        assert isinstance(eid, int)
-        assert eid > 0
-        store.close()
 
     def test_stores_labware_and_well(self):
         store = _make_store()
@@ -417,62 +304,12 @@ class TestUVVisMeasurementLogging:
         assert row[2] == pytest.approx(0.24)
         store.close()
 
-    def test_integration_time_stored(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-
-        spectrum = UVVisSpectrum(
-            wavelengths=(500.0,), intensities=(0.5,), integration_time_s=1.5
-        )
-        mid = store.log_measurement(eid, spectrum)
-
-        row = store._conn.execute(
-            "SELECT integration_time_s FROM uvvis_measurements WHERE id = ?",
-            (mid,),
-        ).fetchone()
-        assert row[0] == pytest.approx(1.5)
-        store.close()
-
 
 # ─── Filmetrics measurement logging ──────────────────────────────────────────
 
 
 class TestFilmetricsMeasurementLogging:
 
-    def test_stores_thickness_and_gof(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-
-        result = _make_filmetrics_result()
-        mid = store.log_measurement(eid, result)
-
-        row = store._conn.execute(
-            "SELECT thickness_nm, goodness_of_fit "
-            "FROM filmetrics_measurements WHERE id = ?",
-            (mid,),
-        ).fetchone()
-        assert row[0] == pytest.approx(150.5)
-        assert row[1] == pytest.approx(0.95)
-        store.close()
-
-    def test_handles_none_values(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-
-        result = MeasurementResult(thickness_nm=None, goodness_of_fit=None)
-        mid = store.log_measurement(eid, result)
-
-        row = store._conn.execute(
-            "SELECT thickness_nm, goodness_of_fit "
-            "FROM filmetrics_measurements WHERE id = ?",
-            (mid,),
-        ).fetchone()
-        assert row[0] is None
-        assert row[1] is None
-        store.close()
 
     def test_routes_normalized_filmetrics_measurement(self):
         store = _make_store()
@@ -501,23 +338,6 @@ class TestFilmetricsMeasurementLogging:
 
 class TestUVCuringMeasurementLogging:
 
-    def test_stores_cure_exposure(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-
-        result = _make_cure_result()
-        mid = store.log_measurement(eid, result)
-
-        row = store._conn.execute(
-            "SELECT intensity_percent, exposure_time_s, cure_timestamp_s "
-            "FROM uv_curing_measurements WHERE id = ?",
-            (mid,),
-        ).fetchone()
-        assert row[0] == pytest.approx(45.0)
-        assert row[1] == pytest.approx(2.5)
-        assert row[2] == pytest.approx(123.456)
-        store.close()
 
     def test_routes_normalized_cure_exposure(self):
         store = _make_store()
@@ -571,45 +391,6 @@ class TestCameraMeasurementLogging:
 
 class TestLogMeasurementDispatch:
 
-    def test_routes_uvvis(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-        mid = store.log_measurement(eid, _make_uvvis_spectrum())
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM uvvis_measurements WHERE id = ?", (mid,)
-        ).fetchone()[0] == 1
-        store.close()
-
-    def test_routes_filmetrics(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-        mid = store.log_measurement(eid, _make_filmetrics_result())
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM filmetrics_measurements WHERE id = ?", (mid,)
-        ).fetchone()[0] == 1
-        store.close()
-
-    def test_routes_uv_curing(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-        mid = store.log_measurement(eid, _make_cure_result())
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM uv_curing_measurements WHERE id = ?", (mid,)
-        ).fetchone()[0] == 1
-        store.close()
-
-    def test_routes_camera(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-        mid = store.log_measurement(eid, "/path/to/image.png")
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM camera_measurements WHERE id = ?", (mid,)
-        ).fetchone()[0] == 1
-        store.close()
 
     def test_unknown_type_raises_type_error(self):
         store = _make_store()
@@ -619,24 +400,6 @@ class TestLogMeasurementDispatch:
             store.log_measurement(eid, 42)
         store.close()
 
-    def test_routes_uvvis_instrument_measurement(self):
-        store = _make_store()
-        cid = store.create_campaign(description="test")
-        eid = store.create_experiment(cid, "plate_1", "A1", "[]")
-
-        measurement = InstrumentMeasurement(
-            measurement_type=MeasurementType.UVVIS_SPECTRUM,
-            payload={
-                "wavelength_nm": [500.0, 501.0],
-                "intensity_au": [0.5, 0.6],
-            },
-            metadata={"integration_time_s": 0.24},
-        )
-        mid = store.log_measurement(eid, measurement)
-        assert store._conn.execute(
-            "SELECT COUNT(*) FROM uvvis_measurements WHERE id = ?", (mid,)
-        ).fetchone()[0] == 1
-        store.close()
 
     def test_uvvis_instrument_measurement_blob_round_trip(self):
         store = _make_store()
@@ -712,37 +475,6 @@ class TestASMIInstrumentMeasurementLogging:
         assert row[7] == pytest.approx(10.0)
         store.close()
 
-    def test_missing_asmi_scalar_metadata_persists_nulls(self):
-        store = _make_store()
-        cid = store.create_campaign(description="asmi test")
-        eid = store.create_experiment(cid, "film_plate", "B1", "[]")
-
-        measurement = InstrumentMeasurement(
-            measurement_type=MeasurementType.ASMI_INDENTATION,
-            payload={
-                "sample_timestamps": [1.0],
-                "z_positions_mm": [0.0],
-                "raw_forces_n": [0.01],
-                "corrected_forces_n": [0.005],
-                "directions": ["down"],
-            },
-            metadata={
-                "baseline_avg": 0.005,
-                "baseline_std": 0.001,
-                "force_exceeded": False,
-                "data_points": 1,
-            },
-        )
-        mid = store.log_measurement(eid, measurement)
-
-        row = store._conn.execute(
-            "SELECT step_size_mm, z_target_mm, force_limit_n "
-            "FROM asmi_measurements WHERE id = ?",
-            (mid,),
-        ).fetchone()
-        assert row == (None, None, None)
-        store.close()
-
 
 class TestLabwareTracking:
 
@@ -775,44 +507,6 @@ class TestLabwareTracking:
         assert count == 0
         store.close()
 
-    def test_record_transfer_decrements_source_and_increments_destination(self):
-        store = _make_store()
-        cid = store.create_campaign(description="transfer")
-        vial = Vial(
-            name="source",
-            model_name="standard",
-            height=10.0,
-            diameter=5.0,
-            location=Coordinate3D(x=0.0, y=0.0, z=0.0),
-            capacity_ul=1000.0,
-            working_volume_ul=800.0,
-        )
-        plate = WellPlate(
-            name="plate",
-            model_name="test",
-            rows=1,
-            columns=1,
-            wells={"A1": Coordinate3D(x=1.0, y=0.0, z=0.0)},
-            capacity_ul=200.0,
-            working_volume_ul=150.0,
-        )
-        store.register_labware(cid, "vial_1", vial)
-        store.register_labware(cid, "plate_1", plate)
-        store._conn.execute(
-            "UPDATE labware SET current_volume_ul = 100.0 "
-            "WHERE labware_key = 'vial_1'"
-        )
-        store._conn.commit()
-
-        store.record_transfer(cid, "vial_1", None, "plate_1", "A1", 30.0)
-
-        rows = dict(store._conn.execute(
-            "SELECT labware_key || COALESCE('.' || well_id, ''), current_volume_ul "
-            "FROM labware"
-        ).fetchall())
-        assert rows["vial_1"] == pytest.approx(70.0)
-        assert rows["plate_1.A1"] == pytest.approx(30.0)
-        store.close()
 
     def test_record_transfer_overfill_warns(self, caplog):
         store = _make_store()

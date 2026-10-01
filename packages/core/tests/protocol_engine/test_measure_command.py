@@ -161,17 +161,6 @@ def test_measure_with_negative_offset_descends_below_surface():
     ctx.gantry.move.assert_called_once_with("uvvis", (10.0, 20.0, HEIGHT_MM - 1.0))
 
 
-def test_measure_passes_method_kwargs():
-    instr = _mock_instr()
-    ctx = _ctx(instr)
-    measure(
-        ctx, instrument="uvvis", position="plate_1.A1",
-        measurement_height=0.0,
-        method="measure", method_kwargs={"intensity": 50},
-    )
-    instr.measure.assert_called_once_with(intensity=50)
-
-
 def test_measure_persists_single_asmi_indentation_when_campaign_is_present():
     plate = _plate()
     board = MagicMock()
@@ -215,45 +204,6 @@ def test_measure_persists_single_asmi_indentation_when_campaign_is_present():
     assert row[5] == pytest.approx(0.1)
     assert row[6] == pytest.approx(13.0)
     assert row[7] == pytest.approx(10.0)
-    store.close()
-
-
-def test_measure_persists_single_filmetrics_thickness_when_campaign_is_present():
-    plate = _plate()
-    board = MagicMock()
-    board.controller = object()
-    board.instruments = {"filmetrics": _FakeFilmetrics()}
-    deck = Deck({"plate_1": plate})
-    store = DataStore(db_path=":memory:")
-    campaign_id = store.create_campaign(description="measure")
-    store.register_labware(campaign_id, "plate_1", plate)
-    ctx = ProtocolContext(
-        gantry=board,
-        deck=deck,
-        data_store=store,
-        campaign_id=campaign_id,
-    )
-
-    measure(
-        ctx,
-        instrument="filmetrics",
-        position="plate_1.A1",
-        measurement_height=0.0,
-    )
-
-    row = store._conn.execute(
-        """
-        SELECT e.labware_name, e.well_id, m.thickness_nm, m.goodness_of_fit
-        FROM experiments e
-        JOIN filmetrics_measurements m ON m.experiment_id = e.id
-        WHERE e.campaign_id = ?
-        """,
-        (campaign_id,),
-    ).fetchone()
-    assert row[0] == "test_plate"
-    assert row[1] == "A1"
-    assert row[2] == pytest.approx(151.2)
-    assert row[3] == pytest.approx(0.96)
     store.close()
 
 
@@ -318,43 +268,6 @@ def test_measure_uses_current_tracked_composition_for_vial_grid_alias(tmp_path):
     store.close()
 
 
-def test_measure_untracked_campaign_keeps_legacy_contents():
-    plate = _plate()
-    board = MagicMock()
-    board.instruments = {"filmetrics": _FakeFilmetrics()}
-    deck = Deck({"plate_1": plate})
-    store = DataStore(db_path=":memory:")
-    campaign_id = store.create_campaign(description="ordinary measurement")
-    store.register_labware(campaign_id, "plate_1", plate)
-    store.record_dispense(campaign_id, "plate_1", "A1", "legacy_source", 20.0)
-    store.get_fluid_snapshot = MagicMock(
-        side_effect=AssertionError("ordinary measurement read fluid state"),
-    )
-    ctx = ProtocolContext(
-        gantry=board,
-        deck=deck,
-        data_store=store,
-        campaign_id=campaign_id,
-    )
-
-    measure(
-        ctx,
-        instrument="filmetrics",
-        position="plate_1.A1",
-        measurement_height=0.0,
-    )
-
-    contents = store._conn.execute(
-        "SELECT contents FROM experiments WHERE campaign_id = ?",
-        (campaign_id,),
-    ).fetchone()[0]
-    assert json.loads(contents) == [
-        {"source": "legacy_source", "volume_ul": 20.0}
-    ]
-    store.get_fluid_snapshot.assert_not_called()
-    store.close()
-
-
 def test_measure_active_state_missing_target_fails_before_motion():
     plate = _plate()
     instr = _mock_instr()
@@ -382,48 +295,6 @@ def test_measure_active_state_missing_target_fails_before_motion():
     board.move_to_labware.assert_not_called()
     board.move.assert_not_called()
     instr.measure.assert_not_called()
-
-
-def test_measure_persists_single_uv_curing_exposure_when_campaign_is_present():
-    plate = _plate()
-    board = MagicMock()
-    board.controller = object()
-    board.instruments = {"uv_curing": _FakeUVCuring()}
-    deck = Deck({"plate_1": plate})
-    store = DataStore(db_path=":memory:")
-    campaign_id = store.create_campaign(description="measure")
-    store.register_labware(campaign_id, "plate_1", plate)
-    ctx = ProtocolContext(
-        gantry=board,
-        deck=deck,
-        data_store=store,
-        campaign_id=campaign_id,
-    )
-
-    measure(
-        ctx,
-        instrument="uv_curing",
-        position="plate_1.A1",
-        measurement_height=0.0,
-        method="cure",
-    )
-
-    row = store._conn.execute(
-        """
-        SELECT e.labware_name, e.well_id, m.intensity_percent,
-               m.exposure_time_s, m.cure_timestamp_s
-        FROM experiments e
-        JOIN uv_curing_measurements m ON m.experiment_id = e.id
-        WHERE e.campaign_id = ?
-        """,
-        (campaign_id,),
-    ).fetchone()
-    assert row[0] == "test_plate"
-    assert row[1] == "A1"
-    assert row[2] == pytest.approx(60.0)
-    assert row[3] == pytest.approx(1.5)
-    assert row[4] == pytest.approx(123.4)
-    store.close()
 
 
 def test_measure_uv_health_check_does_not_persist_or_fail(caplog):

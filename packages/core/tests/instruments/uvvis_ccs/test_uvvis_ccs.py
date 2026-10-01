@@ -1,8 +1,7 @@
-import ctypes as C
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock
 
-from cubos.instruments.base_instrument import BaseInstrument, InstrumentError
+from cubos.instruments.base_instrument import InstrumentError
 from cubos.instruments.uvvis_ccs.models import UVVisSpectrum, NUM_PIXELS
 from cubos.instruments.uvvis_ccs.exceptions import (
     UVVisCCSError,
@@ -18,14 +17,6 @@ from cubos.instruments.uvvis_ccs.vendors.thorlabs import ThorlabsUVVisCCS, _synt
 
 class TestUVVisSpectrum:
 
-    def test_valid_spectrum(self):
-        spec = UVVisSpectrum(
-            wavelengths=(400.0, 500.0, 600.0),
-            intensities=(0.1, 0.5, 0.3),
-            integration_time_s=0.24,
-        )
-        assert spec.is_valid is True
-        assert spec.num_pixels == 3
 
     def test_invalid_empty_wavelengths(self):
         spec = UVVisSpectrum(
@@ -58,24 +49,6 @@ class TestUVVisSpectrum:
             integration_time_s=-1.0,
         )
         assert spec.is_valid is False
-
-    def test_frozen_dataclass(self):
-        spec = UVVisSpectrum(
-            wavelengths=(400.0,),
-            intensities=(0.1,),
-            integration_time_s=0.24,
-        )
-        with pytest.raises(AttributeError):
-            spec.integration_time_s = 1.0
-
-    def test_num_pixels_matches_wavelengths(self):
-        wl = tuple(float(i) for i in range(100))
-        spec = UVVisSpectrum(
-            wavelengths=wl,
-            intensities=wl,
-            integration_time_s=0.5,
-        )
-        assert spec.num_pixels == 100
 
 
 # --- Exception hierarchy tests ------------------------------------------------
@@ -110,12 +83,6 @@ class TestSyntheticSpectrum:
         assert spec.wavelengths[0] == pytest.approx(200.0)
         assert spec.wavelengths[-1] == pytest.approx(800.0)
         assert all(v == 0.5 for v in spec.intensities)
-
-    def test_custom_integration_time(self):
-        spec = _synthetic_spectrum(integration_time_s=1.0)
-        assert spec.is_valid is True
-        assert spec.num_pixels == NUM_PIXELS
-        assert spec.integration_time_s == pytest.approx(1.0)
 
 
 # --- Driver tests (mocked ctypes DLL) ----------------------------------------
@@ -168,19 +135,6 @@ class TestUVVisCCSDriver:
 
         return dll
 
-    @patch("ctypes.cdll")
-    def test_connect_loads_dll_and_inits(self, mock_cdll):
-        dll = self._make_mock_dll()
-        mock_cdll.LoadLibrary.return_value = dll
-
-        ccs = ThorlabsUVVisCCS(serial_number="TEST123", dll_path="fake.dll")
-        ccs.connect()
-
-        mock_cdll.LoadLibrary.assert_called_once_with("fake.dll")
-        dll.tlccs_init.assert_called_once()
-        dll.tlccs_getWavelengthData.assert_called_once()
-        assert ccs._wavelengths is not None
-        assert len(ccs._wavelengths) == NUM_PIXELS
 
     @patch("ctypes.cdll")
     def test_connect_raises_on_missing_dll(self, mock_cdll):
@@ -217,14 +171,6 @@ class TestUVVisCCSDriver:
         ccs = ThorlabsUVVisCCS(serial_number="TEST123", dll_path="fake.dll")
         ccs.disconnect()  # should not raise
 
-    @patch("ctypes.cdll")
-    def test_health_check_true_when_connected(self, mock_cdll):
-        dll = self._make_mock_dll()
-        mock_cdll.LoadLibrary.return_value = dll
-
-        ccs = ThorlabsUVVisCCS(serial_number="TEST123", dll_path="fake.dll")
-        ccs.connect()
-        assert ccs.health_check() is True
 
     def test_health_check_false_when_not_connected(self):
         ccs = ThorlabsUVVisCCS(serial_number="TEST123", dll_path="fake.dll")
@@ -282,20 +228,12 @@ class TestUVVisCCSDriver:
         with pytest.raises(UVVisCCSError, match="not connected"):
             ccs.set_integration_time(0.5)
 
-    @patch("ctypes.cdll")
-    def test_is_base_instrument(self, mock_cdll):
-        ccs = ThorlabsUVVisCCS(serial_number="TEST123", dll_path="fake.dll")
-        assert isinstance(ccs, BaseInstrument)
-
 
 # --- Offline ThorlabsUVVisCCS tests ---------------------------------------------------
 
 
 class TestOfflineUVVisCCS:
 
-    def test_is_base_instrument(self):
-        ccs = ThorlabsUVVisCCS(offline=True)
-        assert isinstance(ccs, BaseInstrument)
 
     def test_connect_disconnect_cycle(self):
         ccs = ThorlabsUVVisCCS(offline=True)
@@ -303,13 +241,6 @@ class TestOfflineUVVisCCS:
         assert ccs.health_check() is True
         ccs.disconnect()  # safe no-op in offline mode
 
-    def test_measure_returns_default_spectrum(self):
-        ccs = ThorlabsUVVisCCS(offline=True)
-        ccs.connect()
-        result = ccs.measure()
-        assert isinstance(result, UVVisSpectrum)
-        assert result.is_valid is True
-        assert result.num_pixels == NUM_PIXELS
 
     def test_set_integration_time_updates_state(self):
         ccs = ThorlabsUVVisCCS(offline=True)

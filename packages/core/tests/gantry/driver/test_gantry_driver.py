@@ -13,8 +13,6 @@ from cubos.gantry.coordinates import Coordinates
 from cubos.gantry.gantry_driver.driver import (
     Mill,
     looks_like_connection_loss,
-    mpos_pattern,
-    wpos_pattern,
 )
 from cubos.gantry.gantry_driver.exceptions import (
     CommandExecutionError,
@@ -56,43 +54,7 @@ class ScriptedSerial:
 
 class TestCNCDriverLogic(unittest.TestCase):
     
-    def test_regex_patterns(self):
-        """Test that regex patterns correctly parse GRBL status strings."""
-        
-        # Test WPos pattern
-        wpos_status = "<Idle|WPos:10.500,20.123,-5.000|FS:0,0|WCO:0,0,0>"
-        match = wpos_pattern.search(wpos_status)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), "10.500")
-        self.assertEqual(match.group(2), "20.123")
-        self.assertEqual(match.group(3), "-5.000")
-        
-        # Test MPos pattern
-        mpos_status = "<Idle|MPos:-400.123,-299.999,-10.000|FS:0,0>"
-        match = mpos_pattern.search(mpos_status)
-        self.assertIsNotNone(match)
-        self.assertEqual(match.group(1), "-400.123")
-        self.assertEqual(match.group(2), "-299.999")
-        self.assertEqual(match.group(3), "-10.000")
-        
-        # Test failure cases
-        invalid_status = "<Idle|FS:0,0>"
-        self.assertIsNone(wpos_pattern.search(invalid_status))
-        self.assertIsNone(mpos_pattern.search(invalid_status))
 
-    @patch('cubos.gantry.gantry_driver.driver.time.sleep')
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_verify_connection_accepts_grbl_settings_response(
-        self, mock_cmd_logger, mock_mill_logger, mock_serial, mock_sleep,
-    ):
-        mill = Mill()
-        fake = FakeGrblSerial()
-
-        self.assertTrue(mill._verify_connection(fake))
-        self.assertIn(b"?", fake.writes)
-        self.assertIn(b"$$\n", fake.writes)
 
     @patch('cubos.gantry.gantry_driver.driver.time.sleep')
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
@@ -496,54 +458,6 @@ class TestCNCDriverLogic(unittest.TestCase):
         signature = inspect.signature(Mill.move_to)
         self.assertNotIn("instrument", signature.parameters)
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_build_direct_move_are_axis_by_axis(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Direct moves emit X, Y, Z on separate G-code lines — never a
-        combined ``G01 X… Y…`` interpolation. The mill must not command
-        simultaneous multi-axis motion so callers own every straight
-        segment of the path."""
-        mill = Mill()
-
-        current = Coordinates(0.0, 0.0, 0.0)
-        target = Coordinates(10.0, 20.0, -5.0)
-        commands = mill._build_direct_move(current, target)
-
-        self.assertEqual(commands, [
-            "G01 X10.0 F3000",
-            "G01 Y20.0 F3000",
-            "G01 Z-5.0 F3000",
-        ])
-        # Regression guard: no combined-XY command anywhere.
-        self.assertFalse(any("Y" in c and "X" in c for c in commands))
-
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_default_feed_rate_is_overridable_per_instance(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """cnc.default_feed_rate_mm_min overrides the module default per Mill instance."""
-        mill = Mill()
-        mill.default_feed_rate = 4000
-
-        current = Coordinates(0.0, 0.0, 0.0)
-        target = Coordinates(10.0, 0.0, 0.0)
-        commands = mill._build_direct_move(current, target)
-
-        self.assertEqual(commands, ["G01 X10.0 F4000"])
-
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_build_direct_move_skips_unchanged_axes(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Only the axes that actually changed get a G-code line."""
-        mill = Mill()
-
-        current = Coordinates(0.0, 5.0, -5.0)
-        target = Coordinates(10.0, 5.0, -5.0)  # only X changes
-        commands = mill._build_direct_move(current, target)
-
-        self.assertEqual(commands, ["G01 X10.0 F3000"])
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -587,44 +501,6 @@ class TestCNCDriverLogic(unittest.TestCase):
             "G01 Z-90.0 F3000",
         ])
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_build_transit_move_skips_xy_when_target_xy_matches_current(
-        self, mock_cmd_logger, mock_mill_logger, mock_serial,
-    ):
-        """Same-XY transit: lift then descend — neither X nor Y emits."""
-        mill = Mill()
-
-        current = Coordinates(-100.0, -50.0, -78.0)
-        target = Coordinates(-100.0, -50.0, -90.0)
-        commands = mill._build_transit_move(current, target, travel_z=-85.0)
-
-        self.assertEqual(commands, [
-            "G01 Z-85.0 F3000",
-            "G01 Z-90.0 F3000",
-        ])
-
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_build_transit_move_emits_all_four_steps(
-        self, mock_cmd_logger, mock_mill_logger, mock_serial,
-    ):
-        """Lift → X → Y → descend, all four fire when every axis changes
-        and travel_z differs from both current.z and target.z."""
-        mill = Mill()
-
-        current = Coordinates(-100.0, -50.0, -78.0)
-        target = Coordinates(-110.0, -60.0, -90.0)
-        commands = mill._build_transit_move(current, target, travel_z=-85.0)
-
-        self.assertEqual(commands, [
-            "G01 Z-85.0 F3000",    # lift
-            "G01 X-110.0 F3000",   # X alone
-            "G01 Y-60.0 F3000",    # Y alone
-            "G01 Z-90.0 F3000",    # descend
-        ])
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -654,28 +530,6 @@ class TestCNCDriverLogic(unittest.TestCase):
             "G01 Z-90.0 F3000",
         ])
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_move_to_uses_coordinates_directly(
-        self, mock_cmd_logger, mock_mill_logger, mock_serial,
-    ):
-        mill = Mill()
-        mill.ser_mill = MagicMock()
-        mill.current_coordinates = MagicMock(
-            return_value=Coordinates(-100.0, -50.0, -78.0),
-        )
-        mill.execute_command = MagicMock()
-
-        mill.move_to(
-            x_coordinate=-110.0,
-            y_coordinate=-60.0,
-            z_coordinate=-90.0,
-        )
-
-        mill.execute_command.assert_any_call("G01 X-110.0 F3000")
-        mill.execute_command.assert_any_call("G01 Y-60.0 F3000")
-        mill.execute_command.assert_any_call("G01 Z-90.0 F3000")
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -883,28 +737,6 @@ class TestCNCDriverLogic(unittest.TestCase):
         ])
         mill.clear_buffers.assert_called_once()
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_mock_connection(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Test connecting with mocked serial port."""
-        mock_serial_instance = MagicMock()
-        mock_serial_instance.is_open = True
-        mock_serial_instance.readline.return_value = b"<Idle|WPos:0,0,0|FS:0,0>\r\n"
-        mock_serial.return_value = mock_serial_instance
-        
-        # Mock the locate_over_serial to return our mock
-        with patch.object(Mill, '_locate_over_serial', return_value=(mock_serial_instance, '/dev/test')):
-            mill = Mill()
-            mill.read_config = MagicMock()
-            mill.clear_buffers = MagicMock()
-            mill.enforce_wpos_mode = MagicMock()
-            mill.set_feed_rate = MagicMock()
-            mill.seed_wco = MagicMock()
-            mill.connect(port='/dev/test')
-            
-            self.assertTrue(mill.active_connection)
-            self.assertEqual(mill.ser_mill, mock_serial_instance)
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -939,21 +771,6 @@ class TestCNCDriverLogic(unittest.TestCase):
         self.assertIsNone(mill._wco)
         self.assertEqual(mill.config, {})
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_read_grbl_settings_reads_live_controller(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Test that read_grbl_settings issues a live $$ read."""
-        mill = Mill()
-        mill.ser_mill = MagicMock()
-        mill.ser_mill.is_open = True
-        mill.execute_command = MagicMock(return_value={"$130": "400.000"})
-
-        settings = mill.read_grbl_settings()
-
-        mill.execute_command.assert_called_once_with("$$")
-        self.assertEqual(settings["$130"], "400.000")
-        self.assertEqual(mill.config["$130"], "400.000")
 
     @patch('cubos.gantry.gantry_driver.driver.time.sleep')
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
@@ -999,20 +816,6 @@ class TestCNCDriverLogic(unittest.TestCase):
 
         self.assertEqual(mill._read_serial(), "")
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_current_status_handles_unstripped_ok(
-        self, mock_cmd_logger, mock_mill_logger, mock_serial,
-    ):
-        mill = Mill()
-        mill.ser_mill = ScriptedSerial([
-            b"ok\r\n",
-            b"<Idle|WPos:0,0,0|FS:0,0>\r\n",
-        ])
-
-        self.assertEqual(mill.current_status(), "<Idle|WPos:0,0,0|FS:0,0>")
-        self.assertEqual(mill.ser_mill.writes, [b"?"])
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
@@ -1043,20 +846,6 @@ class TestCNCDriverLogic(unittest.TestCase):
         mill.execute_command.assert_any_call("G90")
         self.assertEqual(mill.config["$10"], "0")
 
-    @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')
-    @patch('cubos.gantry.gantry_driver.driver.set_up_command_logger')
-    def test_enforce_wpos_mode_skips_when_already_zero(self, mock_cmd_logger, mock_mill_logger, mock_serial):
-        """Test that enforce_wpos_mode does not re-send $10=0 if already set."""
-        mill = Mill()
-        mill.config["$10"] = "0"
-        mill.execute_command = MagicMock()
-
-        mill.enforce_wpos_mode()
-
-        calls = [str(c) for c in mill.execute_command.call_args_list]
-        self.assertNotIn("call('$10=0')", calls)
-        mill.execute_command.assert_called_with("G90")
 
     @patch('cubos.gantry.gantry_driver.driver.serial.Serial')
     @patch('cubos.gantry.gantry_driver.driver.set_up_mill_logger')

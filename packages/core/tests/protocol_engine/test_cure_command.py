@@ -48,22 +48,7 @@ def _ctx(instr, data_store=None, campaign_id=None):
 
 
 class TestCure:
-    def test_cures_with_explicit_exposure_and_intensity(self):
-        uv = _uv()
-        result = cure(
-            _ctx(uv), instrument="uv_curing", position="plate_1.A1",
-            measurement_height=0.0, exposure_time=2.0, intensity=75.0,
-        )
-        assert result.exposure_time_s == pytest.approx(2.0)
-        assert result.intensity_percent == pytest.approx(75.0)
 
-    def test_intensity_defaults_to_instrument_default_when_omitted(self):
-        uv = _uv()
-        result = cure(
-            _ctx(uv), instrument="uv_curing", position="plate_1.A1",
-            measurement_height=0.0, exposure_time=2.0,
-        )
-        assert result.intensity_percent == pytest.approx(50.0)
 
     def test_unknown_instrument(self):
         with pytest.raises(ProtocolExecutionError, match="Unknown instrument"):

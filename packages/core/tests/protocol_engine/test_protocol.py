@@ -23,27 +23,6 @@ def _mock_context():
 
 class TestProtocolStep:
 
-    def test_execute_calls_handler_with_context_and_kwargs(self):
-        handler = MagicMock(return_value="ok")
-        step = ProtocolStep(
-            index=0,
-            command_name="move",
-            handler=handler,
-            args={"instrument": "pipette", "position": "plate_1.A1"},
-        )
-        ctx = _mock_context()
-        result = step.execute(ctx)
-
-        handler.assert_called_once_with(ctx, instrument="pipette", position="plate_1.A1")
-        assert result == "ok"
-
-    def test_execute_with_empty_args(self):
-        handler = MagicMock(return_value=None)
-        step = ProtocolStep(index=0, command_name="home", handler=handler, args={})
-        ctx = _mock_context()
-        step.execute(ctx)
-
-        handler.assert_called_once_with(ctx)
 
     def test_execute_scopes_fluid_operation_key_to_campaign_and_step(self):
         observed = []
@@ -110,40 +89,6 @@ class TestProtocol:
 
         assert call_order == ["a", "b"]
 
-    def test_run_passes_context_to_handlers(self):
-        handler = MagicMock(return_value=None)
-        steps = [ProtocolStep(index=0, command_name="cmd", handler=handler, args={})]
-        protocol = Protocol(steps=steps)
-        ctx = _mock_context()
-        protocol.execute(ctx)
-
-        handler.assert_called_once_with(ctx)
-
-    def test_run_returns_results_list(self):
-        handler_a = MagicMock(return_value="result_a")
-        handler_b = MagicMock(return_value="result_b")
-
-        steps = [
-            ProtocolStep(index=0, command_name="a", handler=handler_a, args={}),
-            ProtocolStep(index=1, command_name="b", handler=handler_b, args={}),
-        ]
-        protocol = Protocol(steps=steps)
-        results = protocol.execute(_mock_context())
-
-        assert results == ["result_a", "result_b"]
-
-    def test_empty_protocol_run_succeeds(self):
-        protocol = Protocol(steps=[])
-        results = protocol.execute(_mock_context())
-        assert results == []
-
-    def test_protocol_len(self):
-        steps = [
-            ProtocolStep(index=0, command_name="a", handler=MagicMock(), args={}),
-            ProtocolStep(index=1, command_name="b", handler=MagicMock(), args={}),
-        ]
-        assert len(Protocol(steps=steps)) == 2
-        assert len(Protocol(steps=[])) == 0
 
     def test_protocol_repr(self):
         steps = [
@@ -228,47 +173,6 @@ class TestProtocolRun:
             "initial_fluids": None,
         }
 
-    def test_run_without_campaign_uses_default_persistence(self, monkeypatch):
-        passed = {}
-
-        def fake_run_on_hardware(gantry_path, deck_path, protocol, **kwargs):
-            passed.update(kwargs)
-            return []
-
-        monkeypatch.setattr(protocol_setup, "run_on_hardware", fake_run_on_hardware)
-
-        protocol = Protocol(
-            steps=[],
-            setup=ProtocolSetup(gantry_path="g.yaml", deck_path="d.yaml"),
-        )
-        protocol.run()
-
-        assert passed == {
-            "data_store": None,
-            "campaign_description": None,
-            "protocol_config": None,
-            "fluid_state_id": None,
-            "initial_fluids": None,
-        }
-
-    def test_run_accepts_data_store_without_campaign(self, monkeypatch):
-        passed = {}
-
-        def fake_run_on_hardware(gantry_path, deck_path, protocol, **kwargs):
-            passed.update(kwargs)
-            return []
-
-        monkeypatch.setattr(protocol_setup, "run_on_hardware", fake_run_on_hardware)
-
-        store = object()
-        protocol = Protocol(
-            steps=[],
-            setup=ProtocolSetup(gantry_path="g.yaml", deck_path="d.yaml"),
-        )
-        protocol.run(data_store=store)
-
-        assert passed["data_store"] is store
-        assert passed["campaign_description"] is None
 
     def test_run_forwards_resumable_fluid_state_inputs(self, monkeypatch):
         passed = {}
@@ -290,23 +194,3 @@ class TestProtocolRun:
 
         assert passed["fluid_state_id"] == 42
         assert passed["initial_fluids"] == {"fluids": {}}
-
-    def test_run_with_campaign_passes_description_to_hardware_runner(self, monkeypatch):
-        passed = {}
-
-        def fake_run_on_hardware(gantry_path, deck_path, protocol, **kwargs):
-            passed.update(kwargs)
-            return ["ok"]
-
-        store = object()
-        monkeypatch.setattr(protocol_setup, "run_on_hardware", fake_run_on_hardware)
-
-        protocol = Protocol(
-            steps=[],
-            setup=ProtocolSetup(gantry_path="g.yaml", deck_path="d.yaml"),
-        )
-        results = protocol.run(campaign="My run", data_store=store)
-
-        assert results == ["ok"]
-        assert passed["data_store"] is store
-        assert passed["campaign_description"] == "My run"

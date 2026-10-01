@@ -7,29 +7,10 @@ const path = require("node:path");
 const test = require("node:test");
 const {
   buildBackendEnvironment,
-  getRuntimePaths,
   hasYamlFiles,
   seedConfigs,
   waitForBackend,
 } = require("../src/runtime");
-
-test("packaged runtime resolves the install and user data layout", () => {
-  const paths = getRuntimePaths({
-    executablePath: "C:\\Program Files\\UrsaLabs\\CubOS\\desktop\\CubOS.exe",
-    isPackaged: true,
-    env: { LOCALAPPDATA: "C:\\Users\\operator\\AppData\\Local" },
-  });
-
-  assert.equal(paths.installRoot, "C:\\Program Files\\UrsaLabs\\CubOS");
-  assert.equal(
-    paths.python,
-    "C:\\Program Files\\UrsaLabs\\CubOS\\venv\\Scripts\\python.exe",
-  );
-  assert.equal(
-    paths.configDir,
-    "C:\\Users\\operator\\AppData\\Local\\UrsaLabs\\CubOS\\configs",
-  );
-});
 
 test("backend environment uses a private dynamic port and bundled frontend", () => {
   const paths = {

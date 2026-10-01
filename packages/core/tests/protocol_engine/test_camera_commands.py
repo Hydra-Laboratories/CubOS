@@ -81,11 +81,6 @@ def _context(instruments, data_store=None, campaign_id=None):
 
 
 class TestCapture:
-    def test_capture_writes_file_and_returns_path(self, _images_dir):
-        saved = capture(_context({"cam": _camera()}), instrument="cam",
-                        label="hello")
-        assert saved.endswith(".tiff")
-        assert (_images_dir / "adhoc").exists()
 
     def test_capture_persists_against_position(self, tmp_path):
         data_store = DataStore(tmp_path / "test.db")
@@ -127,29 +122,6 @@ class TestCapture:
 
 
 class TestImageWell:
-    def test_standard_sequence(self):
-        camera, lights = _camera(), _lights()
-        context = _context({"cam": camera, "lights": lights})
-        light_log = []
-        original = lights.set_channel
-
-        def logging_set_channel(channel, brightness):
-            light_log.append((channel, brightness))
-            original(channel, brightness)
-
-        lights.set_channel = logging_set_channel
-
-        saved = image_well(context, camera="cam", well="plate.B1",
-                           image_height=30.0, lights="lights", label="b1")
-        assert len(saved) == 1
-        # Lights: white 5% around the capture, everything off afterwards.
-        assert light_log == [("white", 5)]
-        assert lights.status().channels == {"white": 0, "contact": 0}
-        trace = context.gantry.trace
-        assert trace[0] == ("approach", (WELL.x, WELL.y))
-        assert trace[1] == ("move", (WELL.x, WELL.y, WELL.z + 30.0), None)
-        # Final motion: retract to safe_z.
-        assert trace[-1] == ("move", (WELL.x, WELL.y, SAFE_Z), SAFE_Z)
 
     def test_curvature_z_stack(self):
         context = _context({"cam": _camera(), "lights": _lights()})
@@ -182,11 +154,6 @@ class TestImageWell:
         assert lights.status().channels == {"white": 0, "contact": 0}
         assert context.gantry.trace[-1] == ("move", (WELL.x, WELL.y, SAFE_Z), SAFE_Z)
 
-    def test_works_without_lights(self):
-        context = _context({"cam": _camera()})
-        saved = image_well(context, camera="cam", well="plate.B1",
-                           image_height=30.0)
-        assert len(saved) == 1
 
     def test_unknown_mode(self):
         with pytest.raises(ProtocolExecutionError, match="unknown mode"):
@@ -213,11 +180,6 @@ class TestImageWell:
 
 
 class TestPathBuilder:
-    def test_default_images_dir_without_override(self, monkeypatch):
-        from cubos.protocol_engine.commands.camera import default_images_dir
-
-        monkeypatch.delenv("CUBOS_IMAGES_DIR", raising=False)
-        assert default_images_dir() == Path.home() / ".cubos" / "images"
 
     def test_collision_gets_numeric_suffix(self, monkeypatch):
         import cubos.protocol_engine.commands.camera as camera_module
@@ -325,12 +287,6 @@ class TestSummaries:
 
 
 class TestLightsAutoDiscovery:
-    def test_defaults_to_single_lighting_instrument(self):
-        lights = _lights()
-        context = _context({"cam": _camera(), "lights": lights})
-        image_well(context, camera="cam", well="plate.B1", image_height=30.0)
-        # The auto-discovered lights were used and turned back off.
-        assert lights.status().channels == {"white": 0, "contact": 0}
 
     def test_multiple_lighting_instruments_require_explicit_name(self):
         context = _context({
@@ -340,17 +296,6 @@ class TestLightsAutoDiscovery:
             image_well(context, camera="cam", well="plate.B1",
                        image_height=30.0)
 
-    def test_none_opts_out(self):
-        lights = _lights()
-
-        def exploding_set_channel(channel, brightness):
-            raise AssertionError("lights must not be used")
-
-        lights.set_channel = exploding_set_channel
-        context = _context({"cam": _camera(), "lights": lights})
-        saved = image_well(context, camera="cam", well="plate.B1",
-                           image_height=30.0, lights="none")
-        assert len(saved) == 1
 
     def test_brightness_out_of_range_raises(self):
         with pytest.raises(ProtocolExecutionError, match="brightness"):

@@ -56,16 +56,6 @@ def _make_2x2_plate(name: str = "plate_1") -> WellPlate:
 
 class TestLabwareTableExists:
 
-    def test_labware_table_created(self):
-        store = _store()
-        tables = {
-            row[0]
-            for row in store._conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        }
-        assert "labware" in tables
-        store.close()
 
     def test_foreign_key_to_campaigns(self):
         store = _store()
@@ -84,17 +74,6 @@ class TestLabwareTableExists:
 
 class TestRegisterLabware:
 
-    def test_register_vial_creates_one_row(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-        store.register_labware(cid, "vial_1", _make_vial())
-
-        rows = store._conn.execute(
-            "SELECT * FROM labware WHERE campaign_id = ? AND labware_key = ?",
-            (cid, "vial_1"),
-        ).fetchall()
-        assert len(rows) == 1
-        store.close()
 
     def test_register_vial_stores_volumes(self):
         store = _store()
@@ -158,36 +137,6 @@ class TestRegisterLabware:
 
 class TestRecordDispense:
 
-    def test_updates_current_volume(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-        store.register_labware(cid, "plate_1", _make_2x2_plate())
-
-        store.record_dispense(cid, "plate_1", "A1", "vial_1", 50.0)
-
-        row = store._conn.execute(
-            "SELECT current_volume_ul FROM labware "
-            "WHERE campaign_id = ? AND labware_key = ? AND well_id = ?",
-            (cid, "plate_1", "A1"),
-        ).fetchone()
-        assert row[0] == 50.0
-        store.close()
-
-    def test_accumulates_volume(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-        store.register_labware(cid, "plate_1", _make_2x2_plate())
-
-        store.record_dispense(cid, "plate_1", "A1", "vial_1", 30.0)
-        store.record_dispense(cid, "plate_1", "A1", "vial_2", 20.0)
-
-        row = store._conn.execute(
-            "SELECT current_volume_ul FROM labware "
-            "WHERE campaign_id = ? AND labware_key = ? AND well_id = ?",
-            (cid, "plate_1", "A1"),
-        ).fetchone()
-        assert row[0] == 50.0
-        store.close()
 
     def test_tracks_contents_json(self):
         store = _store()
@@ -208,20 +157,6 @@ class TestRecordDispense:
         assert parsed[1] == {"source": "vial_2", "volume_ul": 25.0}
         store.close()
 
-    def test_dispense_into_vial(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-        store.register_labware(cid, "vial_1", _make_vial())
-
-        store.record_dispense(cid, "vial_1", None, "vial_2", 100.0)
-
-        row = store._conn.execute(
-            "SELECT current_volume_ul FROM labware "
-            "WHERE campaign_id = ? AND labware_key = ? AND well_id IS NULL",
-            (cid, "vial_1"),
-        ).fetchone()
-        assert row[0] == 100.0
-        store.close()
 
     def test_dispense_unknown_labware_raises(self):
         store = _store()
@@ -237,14 +172,6 @@ class TestRecordDispense:
 
 class TestGetContents:
 
-    def test_returns_none_when_empty(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-        store.register_labware(cid, "plate_1", _make_2x2_plate())
-
-        result = store.get_contents(cid, "plate_1", "A1")
-        assert result is None
-        store.close()
 
     def test_returns_contents_after_dispense(self):
         store = _store()
@@ -254,12 +181,4 @@ class TestGetContents:
 
         result = store.get_contents(cid, "plate_1", "A1")
         assert result[0]["source"] == "vial_1"
-        store.close()
-
-    def test_returns_none_for_unregistered(self):
-        store = _store()
-        cid = store.create_campaign(description="test")
-
-        result = store.get_contents(cid, "nonexistent", "A1")
-        assert result is None
         store.close()

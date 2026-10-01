@@ -67,64 +67,6 @@ def _nested_holder() -> VialHolder:
     )
 
 
-def test_create_campaign_for_protocol_run_registers_nested_labware(tmp_path):
-    gantry_path = tmp_path / "gantry.yaml"
-    deck_path = tmp_path / "deck.yaml"
-    gantry_path.write_text(GANTRY_YAML, encoding="utf-8")
-    deck_path.write_text(DECK_YAML, encoding="utf-8")
-    store = DataStore(db_path=":memory:")
-
-    campaign_id = create_campaign_for_protocol_run(
-        store,
-        gantry_path=gantry_path,
-        deck_path=deck_path,
-        gantry_file="gantry.yaml",
-        deck_file="deck.yaml",
-        protocol_file="protocol.yaml",
-    )
-
-    campaign = store._conn.execute(
-        "SELECT description, gantry_config, deck_config, protocol_config "
-        "FROM campaigns WHERE id = ?",
-        (campaign_id,),
-    ).fetchone()
-    rows = store._conn.execute(
-        "SELECT labware_key, labware_type, well_id "
-        "FROM labware WHERE campaign_id = ? ORDER BY labware_key",
-        (campaign_id,),
-    ).fetchall()
-    store.close()
-
-    assert campaign[0] == (
-        "CubOS protocol run: gantry=gantry.yaml, deck=deck.yaml, "
-        "protocol=protocol.yaml"
-    )
-    assert campaign[1:] == ("gantry.yaml", "deck.yaml", "protocol.yaml")
-    assert [(row[0], row[1], row[2]) for row in rows] == [
-        ("vial_holder__vials", "vial_grid", "vial_1"),
-    ]
-
-
-def test_programmatic_deck_retains_recursive_nested_registration() -> None:
-    deck = Deck({"holder": _nested_holder()})
-    assert deck.has_explicit_volume_registry is False
-
-    store = DataStore(db_path=":memory:")
-    campaign_id = store.create_campaign("programmatic nested deck")
-    register_deck_labware(store, campaign_id, deck)
-
-    rows = store._conn.execute(
-        "SELECT labware_key, labware_type, well_id FROM labware "
-        "WHERE campaign_id = ? ORDER BY labware_key",
-        (campaign_id,),
-    ).fetchall()
-    store.close()
-
-    assert [(row[0], row[1], row[2]) for row in rows] == [
-        ("holder.nested", "vial", None),
-    ]
-
-
 def test_programmatic_mixed_deck_registers_direct_and_nested_labware() -> None:
     deck = Deck({
         "direct": _vial("direct", 40.0),

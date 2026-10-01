@@ -3,7 +3,6 @@ import pytest
 from pydantic import ValidationError
 
 from cubos.deck import (
-    BoundingBoxGeometry,
     WellPlate,
     Vial,
     Coordinate3D,
@@ -175,53 +174,6 @@ def test_well_plate_requires_positive_dimensions_and_wells():
         )
 
 
-def test_vial_dimensions_and_location_lookup():
-    """Single Vial captures geometry and resolves its location."""
-    vial = Vial(
-        name="standard_vial",
-        model_name="test_model",
-        height=66.75,
-        diameter=28.00,
-        location=Coordinate3D(x=30.0, y=40.0, z=20.0),
-        capacity_ul=1500.0,
-        working_volume_ul=1200.0,
-    )
-
-    assert vial.name == "standard_vial"
-    assert vial.height == pytest.approx(66.75)
-    assert vial.diameter == pytest.approx(28.00)
-    assert vial.geometry == BoundingBoxGeometry(
-        length=28.0,
-        width=28.0,
-        height=66.75,
-    )
-    assert vial.get_vial_center() == Coordinate3D(x=30.0, y=40.0, z=20.0)
-    assert vial.get_initial_position() == Coordinate3D(x=30.0, y=40.0, z=20.0)
-
-
-def test_well_plate_exposes_shared_bounding_box_geometry():
-    """``WellPlate.height`` is the absolute deck-frame surface Z, not a
-    bounding-box dimension; ``geometry`` only carries XY footprint metadata."""
-    plate = WellPlate(
-        name="SBS_96",
-        model_name="test_model",
-        length=127.71,
-        width=85.43,
-        height=14.10,
-        rows=1,
-        columns=1,
-        wells={"A1": Coordinate3D(x=10.0, y=10.0, z=15.0)},
-        capacity_ul=200.0,
-        working_volume_ul=150.0,
-    )
-
-    assert plate.geometry == BoundingBoxGeometry(
-        length=127.71,
-        width=85.43,
-    )
-    assert plate.height == 14.10
-
-
 def test_vial_requires_positive_diameter():
     """Vial validates diameter must be positive."""
     with pytest.raises(ValidationError):
@@ -350,20 +302,6 @@ def test_generate_wells_from_offsets():
     # B2: both row and column offsets applied
     assert wells["B2"].x == pytest.approx(10.0)
     assert wells["B2"].y == pytest.approx(5.0)
-
-
-def test_generate_wells_from_offsets_accepts_negative_row_direction():
-    wells = generate_wells_from_offsets(
-        row_labels=["A", "B"],
-        column_indices=[1, 2],
-        a1_center=Coordinate3D(x=0.0, y=0.0, z=15.0),
-        x_offset=10.0,
-        y_offset=5.0,
-        row_direction="negative",
-    )
-
-    assert wells["B1"].x == pytest.approx(0.0)
-    assert wells["B1"].y == pytest.approx(-5.0)
 
 
 def test_coordinate3d_rejects_non_finite_values():

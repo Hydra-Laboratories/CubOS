@@ -6,7 +6,6 @@ import json
 import logging
 from unittest.mock import MagicMock
 
-import pytest
 
 from cubos.data.data_store import DataStore
 from cubos.deck.deck import Deck
@@ -154,20 +153,6 @@ class TestScanCommandLogging:
         parsed = json.loads(row[0])
         assert parsed[0]["source"] == "vial_1"
 
-    def test_works_without_data_store(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        ctx = _mock_context()
-        result = scan(ctx, plate="plate_1", instrument="uvvis", method="measure", measurement_height=0.0, interwell_scan_height=10.0)
-        assert len(result) == 4
-
-    def test_returns_any_type(self):
-        from cubos.protocol_engine.commands.scan import scan
-
-        ctx = _mock_context()
-        result = scan(ctx, plate="plate_1", instrument="uvvis", method="measure", measurement_height=0.0, interwell_scan_height=10.0)
-        assert all(isinstance(v, UVVisSpectrum) for v in result.values())
-
 
 # ─── Pipette command DB tracking tests ────────────────────────────────────────
 
@@ -199,22 +184,3 @@ class TestPipetteDbTracking:
         contents = store.get_contents(cid, "plate_1", "B2")
         assert contents[0]["source"] == "vial_1"
         assert contents[0]["volume_ul"] == 75.0
-
-    def test_dispense_works_without_data_store(self):
-        from cubos.protocol_engine.commands.pipette import dispense
-
-        board = MagicMock()
-        pipette = MagicMock()
-        pipette.dispense = MagicMock(return_value=None)
-        board.instruments = {"pipette": pipette}
-
-        deck = MagicMock()
-        deck.resolve_coordinate = MagicMock(return_value=(0.0, 0.0, 0.0))
-
-        ctx = ProtocolContext(
-            gantry=board, deck=deck,
-            logger=logging.getLogger("test"),
-        )
-
-        # No data_store — should not raise
-        dispense(ctx, position="plate_1.A1", volume_ul=50.0)

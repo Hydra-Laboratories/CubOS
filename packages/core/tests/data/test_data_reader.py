@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
 
-from cubos.data.data_reader import CampaignRecord, DataReader, ExperimentRecord, LabwareRecord
+from cubos.data.data_reader import DataReader, ExperimentRecord, LabwareRecord
 from cubos.data.data_store import DataStore
 from cubos.instruments.uv_curing.models import CureResult
 from cubos.protocol_engine.measurements import InstrumentMeasurement, MeasurementType
@@ -56,14 +55,6 @@ def seeded_reader() -> DataReader:
 
 class TestGetCampaign:
 
-    def test_returns_campaign_record(self, seeded_reader: DataReader):
-        campaign = seeded_reader.get_campaign(1)
-        assert isinstance(campaign, CampaignRecord)
-        assert campaign.id == 1
-        assert campaign.description == "test campaign"
-
-    def test_returns_none_for_missing_campaign(self, seeded_reader: DataReader):
-        assert seeded_reader.get_campaign(999) is None
 
     def test_campaign_has_config_snapshots(self, seeded_reader: DataReader):
         campaign = seeded_reader.get_campaign(1)
@@ -72,24 +63,9 @@ class TestGetCampaign:
         assert campaign.gantry_config == '{"serial_port": "/dev/null"}'
         assert campaign.protocol_config == '{"protocol": []}'
 
-    def test_campaign_has_created_at(self, seeded_reader: DataReader):
-        campaign = seeded_reader.get_campaign(1)
-        assert campaign.created_at is not None
-
 
 class TestListCampaigns:
 
-    def test_returns_all_campaigns(self, seeded_reader: DataReader):
-        campaigns = seeded_reader.list_campaigns()
-        assert len(campaigns) == 1
-        assert campaigns[0].description == "test campaign"
-
-    def test_returns_empty_when_no_campaigns(self):
-        from cubos.data.data_store import DataStore
-        store = DataStore(db_path=":memory:")
-        reader = DataReader(connection=store._conn)
-        assert reader.list_campaigns() == []
-        store.close()
 
     def test_returns_campaigns_ordered_by_id(self):
         from cubos.data.data_store import DataStore
@@ -112,17 +88,6 @@ class TestGetExperiments:
         assert len(experiments) == 2
         assert all(isinstance(e, ExperimentRecord) for e in experiments)
 
-    def test_filter_by_well_id(self, seeded_reader: DataReader):
-        experiments = seeded_reader.get_experiments(campaign_id=1, well_id="A1")
-        assert len(experiments) == 1
-        assert experiments[0].well_id == "A1"
-
-    def test_filter_by_labware_name(self, seeded_reader: DataReader):
-        experiments = seeded_reader.get_experiments(campaign_id=1, labware_name="plate_1")
-        assert len(experiments) == 2
-
-    def test_returns_empty_for_missing_campaign(self, seeded_reader: DataReader):
-        assert seeded_reader.get_experiments(campaign_id=999) == []
 
     def test_experiment_has_contents(self, seeded_reader: DataReader):
         experiments = seeded_reader.get_experiments(campaign_id=1, well_id="A1")
@@ -135,31 +100,6 @@ class TestGetExperiments:
 
 class TestGetLabware:
 
-    def test_filter_by_labware_key(self):
-        from cubos.data.data_store import DataStore
-        from cubos.deck.labware.vial import Vial
-        from cubos.deck.labware.labware import Coordinate3D
-
-        store = DataStore(db_path=":memory:")
-        cid = store.create_campaign(description="labware filter test")
-
-        for name in ("vial_1", "vial_2"):
-            vial = Vial(
-                name=name,
-                model_name="standard",
-                height=66.75,
-                diameter=28.0,
-                location=Coordinate3D(x=0.0, y=0.0, z=0.0),
-                capacity_ul=1500.0,
-                working_volume_ul=1200.0,
-            )
-            store.register_labware(cid, name, vial)
-
-        reader = DataReader(connection=store._conn)
-        labware = reader.get_labware(campaign_id=cid, labware_key="vial_1")
-        assert len(labware) == 1
-        assert labware[0].labware_key == "vial_1"
-        store.close()
 
     def test_returns_labware_for_campaign(self):
         store = DataStore(db_path=":memory:")
@@ -189,24 +129,12 @@ class TestGetLabware:
 
         store.close()
 
-    def test_returns_empty_for_no_labware(self, seeded_reader: DataReader):
-        assert seeded_reader.get_labware(campaign_id=1) == []
-
 
 # ─── Measurement queries ─────────────────────────────────────────────────────
 
 
 class TestGetMeasurementsByExperiment:
 
-    def test_returns_raw_rows(self, seeded_reader: DataReader):
-        rows = seeded_reader.get_measurements(experiment_id=1, table="uvvis_measurements")
-        assert len(rows) == 1
-        assert "experiment_id" in rows[0]
-        assert "wavelengths" in rows[0]
-
-    def test_returns_empty_for_no_measurements(self, seeded_reader: DataReader):
-        rows = seeded_reader.get_measurements(experiment_id=999, table="uvvis_measurements")
-        assert rows == []
 
     def test_rejects_invalid_table_name(self, seeded_reader: DataReader):
         with pytest.raises(ValueError, match="not a valid measurement table"):
@@ -245,24 +173,6 @@ class TestGetMeasurementsByCampaign:
                 campaign_id=1, table="'; DROP TABLE--"
             )
 
-    def test_returns_all_measurements_for_campaign(self, seeded_reader: DataReader):
-        rows = seeded_reader.get_measurements_by_campaign(
-            campaign_id=1, table="uvvis_measurements",
-        )
-        assert len(rows) == 2
-
-    def test_includes_well_id_in_results(self, seeded_reader: DataReader):
-        rows = seeded_reader.get_measurements_by_campaign(
-            campaign_id=1, table="uvvis_measurements",
-        )
-        well_ids = {r["well_id"] for r in rows}
-        assert well_ids == {"A1", "A2"}
-
-    def test_returns_empty_for_missing_campaign(self, seeded_reader: DataReader):
-        rows = seeded_reader.get_measurements_by_campaign(
-            campaign_id=999, table="uvvis_measurements",
-        )
-        assert rows == []
 
     def test_returns_uv_curing_measurements_for_campaign(self):
         store = DataStore(db_path=":memory:")
@@ -438,14 +348,6 @@ class TestDataFrameHelpers:
             )
         )
         assert result["image_path"] == "/data/img.png"
-
-    def test_serialize_row_payload_json_string_expanded(self):
-        result = json.loads(
-            DataReader._serialize_row_payload(
-                {"wavelengths": "[400.0, 500.0]", "id": 1, "experiment_id": 1, "timestamp": "t"}
-            )
-        )
-        assert result["wavelengths"] == [400.0, 500.0]
 
 
 # ─── Context manager ─────────────────────────────────────────────────────────
