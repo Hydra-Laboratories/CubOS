@@ -200,6 +200,7 @@ export default function DemoPresentation() {
   const {
     devices: cameraDevices,
     deviceId: cameraDeviceId,
+    captureResolution,
     setDeviceId: setCameraDeviceId,
     stream: cameraStream,
     enabling: cameraEnabling,
@@ -400,8 +401,8 @@ export default function DemoPresentation() {
       {!campaignId && !presentation.isLoading && !cameraStream && <section className="demo-message"><strong>Choose a campaign</strong><span>The presentation is read-only and cannot move the robot.</span></section>}
       {cameraStream && !presentation.data && (
         <section className="demo-camera-preflight" aria-label="Camera preview before campaign">
-          <video ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
-          <div><strong>Camera ready</strong><span>{cameraRecording ? "Recording locally · waiting for the next campaign" : "Frame the shot, then record the next campaign."}</span></div>
+          <video className="demo-live-camera-preview" ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
+          <div><strong>Camera ready</strong><span>{cameraRecording ? "Recording locally · waiting for the next campaign" : "Frame the shot, then record the next campaign."}{captureResolution ? ` · ${captureResolution}` : ""}</span></div>
         </section>
       )}
 
@@ -409,7 +410,7 @@ export default function DemoPresentation() {
         <>
           <section className="demo-stage">
             <div className="demo-hardware" aria-label="Hardware camera recording">
-              {cameraStream ? <video ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
+              {cameraStream ? <video className="demo-live-camera-preview" ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
                 : videoUrl ? <video ref={videoRef} src={videoUrl} controls={!overlay} playsInline
                 onPlay={() => setLive(false)}
                 onTimeUpdate={(event) => {
@@ -436,6 +437,7 @@ export default function DemoPresentation() {
               )}
               <div className="demo-live-badge"><span />{cameraRecording ? "Recording locally" : presentation.data.status === "running" ? (live ? "Live campaign" : "Replay") : "Recorded run"}</div>
               {videoName && <div className="demo-video-name">{videoName}</div>}
+              {cameraStream && captureResolution && <div className="demo-video-name">{captureResolution}</div>}
               <div className="demo-now">
                 <small>Now</small>
                 <strong>{currentStatus}</strong>

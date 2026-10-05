@@ -43,6 +43,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   serverNowEstimateMs: number | null, serverClockObservedPerformanceMs: number | null) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
+  const [captureResolution, setCaptureResolution] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [enabling, setEnabling] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -94,13 +95,20 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     let nextStream: MediaStream | null = null;
     try {
       nextStream = await navigator.mediaDevices.getUserMedia({
-        video: selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : true,
+        video: {
+          ...(selectedDeviceId ? { deviceId: { exact: selectedDeviceId } } : {}),
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 },
+        },
         audio: false,
       });
       setStream((previous) => { stopMediaStream(previous); return nextStream; });
       await refreshDevices();
-      const actualDeviceId = nextStream.getVideoTracks()[0]?.getSettings().deviceId;
+      const settings = nextStream.getVideoTracks()[0]?.getSettings();
+      const actualDeviceId = settings?.deviceId;
       if (actualDeviceId) setDeviceId(actualDeviceId);
+      setCaptureResolution(settings?.width && settings?.height ? `${settings.width} × ${settings.height}` : null);
     } catch (reason) {
       stopMediaStream(nextStream);
       setError(`Camera unavailable: ${reason instanceof Error ? reason.message : String(reason)}`);
@@ -288,7 +296,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   }, [stream]);
 
   return {
-    devices, deviceId, setDeviceId, stream, enabling, recording, finalizing, recoverable, error,
+    devices, deviceId, setDeviceId, captureResolution, stream, enabling, recording, finalizing, recoverable, error,
     setPreviewElement, enableCamera, startRecording, stopRecording, downloadRecoverable, downloadRecoverableStill, discardRecoverable,
   };
 }

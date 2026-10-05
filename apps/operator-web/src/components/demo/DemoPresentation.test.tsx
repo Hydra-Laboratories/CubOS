@@ -43,7 +43,7 @@ describe("DemoPresentation", () => {
     const stop = vi.fn();
     const stream = {
       getTracks: () => [{ stop }],
-      getVideoTracks: () => [{ getSettings: () => ({ deviceId: "camera-1" }) }],
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId: "camera-1", width: 1920, height: 1080 }) }],
     } as unknown as MediaStream;
     let resolvePermission!: (value: MediaStream) => void;
     const getUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => { resolvePermission = resolve; }));
@@ -60,10 +60,15 @@ describe("DemoPresentation", () => {
     expect(waiting).toBeDisabled();
     fireEvent.click(waiting);
     expect(getUserMedia).toHaveBeenCalledOnce();
+    expect(getUserMedia).toHaveBeenCalledWith({
+      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
+      audio: false,
+    });
     resolvePermission(stream);
     const preview = await screen.findByRole("region", { name: "Camera preview before campaign" });
     expect(preview.querySelector("video")?.srcObject).toBe(stream);
     expect(screen.getByText("Camera ready")).toBeInTheDocument();
+    expect(screen.getByText(/1920 × 1080/)).toBeInTheDocument();
     view.unmount();
     expect(stop).toHaveBeenCalled();
   });
