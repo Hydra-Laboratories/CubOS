@@ -17,7 +17,7 @@ where it cannot shift.
    edits save to `cub_deck.yaml` in the config directory, and the file you
    picked is left untouched. The note under the dropdown says so.
 2. **New Labware.** Define a custom well plate, then calibrate and save it
-   using the same dialog. This replaces the old **+ Well Plate / + Vial** shortcuts.
+   using the same dialog. Use this dialog instead of separate labware shortcut buttons.
 3. **Calibrate labware.** Opens the labware calibration dialog, covered
    [below](#calibrate-labware-with-the-gantry). It is enabled once both a
    gantry and a deck are loaded and no protocol is running.
@@ -32,10 +32,14 @@ passed through unchanged when you save.
 
 ### Create custom labware
 
-Click **New Labware** beside **Calibrate labware** with a deck and gantry
-config loaded and no protocol running. This opens the same calibration
+Click **New Labware** beside **Calibrate labware** with a gantry config loaded and no protocol running. This opens the same calibration
 dialog as [Calibrate Labware with the Gantry](#calibrate-labware-with-the-gantry),
 starting on a **Define labware** step instead of **Select labware**.
+
+You can start with no deck files or a blank deck. After defining and calibrating
+the first plate, click **Add to deck**, enter a filename in the deck editor,
+and click **Save**. Until then, the new labware stays in your unsaved draft.
+When a saved deck is selected, the dialog saves its calibration directly.
 
 ![New Labware, Define labware step, annotated](../images/operator-ui/labware-new-1-define.webp)
 

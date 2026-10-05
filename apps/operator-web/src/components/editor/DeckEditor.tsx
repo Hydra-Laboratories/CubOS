@@ -39,42 +39,6 @@ interface Props {
   isRunning?: boolean;
 }
 
-// Calibration A2 must sit exactly one pitch from A1 along one axis
-// (loader validates the step magnitude against x_offset/y_offset).
-const EMPTY_TIP_RACK: TipRackConfig = {
-  type: "tip_rack",
-  name: "",
-  model_name: "tip_rack",
-  rows: 8,
-  columns: 12,
-  pickup_z: 43.0,
-  drop_z: 34.0,
-  tip_length: 59.3,
-  calibration: {
-    a1: { x: 100.0, y: 50.0 },
-    a2: { x: 109.0, y: 50.0 },
-  },
-  x_offset: 9.0,
-  y_offset: 9.0,
-};
-
-const EMPTY_TIP_DISPOSAL: TipDisposalConfig = {
-  type: "tip_disposal",
-  name: "",
-  model_name: "tip_disposal",
-  location: { x: 300.0, y: 120.0, z: 38.0 },
-  length: 198.0,
-  width: 62.0,
-  height: 30.0,
-};
-
-const ADDABLE_LABWARE = {
-  tip_rack: { label: "+ Tip Rack", prefix: "tiprack", template: EMPTY_TIP_RACK },
-  tip_disposal: { label: "+ Tip Disposal", prefix: "tipdisposal", template: EMPTY_TIP_DISPOSAL },
-} as const;
-
-type AddableLabwareType = keyof typeof ADDABLE_LABWARE;
-
 function buildDeckResponse(
   labware: Record<string, LabwareConfig>,
   filename: string,
@@ -158,37 +122,21 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
     syncViz(next);
   };
 
-  const addLabware = (type: AddableLabwareType) => {
-    const { prefix, template } = ADDABLE_LABWARE[type];
-    // Find the next free index rather than always using
-    // `count + 1` — removing an earlier item and adding a new one could
-    // otherwise land on a key that's still in use (e.g. tiprack_2),
-    // silently replacing that labware's calibration with a blank template.
-    let idx = Object.keys(labware).length + 1;
-    let key = `${prefix}_${idx}`;
-    while (labware[key]) {
-      idx += 1;
-      key = `${prefix}_${idx}`;
-    }
-    const created: LabwareConfig = structuredClone(template);
-    created.name = key; // Pre-fill with ID
-    const next = { ...labware, [key]: created };
-    setLabware(next);
-    syncViz(next);
-  };
-
   const hasItems = Object.keys(labware).length > 0;
   const valid = hasItems && isValid(labware);
   const canSave = valid && (!!saveAs.trim() || !!selectedFile) && !saving;
-  const canCalibrateLabware = !!deck && !!gantry && !isRunning;
+  const canCreateLabware = !!gantry && !isRunning;
+  const canCalibrateLabware = hasItems && canCreateLabware;
   // The modal calibrates what the editor currently shows (including unsaved
   // edits), so build its deck view from the local labware state.
-  const calibrationDeck: DeckResponse | null = deck
-    ? { ...deck, labware: Object.entries(labware).map(([key, config]) => ({ key, config, wells: null })) }
-    : null;
+  const calibrationDeck = buildDeckResponse(labware, selectedFile ?? "unsaved", deck);
 
   const handleCalibrationSave = async (filename: string, body: DeckConfig) => {
-    await Promise.resolve(onSave(filename, body));
+    if (selectedFile) {
+      await Promise.resolve(onSave(filename, body));
+    } else {
+      syncViz(body.labware);
+    }
     setLabware(body.labware);
     setSaveError(null);
   };
@@ -252,26 +200,19 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
       />
 
       <div style={{ display: "flex", gap: 8, margin: "12px 0", flexWrap: "wrap" }}>
-        {(Object.keys(ADDABLE_LABWARE) as AddableLabwareType[]).map((type) => (
-          <button key={type} onClick={() => addLabware(type)} style={addBtnStyle}>
-            {ADDABLE_LABWARE[type].label}
-          </button>
-        ))}
         <button
           onClick={() => { setCalibrationMode("new"); setCalibrateOpen(true); }}
-          disabled={!canCalibrateLabware}
+          disabled={!canCreateLabware}
           style={{
             ...addBtnStyle,
-            opacity: canCalibrateLabware ? 1 : 0.45,
-            cursor: canCalibrateLabware ? "pointer" : "not-allowed",
+            opacity: canCreateLabware ? 1 : 0.45,
+            cursor: canCreateLabware ? "pointer" : "not-allowed",
           }}
-          title={canCalibrateLabware
+          title={canCreateLabware
             ? "Create and calibrate new labware"
             : isRunning
               ? "Protocol running"
-              : !deck
-                ? "Load a deck config first"
-                : "Load a gantry config first"}
+              : "Load a gantry config first"}
         >
           New Labware
         </button>
@@ -287,8 +228,8 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
             ? "Open labware calibration"
             : isRunning
               ? "Protocol running"
-              : !deck
-                ? "Load a deck config first"
+              : !hasItems
+                ? "Add labware first"
                 : "Load a gantry config first"}
         >
           Calibrate labware
@@ -378,6 +319,7 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
         position={position}
         onSaveDeck={handleCalibrationSave}
         initialMode={calibrationMode}
+        saveToFile={!!selectedFile}
       />
     </div>
   );
@@ -397,7 +339,7 @@ function WellPlateFields({ entry, onChange, parentKey }: { entry: WellPlateConfi
         <NumberField id={`${parentKey}-height`} name={`${parentKey}_height`} label="Height (mm)" value={entry.height} onChange={(v) => onChange({ ...entry, height: v })} />
       </div>
       <CoordinateField id={`${parentKey}-a1`} name={`${parentKey}_a1`} label="Calibration A1" value={a1} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a1: v } })} required />
-      <CoordinateField id={`${parentKey}-a2`} name={`${parentKey}_a2`} label="Calibration A2" value={entry.calibration.a2} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a2: v } })} required />
+      <CoordinateField id={`${parentKey}-a2`} name={`${parentKey}_a2`} label="Calibration A2" value={{ ...toCoordinate3D(entry.calibration.a2), z: entry.calibration.a2?.z ?? a1.z }} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a2: v } })} required />
       <div style={{ display: "flex", gap: 8 }}>
         <NumberField id={`${parentKey}-xoffset`} name={`${parentKey}_xoffset`} label="Well pitch X (mm)" value={entry.x_offset} onChange={(v) => onChange({ ...entry, x_offset: v })} required />
         <NumberField id={`${parentKey}-yoffset`} name={`${parentKey}_yoffset`} label="Well pitch Y (mm)" value={entry.y_offset} onChange={(v) => onChange({ ...entry, y_offset: v })} required />
@@ -491,7 +433,7 @@ function VialGridFields({ entry, onChange, parentKey }: { entry: VialGridConfig;
         <NumberField id={`${parentKey}-cols`} name={`${parentKey}_cols`} label="Columns" value={entry.columns} step={1} onChange={(v) => onChange({ ...entry, columns: v })} required />
       </div>
       <CoordinateField id={`${parentKey}-a1`} name={`${parentKey}_a1`} label="Calibration A1 (vial rim)" value={a1} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a1: v } })} required />
-      <CoordinateField id={`${parentKey}-a2`} name={`${parentKey}_a2`} label="Calibration A2" value={entry.calibration.a2} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a2: v } })} required />
+      <CoordinateField id={`${parentKey}-a2`} name={`${parentKey}_a2`} label="Calibration A2" value={{ ...toCoordinate3D(entry.calibration.a2), z: entry.calibration.a2?.z ?? a1.z }} onChange={(v) => onChange({ ...entry, calibration: { ...entry.calibration, a2: v } })} required />
       <div style={{ display: "flex", gap: 8 }}>
         <NumberField id={`${parentKey}-xoffset`} name={`${parentKey}_xoffset`} label="Vial pitch A1->A2 (mm)" value={entry.x_offset} onChange={(v) => onChange({ ...entry, x_offset: v })} required />
         <NumberField id={`${parentKey}-yoffset`} name={`${parentKey}_yoffset`} label="Row pitch (mm)" value={entry.y_offset} onChange={(v) => onChange({ ...entry, y_offset: v })} required />
