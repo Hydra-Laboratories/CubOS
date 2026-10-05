@@ -2,6 +2,7 @@ import React, { useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CampaignPanel from "./components/campaigns/CampaignPanel";
 import DemoPresentation from "./components/demo/DemoPresentation";
+import OvernightQueuePanel from "./components/overnight/OvernightQueuePanel";
 import { campaignApi } from "./components/campaigns/api";
 import AppLayout from "./components/layout/AppLayout";
 import DeckVisualization from "./components/deck/DeckVisualization";
@@ -106,7 +107,7 @@ type SavedMark = { filename: string; at: Date } | null;
 
 function OperatorApp() {
   const qc = useQueryClient();
-  const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
+  const [activeView, setActiveView] = useState<"Workflow" | "Overnight" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
   const [stationOpen, setStationOpen] = useState(true);
   const [uiTheme, setUiTheme] = useState<"light" | "dark">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
@@ -731,6 +732,7 @@ function OperatorApp() {
         {(
           [
             "Workflow",
+            "Overnight",
             // Only offered once a run exists — an empty run view is a dead
             // tab, and the run is what the operator navigates back to.
             ...(activeRunId ? (["Run"] as const) : []),
@@ -1086,6 +1088,7 @@ function OperatorApp() {
           disabledReason={unsavedConfigs.length ? `Save ${unsavedConfigs.join(", ")} changes before starting a campaign.` : null}
           onRunSelected={(runId) => { setActiveRunId(runId); setActiveView("Run"); }} />
       </div>}
+      {activeView === "Overnight" && <OvernightQueuePanel />}
       {/* The persistent right column already carries the live deck view and
           gantry readout, so the run mode only needs to own the left region. */}
       {activeView === "Run" && activeRunId && (
