@@ -44,6 +44,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [enabling, setEnabling] = useState(false);
   const [recording, setRecording] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [recoverable, setRecoverable] = useState<RecordingManifest[]>([]);
@@ -83,10 +84,12 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   }, []);
 
   const enableCamera = useCallback(async (selectedDeviceId = deviceId) => {
+    if (enabling) return;
     if (!globalThis.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setError("Camera access requires a secure browser origin. Open CubOS through an SSH tunnel at http://localhost:8742; direct Pi HTTP addresses cannot access the Mac camera.");
       return;
     }
+    setEnabling(true);
     setError(null);
     let nextStream: MediaStream | null = null;
     try {
@@ -101,8 +104,10 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     } catch (reason) {
       stopMediaStream(nextStream);
       setError(`Camera unavailable: ${reason instanceof Error ? reason.message : String(reason)}`);
+    } finally {
+      setEnabling(false);
     }
-  }, [deviceId, refreshDevices]);
+  }, [deviceId, enabling, refreshDevices]);
 
   const startRecording = useCallback(() => {
     if (finalizing) return;
@@ -283,7 +288,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   }, [stream]);
 
   return {
-    devices, deviceId, setDeviceId, stream, recording, finalizing, recoverable, error,
+    devices, deviceId, setDeviceId, stream, enabling, recording, finalizing, recoverable, error,
     setPreviewElement, enableCamera, startRecording, stopRecording, downloadRecoverable, downloadRecoverableStill, discardRecoverable,
   };
 }

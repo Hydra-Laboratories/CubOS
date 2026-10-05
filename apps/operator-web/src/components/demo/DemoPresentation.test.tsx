@@ -38,6 +38,36 @@ afterEach(() => {
 });
 
 describe("DemoPresentation", () => {
+  it("previews the Mac camera before a campaign exists and blocks duplicate permission requests", async () => {
+    window.history.replaceState(null, "", "/?view=demo");
+    const stop = vi.fn();
+    const stream = {
+      getTracks: () => [{ stop }],
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId: "camera-1" }) }],
+    } as unknown as MediaStream;
+    let resolvePermission!: (value: MediaStream) => void;
+    const getUserMedia = vi.fn(() => new Promise<MediaStream>((resolve) => { resolvePermission = resolve; }));
+    Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia,
+      enumerateDevices: vi.fn().mockResolvedValue([{ kind: "videoinput", deviceId: "camera-1", label: "Desk camera" }]),
+    } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+    const view = renderDemo();
+    const enable = await screen.findByRole("button", { name: "Enable Mac camera" });
+    fireEvent.click(enable);
+    const waiting = screen.getByRole("button", { name: "Waiting for camera permission…" });
+    expect(waiting).toBeDisabled();
+    fireEvent.click(waiting);
+    expect(getUserMedia).toHaveBeenCalledOnce();
+    resolvePermission(stream);
+    const preview = await screen.findByRole("region", { name: "Camera preview before campaign" });
+    expect(preview.querySelector("video")?.srcObject).toBe(stream);
+    expect(screen.getByText("Camera ready")).toBeInTheDocument();
+    view.unmount();
+    expect(stop).toHaveBeenCalled();
+  });
+
   it("closes the old camera source when the operator selects another camera", async () => {
     const firstStop = vi.fn();
     const secondStop = vi.fn();

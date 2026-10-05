@@ -202,6 +202,7 @@ export default function DemoPresentation() {
     deviceId: cameraDeviceId,
     setDeviceId: setCameraDeviceId,
     stream: cameraStream,
+    enabling: cameraEnabling,
     recording: cameraRecording,
     finalizing: cameraFinalizing,
     recoverable: recoverableRecordings,
@@ -340,11 +341,13 @@ export default function DemoPresentation() {
           </label>
           <label className="demo-file-button">Add camera recording<input type="file" accept="video/*" onChange={(event) => void chooseVideo(event.target.files?.[0])} /></label>
           {!cameraStream ? (
-            <button type="button" onClick={() => void enableCamera()}>Enable Mac camera</button>
+            <button type="button" disabled={cameraEnabling} onClick={() => void enableCamera()}>
+              {cameraEnabling ? "Waiting for camera permission…" : "Enable Mac camera"}
+            </button>
           ) : (
             <>
               <label>Camera
-                <select value={cameraDeviceId} onChange={(event) => {
+                <select value={cameraDeviceId} disabled={cameraRecording || cameraFinalizing} onChange={(event) => {
                   setCameraDeviceId(event.target.value);
                   void enableCamera(event.target.value);
                 }}>
@@ -392,9 +395,15 @@ export default function DemoPresentation() {
         </header>
       )}
 
-      {presentation.isLoading && <section className="demo-message"><strong>Loading campaign presentation</strong><span>Collecting the timeline and measured well images.</span></section>}
+      {presentation.isLoading && !cameraStream && <section className="demo-message"><strong>Loading campaign presentation</strong><span>Collecting the timeline and measured well images.</span></section>}
       {presentation.isError && <section className="demo-message demo-message--error"><strong>Presentation unavailable</strong><span>{presentation.error instanceof Error ? presentation.error.message : String(presentation.error)}</span></section>}
-      {!campaignId && !presentation.isLoading && <section className="demo-message"><strong>Choose a campaign</strong><span>The presentation is read-only and cannot move the robot.</span></section>}
+      {!campaignId && !presentation.isLoading && !cameraStream && <section className="demo-message"><strong>Choose a campaign</strong><span>The presentation is read-only and cannot move the robot.</span></section>}
+      {cameraStream && !presentation.data && (
+        <section className="demo-camera-preflight" aria-label="Camera preview before campaign">
+          <video ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
+          <div><strong>Camera ready</strong><span>{cameraRecording ? "Recording locally · waiting for the next campaign" : "Frame the shot, then record the next campaign."}</span></div>
+        </section>
+      )}
 
       {presentation.data && replay && (
         <>
