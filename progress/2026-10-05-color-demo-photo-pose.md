@@ -24,3 +24,11 @@ Add an optional saved color-campaign end-of-sample carriage pose. Protocol gener
 - Saved camera mount X -21.63, Y 18.305, depth -87.0 resolves the carriage pose to camera position `[222.959, 162.305, 181.601]`; offline validation reconstructed the exact carriage endpoint and passed 32 collision-aware plans.
 - `camera-only-a1-alignment-check.yaml` contains only a native camera move and color measurement at `plate.A1`; offline validation passed one collision-aware plan. It was not executed.
 - Run status remained inactive and state 10 retained full 4 mL stocks, empty A4-A11 candidates, zero pending operations, and zero reconciliation items.
+
+## Final deployed readiness
+
+- Pi deployment completed at commit `91c7cdcf`, including the backend photo-pose/event contract and frontend recording fallback. Deployment backups were preserved by the deployment workflow.
+- In Operator on localhost, the Oct. 5 preset was loaded, state 10 was bound, and the final UI-generated protocol `ade_color_matching_7caacd83.yaml` was built, validated, and saved. Read-only tail inspection confirmed the photo move uses `[222.959, 162.305, 181.601]`, which resolves to carriage pose `[244.589, 144.0, 94.601]`, followed by a two-second settle and two-second capture hold for A4.
+- Brave at `http://localhost:8742/?view=demo` displayed the MX Brio whole frame at 1920x1080. A short local Record next attempt / Stop test saved `Downloads/cubos-unassociated-campaign-2026-10-05T21-39-09.352Z.webm` (3,585,600 bytes) and its 490-byte sync JSON. Saved-recording recovery showed one recording.
+- Screenshot evidence: `outputs/color-demo-2026-10-05/live-stream-ready.png` and `outputs/color-demo-2026-10-05/photo-campaign-ready.jpg`.
+- No physical protocol was started. `camera-only-a1-alignment-check.yaml` remains an offline-validated optional operator physical test.
