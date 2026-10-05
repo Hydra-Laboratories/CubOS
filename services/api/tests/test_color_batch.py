@@ -5,6 +5,7 @@ import yaml
 
 from cubos_api.services.color_batch import compile_color_trial_batch
 from cubos_api.services.color_campaign import build_color_campaign
+from cubos_api.services.campaign_manager import CampaignManager
 from tests.test_color_campaign import SOURCE_PROTOCOL, SOURCE_PROTOCOL_WATER, gantry_config, setup
 
 
@@ -37,6 +38,69 @@ def test_legacy_batch_compile_shares_one_tip_per_color_and_one_mix_tip_per_sampl
     assert len(compiled.objective_paths) == 6
     assert len(compiled.sample_map) == 6
     assert compiled.objective_paths[-1].endswith(".delta_e_00")
+
+
+def test_eight_sample_batch_uses_eleven_tips_and_maps_all_objectives(tmp_path: Path):
+    spec = build_color_campaign(
+        setup(
+            batch_size=8,
+            candidate_wells=[f"plate.B{index}" for index in range(1, 9)],
+            photo_position=(244.589, 144.0, 94.601),
+        ),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+        gantry_config=gantry_config(),
+    )
+    base_protocol = (tmp_path / spec.protocol_file).read_text()
+    parameter_sets = [
+        {"red_ul": 200.0, "yellow_ul": 50.0, "blue_ul": 50.0},
+        {"red_ul": 50.0, "yellow_ul": 200.0, "blue_ul": 50.0},
+        {"red_ul": 50.0, "yellow_ul": 50.0, "blue_ul": 200.0},
+        {"red_ul": 125.0, "yellow_ul": 125.0, "blue_ul": 50.0},
+        {"red_ul": 125.0, "yellow_ul": 50.0, "blue_ul": 125.0},
+        {"red_ul": 50.0, "yellow_ul": 125.0, "blue_ul": 125.0},
+        {"red_ul": 150.0, "yellow_ul": 100.0, "blue_ul": 50.0},
+        {"red_ul": 100.0, "yellow_ul": 150.0, "blue_ul": 50.0},
+    ]
+
+    compiled = compile_color_trial_batch(base_protocol, spec, parameter_sets, 0)
+    steps = yaml.safe_load(compiled.protocol_yaml)["protocol"]
+    commands = _commands(steps)
+
+    assert commands.count("pick_up_tip") == 11
+    assert commands.count("mix") == 8
+    assert commands.count("measure_color") == 8
+    assert commands.count("photo_pause") == 8
+    assert compiled.objective_paths == tuple(
+        f"{index}.delta_e_00" for index in (34, 41, 48, 55, 62, 69, 76, 83)
+    )
+    assert [index for index, command in enumerate(commands) if command == "photo_pause"] == [
+        36, 43, 50, 57, 64, 71, 78, 85,
+    ]
+    assert [entry["candidate_well"] for entry in compiled.sample_map] == [
+        f"plate.B{index}" for index in range(1, 9)
+    ]
+
+
+def test_first_eight_sample_batch_uses_three_seeds_then_five_no_feedback_proposals(tmp_path: Path):
+    spec = build_color_campaign(
+        setup(batch_size=8, candidate_wells=[f"plate.B{index}" for index in range(1, 9)]),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+    )
+    seeds = spec.optimizer.initial_points[:3]
+    spec = spec.model_copy(deep=True)
+    spec.optimizer.initial_trials = 3
+    spec.optimizer.initial_points = seeds
+    spec.stop.max_trials = 8
+    proposals = []
+    for _ in range(8):
+        proposal = CampaignManager._suggest(spec, [], exclude_points=proposals)
+        proposals.append(proposal)
+
+    assert proposals[:3] == seeds
+    assert len({tuple(sorted(proposal.items())) for proposal in proposals}) == 8
+    assert all(abs(sum(proposal.values()) - 300.0) < 1e-9 for proposal in proposals)
 
 
 def test_photo_pose_batch_keeps_one_measurement_objective_per_sample(tmp_path: Path):

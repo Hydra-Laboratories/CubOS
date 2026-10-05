@@ -631,8 +631,8 @@ export default function CampaignPanel(props: CampaignPanelProps) {
     ? `${String(sourceMix.args.volume_ul ?? "?")} µL · ${String(sourceMix.args.cycles ?? "?")} cycles · height ${String(sourceMix.args.height ?? "?")} mm`
     : "not loaded";
   const sourceProtocolMismatch = Boolean(sourceProtocolFile && protocolFile && sourceProtocolFile !== protocolFile);
-  const batchError = !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 6
-    ? "Samples per batch must be a whole number from 1 to 6."
+  const batchError = !Number.isInteger(batchSize) || batchSize < 1 || batchSize > 8
+    ? "Samples per batch must be a whole number from 1 to 8."
     : candidateCount > 0 && batchSize > candidateCount
       ? `Samples per batch (${batchSize}) cannot exceed selected candidate wells (${candidateCount}).`
       : null;
@@ -1445,7 +1445,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         </div>
         <div className="campaign-fields campaign-color-fields">
           <label className="campaign-field">Source protocol template<input aria-label="Color source protocol template" value={sourceProtocolFile} readOnly placeholder="Select protocol 03 above" /></label>
-          <label className="campaign-field">Samples per batch<input aria-label="Color samples per batch" type="number" min="1" max="6" step="1" value={batchSize} onChange={(event) => { setBatchSize(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
+          <label className="campaign-field">Samples per batch<input aria-label="Color samples per batch" type="number" min="1" max="8" step="1" value={batchSize} onChange={(event) => { setBatchSize(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Red stock<input aria-label="Red stock" value={redSource} onChange={(event) => { setRedSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Yellow stock<input aria-label="Yellow stock" value={yellowSource} onChange={(event) => { setYellowSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Blue stock<input aria-label="Blue stock" value={blueSource} onChange={(event) => { setBlueSource(event.target.value); invalidateBuiltCampaign(); }} /></label>

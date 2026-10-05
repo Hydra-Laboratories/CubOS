@@ -91,7 +91,7 @@ def compile_color_trial_batch(
     parameter_sets: list[dict[str, float]],
     start_index: int,
 ) -> BatchCompilation:
-    """Compile up to six samples with one noncontact tip per shared component."""
+    """Compile up to eight samples with one noncontact tip per shared component."""
     # TODO(iter): test strict template rejection, partial batches, and exact
     # source/mix settings after the operator's offline batch review.
     if spec.batch_size <= 1:

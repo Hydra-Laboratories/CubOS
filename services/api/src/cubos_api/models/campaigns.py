@@ -78,7 +78,7 @@ class CampaignSpec(CampaignModel):
     sum_constraint: SumConstraint | None = None
     mock_mode: bool = False
     fluid_state_id: int | None = Field(default=None, gt=0)
-    batch_size: int = Field(default=1, ge=1, le=6)
+    batch_size: int = Field(default=1, ge=1, le=8)
     source_protocol_file: str | None = Field(default=None, min_length=1, max_length=255)
     target_mode: Literal["camera", "rgb"] = "camera"
     target_rgb: tuple[float, float, float] | None = None
@@ -149,10 +149,10 @@ class PendingBatch(CampaignModel):
     """Exact compiled batch retained while inventory is being replenished."""
 
     batch_index: int = Field(ge=1)
-    parameters: list[dict[str, float]] = Field(min_length=1, max_length=6)
+    parameters: list[dict[str, float]] = Field(min_length=1, max_length=8)
     protocol_yaml: str = Field(min_length=1)
-    objective_paths: list[str] = Field(min_length=1, max_length=6)
-    sample_map: list[dict[str, Any]] = Field(min_length=1, max_length=6)
+    objective_paths: list[str] = Field(min_length=1, max_length=8)
+    sample_map: list[dict[str, Any]] = Field(min_length=1, max_length=8)
     run_id: str | None = None
 
 
@@ -198,7 +198,7 @@ class ColorCampaignSetup(CampaignModel):
     gantry_file: str = Field(min_length=1, max_length=255)
     deck_file: str = Field(min_length=1, max_length=255)
     source_protocol_file: str = Field(min_length=1, max_length=255)
-    batch_size: int = Field(default=1, ge=1, le=6)
+    batch_size: int = Field(default=1, ge=1, le=8)
     target_mode: Literal["camera", "rgb"] = "camera"
     target_run_id: str | None = Field(default=None, min_length=1, max_length=160)
     target_analysis_revision: int | None = Field(default=None, ge=0)
@@ -368,7 +368,7 @@ class CampaignStateBinding(CampaignModel):
 
 class ColorCampaignPresetDraft(CampaignModel):
     source_protocol_file: str | None = Field(default=None, min_length=1, max_length=255)
-    batch_size: int = Field(default=1, ge=1, le=6)
+    batch_size: int = Field(default=1, ge=1, le=8)
     target_mode: Literal["camera", "rgb"] = "camera"
     target_well: str = Field(default="plate.A1", min_length=1, max_length=160)
     target_rgb: tuple[float, float, float] | None = None
