@@ -234,7 +234,10 @@ class OvernightQueueManager:
                 record = OvernightQueueRecord.model_validate_json(path.read_text())
                 if record.state != "prepared":
                     raise RunConflictError("Only a prepared overnight queue can be started")
-                self._check_queue_inventory([job.color_setup for job in record.jobs])
+                self._check_queue_inventory(
+                    [job.color_setup for job in record.jobs],
+                    deck_path=self._directory(queue_id) / "job-1" / "deck.yaml",
+                )
                 for candidate in self.base.glob("*/queue.json"):
                     other = OvernightQueueRecord.model_validate_json(candidate.read_text())
                     if other.queue_id != queue_id and other.state == "running":
@@ -286,11 +289,11 @@ class OvernightQueueManager:
             self.campaigns.control(active_campaign_id, "cancel")
         return self.get(queue_id)
 
-    def _check_queue_inventory(self, setups) -> None:
+    def _check_queue_inventory(self, setups, *, deck_path: Path | None = None) -> None:
         first = setups[0]
         if first.fluid_state_id is None:
             return
-        deck_path = resolve_config_path(
+        deck_path = deck_path or resolve_config_path(
             self.settings.configs_dir, "deck", first.deck_file,
         )
         deck_yaml = deck_path.read_text(encoding="utf-8")
@@ -425,7 +428,7 @@ class OvernightQueueManager:
             {"red_ul": 25.0, "yellow_ul": 100.0, "blue_ul": 25.0},
             {"red_ul": 25.0, "yellow_ul": 25.0, "blue_ul": 100.0},
         ]
-        if spec.optimizer.initial_points != expected_seeds:
+        if spec.optimizer.initial_points[:3] != expected_seeds:
             raise ValueError(
                 "Overnight color campaigns require the three approved dominant seeds"
             )
@@ -434,6 +437,7 @@ class OvernightQueueManager:
             "optimizer": spec.optimizer.model_copy(update={
                 "seed": job.optimizer_seed,
                 "initial_trials": 3,
+                "initial_points": expected_seeds,
             }),
             "stop": spec.stop.model_copy(update={
                 "max_trials": 8,

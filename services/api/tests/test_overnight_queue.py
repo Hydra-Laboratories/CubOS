@@ -62,6 +62,9 @@ class _Optimizer:
         {"red_ul": 100.0, "yellow_ul": 25.0, "blue_ul": 25.0},
         {"red_ul": 25.0, "yellow_ul": 100.0, "blue_ul": 25.0},
         {"red_ul": 25.0, "yellow_ul": 25.0, "blue_ul": 100.0},
+        {"red_ul": 62.5, "yellow_ul": 62.5, "blue_ul": 25.0},
+        {"red_ul": 62.5, "yellow_ul": 25.0, "blue_ul": 62.5},
+        {"red_ul": 25.0, "yellow_ul": 62.5, "blue_ul": 62.5},
     ]
 
     def model_copy(self, update=None):
@@ -157,7 +160,7 @@ def _manager(tmp_path, campaigns, builder=lambda *_a, **_k: _Spec()):
     )
     manager._available_tips = lambda _setup: [f"tips.A{i}" for i in range(1, 97)]
     manager._validate_job_inputs = lambda _setup, _job_dir: None
-    manager._check_queue_inventory = lambda _setups: None
+    manager._check_queue_inventory = lambda _setups, **_kwargs: None
     return manager
 
 
@@ -200,6 +203,7 @@ def test_runs_five_campaigns_sequentially_and_trial_budget_is_success(tmp_path):
     assert [spec.optimizer.seed for spec in campaigns.started] == [
         20261005, 20261006, 20261007, 20261008, 20261009,
     ]
+    assert all(len(spec.optimizer.initial_points) == 3 for spec in campaigns.started)
 
 
 def test_allocates_tips_from_fresh_state_for_each_job(tmp_path):
