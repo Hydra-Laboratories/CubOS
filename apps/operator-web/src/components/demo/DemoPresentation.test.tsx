@@ -38,6 +38,37 @@ afterEach(() => {
 });
 
 describe("DemoPresentation", () => {
+  it("closes the old camera source when the operator selects another camera", async () => {
+    const firstStop = vi.fn();
+    const secondStop = vi.fn();
+    const makeStream = (deviceId: string, stop: () => void) => ({
+      getTracks: () => [{ stop }],
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId }) }],
+    }) as unknown as MediaStream;
+    const getUserMedia = vi.fn()
+      .mockResolvedValueOnce(makeStream("camera-1", firstStop))
+      .mockResolvedValueOnce(makeStream("camera-2", secondStop));
+    Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia,
+      enumerateDevices: vi.fn().mockResolvedValue([
+        { kind: "videoinput", deviceId: "camera-1", label: "Desk camera" },
+        { kind: "videoinput", deviceId: "camera-2", label: "Wide camera" },
+      ]),
+    } });
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => String(input).endsWith("/campaigns")
+      ? new Response("[]", { status: 200 })
+      : new Response(JSON.stringify(presentation), { status: 200 }));
+    const view = renderDemo();
+    await screen.findByRole("img", { name: "Best so far A4" });
+    fireEvent.click(screen.getByRole("button", { name: "Enable Mac camera" }));
+    const selector = await screen.findByLabelText("Camera");
+    fireEvent.change(selector, { target: { value: "camera-2" } });
+    await waitFor(() => expect(firstStop).toHaveBeenCalled());
+    view.unmount();
+    expect(secondStop).toHaveBeenCalled();
+  });
+
   it("renders the latest real result and exports the presentation bundle", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const path = String(input);

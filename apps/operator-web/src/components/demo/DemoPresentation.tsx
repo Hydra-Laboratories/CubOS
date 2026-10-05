@@ -3,6 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { demoApi } from "./api";
 import { sha256File } from "./hashFile";
 import { eventFootageTimeMs, eventIndexForFootage, friendlyEventLabel, visiblePresentation } from "./replay";
+import { useDemoRecording } from "./useDemoRecording";
+import { campaignToAssociate } from "./recording";
 import type { DemoAttempt, DemoColorMeasurement } from "./types";
 import "./DemoPresentation.css";
 
@@ -161,16 +163,54 @@ export default function DemoPresentation() {
   const [recordingIdentity, setRecordingIdentity] = useState<{ name: string; size: number; lastModified: number; sha256?: string } | null>(null);
   const [footageOffsetMs, setFootageOffsetMs] = useState(0);
   const [markerState, setMarkerState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [pollingUncertaintyMs, setPollingUncertaintyMs] = useState(500);
+  const [armedForCampaign, setArmedForCampaign] = useState(false);
+  const campaignBaselineRef = useRef(new Map<string, string | undefined>());
   const videoRef = useRef<HTMLVideoElement>(null);
   const markerClientIdRef = useRef<string | null>(null);
 
-  const campaigns = useQuery({ queryKey: ["demo-campaigns"], queryFn: demoApi.listCampaigns });
+  const campaigns = useQuery({
+    queryKey: ["demo-campaigns"],
+    queryFn: demoApi.listCampaigns,
+    refetchInterval: armedForCampaign ? 1000 : false,
+  });
   const presentation = useQuery({
     queryKey: ["campaign-presentation", campaignId],
-    queryFn: () => demoApi.presentation(campaignId),
+    queryFn: async () => {
+      const started = performance.now();
+      const result = await demoApi.presentation(campaignId);
+      setPollingUncertaintyMs(Math.max(1, (performance.now() - started) / 2));
+      return result;
+    },
     enabled: campaignId.length > 0,
     refetchInterval: (query) => live && (!query.state.data || query.state.data.status === "running") ? 1000 : false,
   });
+  const {
+    devices: cameraDevices,
+    deviceId: cameraDeviceId,
+    setDeviceId: setCameraDeviceId,
+    stream: cameraStream,
+    recording: cameraRecording,
+    error: cameraError,
+    setPreviewElement,
+    enableCamera,
+    startRecording,
+    stopRecording,
+  } = useDemoRecording(campaignId, presentation.data?.events ?? [], pollingUncertaintyMs);
+
+  useEffect(() => {
+    if (!armedForCampaign || !campaigns.data) return;
+    const candidate = campaignToAssociate(campaigns.data, campaignBaselineRef.current);
+    if (!candidate) return;
+    const value = String(candidate.campaign_id);
+    setCampaignId(value);
+    setLive(true);
+    setArmedForCampaign(false);
+    const params = new URLSearchParams(window.location.search);
+    params.set("view", "demo");
+    params.set("campaign", value);
+    window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+  }, [armedForCampaign, campaigns.data]);
 
   useEffect(() => {
     if (!overlay) return;
@@ -281,6 +321,32 @@ export default function DemoPresentation() {
             </select>
           </label>
           <label className="demo-file-button">Add camera recording<input type="file" accept="video/*" onChange={(event) => void chooseVideo(event.target.files?.[0])} /></label>
+          {!cameraStream ? (
+            <button type="button" onClick={() => void enableCamera()}>Enable Mac camera</button>
+          ) : (
+            <>
+              <label>Camera
+                <select value={cameraDeviceId} onChange={(event) => {
+                  setCameraDeviceId(event.target.value);
+                  void enableCamera(event.target.value);
+                }}>
+                  {cameraDevices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}
+                </select>
+              </label>
+              <button type="button" className={cameraRecording ? "demo-recording-stop" : ""}
+                onClick={cameraRecording ? stopRecording : () => {
+                  if (!campaignId) {
+                    campaignBaselineRef.current = new Map((campaigns.data ?? []).map((campaign) => [String(campaign.campaign_id), campaign.state]));
+                    setArmedForCampaign(true);
+                  }
+                  startRecording();
+                }}>
+                {cameraRecording ? "Stop & download" : campaignId ? "Start recording" : "Record next campaign"}
+              </button>
+            </>
+          )}
+          {cameraError && <span className="demo-video-error" role="alert">{cameraError}</span>}
+          {armedForCampaign && <span className="demo-arm-status" role="status">Recording · waiting for the next campaign</span>}
           {videoError && <span className="demo-video-error" role="alert">{videoError}</span>}
           <label>Video offset
             <input type="number" value={footageOffsetMs} step={100} onChange={(event) => setFootageOffsetMs(Number(event.target.value) || 0)} />
@@ -299,7 +365,8 @@ export default function DemoPresentation() {
         <>
           <section className="demo-stage">
             <div className="demo-hardware" aria-label="Hardware camera recording">
-              {videoUrl ? <video ref={videoRef} src={videoUrl} controls={!overlay} playsInline
+              {cameraStream ? <video ref={setPreviewElement} autoPlay muted playsInline aria-label="Live Mac camera preview" />
+                : videoUrl ? <video ref={videoRef} src={videoUrl} controls={!overlay} playsInline
                 onPlay={() => setLive(false)}
                 onTimeUpdate={(event) => {
                   if (!presentation.data || live) return;
@@ -323,7 +390,7 @@ export default function DemoPresentation() {
                   <small>The campaign results remain synchronized and exportable without video.</small>
                 </div>
               )}
-              <div className="demo-live-badge"><span />{presentation.data.status === "running" ? (live ? "Live campaign" : "Replay") : "Recorded run"}</div>
+              <div className="demo-live-badge"><span />{cameraRecording ? "Recording locally" : presentation.data.status === "running" ? (live ? "Live campaign" : "Replay") : "Recorded run"}</div>
               {videoName && <div className="demo-video-name">{videoName}</div>}
               <div className="demo-now">
                 <small>Now</small>
