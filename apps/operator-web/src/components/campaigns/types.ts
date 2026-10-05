@@ -63,6 +63,7 @@ export interface ColorCampaignSetup {
   candidate_wells: string[];
   camera_instrument: string; roi_fraction: number;
   image_height?: number | null;
+  photo_position?: [number, number, number] | null;
   expected_center?: [number, number] | null;
   expected_center_source?: "operator_selected" | null;
   reference_processing_profile_id?: string | null;
@@ -91,6 +92,7 @@ export interface ColorSetupDraft {
   camera_instrument: string;
   roi_fraction: number;
   image_height: number | null;
+  photo_position?: [number, number, number] | null;
 }
 
 export interface CampaignPreset {

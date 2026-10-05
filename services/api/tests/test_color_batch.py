@@ -5,7 +5,7 @@ import yaml
 
 from cubos_api.services.color_batch import compile_color_trial_batch
 from cubos_api.services.color_campaign import build_color_campaign
-from tests.test_color_campaign import SOURCE_PROTOCOL, SOURCE_PROTOCOL_WATER, setup
+from tests.test_color_campaign import SOURCE_PROTOCOL, SOURCE_PROTOCOL_WATER, gantry_config, setup
 
 
 def _commands(steps):
@@ -37,6 +37,29 @@ def test_legacy_batch_compile_shares_one_tip_per_color_and_one_mix_tip_per_sampl
     assert len(compiled.objective_paths) == 6
     assert len(compiled.sample_map) == 6
     assert compiled.objective_paths[-1].endswith(".delta_e_00")
+
+
+def test_photo_pose_batch_keeps_one_measurement_objective_per_sample(tmp_path: Path):
+    position = (244.589, 144.0, 94.601)
+    spec = build_color_campaign(
+        setup(batch_size=2, photo_position=position), tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+        gantry_config=gantry_config(),
+    )
+    base_protocol = (tmp_path / spec.protocol_file).read_text()
+    compiled = compile_color_trial_batch(base_protocol, spec, spec.optimizer.initial_points[:2], 0)
+    steps = yaml.safe_load(compiled.protocol_yaml)["protocol"]
+    commands = _commands(steps)
+
+    assert commands.count("measure_color") == 2
+    assert commands.count("photo_pause") == 2
+    assert [steps[int(path.split(".", 1)[0])] for path in compiled.objective_paths] == [
+        next(step for step in steps[:commands.index("photo_pause")] if "measure_color" in step),
+        [step for step in steps if "measure_color" in step][1],
+    ]
+    assert all(steps[index]["measure_color"] for index in [
+        int(path.split(".", 1)[0]) for path in compiled.objective_paths
+    ])
 
 
 def test_diluent_batch_compile_places_water_transfers_first_with_one_shared_tip(tmp_path: Path):

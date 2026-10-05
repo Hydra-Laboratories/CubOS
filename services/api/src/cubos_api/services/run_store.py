@@ -115,6 +115,7 @@ class RunStore:
         message: str,
         kind: str = "lifecycle",
         data: dict[str, Any] | None = None,
+        timestamp: float | None = None,
     ) -> RunEvent:
         path = self.run_dir(run_id) / "events.jsonl"
         # Sequence assignment and the append share one lock: the step
@@ -123,7 +124,7 @@ class RunStore:
         with self._sequence_lock:
             event = RunEvent(
                 sequence=self._next_sequence(run_id),
-                timestamp=time.time(),
+                timestamp=time.time() if timestamp is None else timestamp,
                 state=state,
                 message=message,
                 kind=kind,

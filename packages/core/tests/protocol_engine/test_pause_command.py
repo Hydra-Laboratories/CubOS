@@ -73,6 +73,35 @@ class TestPauseCommand:
             pause(ctx, seconds=0.0)
             mock_sleep.assert_called_once_with(0.0)
 
+    def test_photo_pause_emits_completion_after_sleep(self):
+        from cubos.protocol_engine.commands.pause import photo_pause
+
+        ctx = _make_context()
+        timeline = []
+        ctx.notify_step.side_effect = lambda *args, **kwargs: timeline.append((args, kwargs))
+        with patch(
+            "cubos.protocol_engine.commands.pause.time.sleep",
+            side_effect=lambda seconds: timeline.append(("sleep", seconds)),
+        ) as mock_sleep:
+            photo_pause(
+                ctx, settle_seconds=2.0, capture_hold_seconds=2.0, well="plate.A4",
+            )
+
+        assert mock_sleep.call_args_list == [((2.0,),), ((2.0,),)]
+        assert timeline == [
+            ("sleep", 2.0),
+            (("photo_pause_completed",), {
+                "seconds": 2.0,
+                "capture_hold_seconds": 2.0,
+                "well": "plate.A4",
+            }),
+            ("sleep", 2.0),
+        ]
+        ctx.notify_step.assert_called_once_with(
+            "photo_pause_completed", seconds=2.0, capture_hold_seconds=2.0,
+            well="plate.A4",
+        )
+
 
 # ─── Breakpoint command ──────────────────────────────────────────────────────
 

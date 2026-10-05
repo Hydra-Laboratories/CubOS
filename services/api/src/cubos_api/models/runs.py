@@ -54,7 +54,7 @@ class RunSubmission(BaseModel):
         return self
 
 
-RunEventKind = Literal["lifecycle", "step"]
+RunEventKind = Literal["lifecycle", "step", "photo_pause"]
 
 StepOutcome = Literal["started", "completed", "failed", "skipped"]
 

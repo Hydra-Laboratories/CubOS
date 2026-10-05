@@ -9,6 +9,7 @@ from pathlib import Path
 
 import yaml
 
+from cubos.gantry.gantry_config import GantryConfig
 from cubos.optimization import rgb_to_lab
 from cubos_api.models.campaigns import CampaignSpec, ColorCampaignSetup
 
@@ -166,6 +167,7 @@ def build_color_campaign(
     *,
     available_tip_positions: list[str] | None = None,
     source_protocol_yaml: str,
+    gantry_config: GantryConfig | None = None,
 ) -> CampaignSpec:
     """Write an immutable generated protocol and return its campaign spec."""
     if setup.target_mode == "camera":
@@ -299,6 +301,34 @@ def build_color_campaign(
             ),
         }},
     ))
+    if setup.photo_position is not None:
+        if gantry_config is None:
+            raise ValueError("photo_position requires the selected gantry configuration")
+        try:
+            camera_mount = gantry_config.instruments[setup.camera_instrument]
+        except KeyError as exc:
+            raise ValueError(
+                f"Photo pose camera {setup.camera_instrument!r} is not configured on the gantry"
+            ) from exc
+        carriage_x, carriage_y, carriage_z = setup.photo_position
+        if not gantry_config.working_volume.contains(carriage_x, carriage_y, carriage_z):
+            raise ValueError("photo_position is outside the gantry working volume")
+        camera_position = [
+            carriage_x + float(camera_mount.get("offset_x", 0.0)),
+            carriage_y + float(camera_mount.get("offset_y", 0.0)),
+            carriage_z - float(camera_mount.get("depth", 0.0)),
+        ]
+        steps.extend((
+            {"move": {
+                "instrument": setup.camera_instrument,
+                "position": camera_position,
+            }},
+            {"photo_pause": {
+                "settle_seconds": 2.0,
+                "capture_hold_seconds": 2.0,
+                "well": first_well,
+            }},
+        ))
     protocol = {"protocol": steps}
     filename = f"ade_color_matching_{uuid.uuid4().hex[:8]}.yaml"
 
@@ -309,15 +339,19 @@ def build_color_campaign(
     )
     move_index = mix_index + 2
     measure_index = move_index + 1
+    photo_pause_index = measure_index + 2 if setup.photo_position is not None else None
     mix_pickup_index = 3 * component_count
+    destination_indexes = [
+        *((index, "destination") for index in transfer_indexes),
+        (mix_index, "position"),
+        (move_index, "position"),
+        (measure_index, "position"),
+    ]
+    if photo_pause_index is not None:
+        destination_indexes.append((photo_pause_index, "well"))
     destination_bindings = [
         {"step_index": index, "argument": argument}
-        for index, argument in (
-            *((index, "destination") for index in transfer_indexes),
-            (mix_index, "position"),
-            (move_index, "position"),
-            (measure_index, "position"),
-        )
+        for index, argument in destination_indexes
     ]
     if has_diluent:
         water_max = _TOTAL_UL - 3 * setup.component_min_ul

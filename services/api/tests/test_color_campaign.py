@@ -4,6 +4,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from cubos.gantry.gantry_config import GantryConfig, GantryType, WorkingVolume
+
 from cubos_api.models.campaigns import (
     CampaignPresetDocument,
     ColorCampaignPresetDraft,
@@ -77,6 +79,17 @@ def candidate_wells(count: int) -> list[str]:
     return [well for well in wells if well != "plate.A1"][:count]
 
 
+def gantry_config() -> GantryConfig:
+    return GantryConfig(
+        serial_port="mock",
+        gantry_type=GantryType.CUB_XL,
+        factory_z_travel_mm=100.0,
+        working_volume=WorkingVolume(0.0, 300.0, 0.0, 180.0, 0.0, 94.601),
+        safe_z=94.601,
+        instruments={"camera": {"offset_x": 10.0, "offset_y": -4.0, "depth": 20.0}},
+    )
+
+
 def test_target_protocol_reads_selected_well_without_fluid_steps():
     document = yaml.safe_load(target_protocol("plate.C4", "camera", 0.45))
     assert document["protocol"] == [
@@ -108,6 +121,60 @@ def test_builder_writes_complete_protocol_and_campaign(tmp_path: Path):
     }
     assert spec.sequences[0].values == [f"plate.A{index}" for index in range(2, 8)]
     assert spec.sequences[1].values[:2] == ["tips.A1", "tips.A4"]
+
+
+def test_builder_appends_optional_photo_pose_without_shifting_objective(tmp_path: Path):
+    position = (244.589, 144.0, 94.601)
+    spec = build_color_campaign(
+        setup(photo_position=position), tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL.replace("'-20'", "'-40'"),
+        gantry_config=gantry_config(),
+    )
+    protocol = yaml.safe_load((tmp_path / spec.protocol_file).read_text())["protocol"]
+
+    assert protocol[1]["transfer"]["source_height"] == "-40"
+    assert protocol[8]["mix"]["height"] == -7
+    assert protocol[-2] == {"move": {
+        "instrument": "camera", "position": [254.589, 140.0, 74.601],
+    }}
+    mounted = gantry_config().instruments["camera"]
+    resolved_head = (
+        protocol[-2]["move"]["position"][0] - mounted["offset_x"],
+        protocol[-2]["move"]["position"][1] - mounted["offset_y"],
+        protocol[-2]["move"]["position"][2] + mounted["depth"],
+    )
+    assert resolved_head == position
+    assert protocol[-1] == {"photo_pause": {
+        "settle_seconds": 2.0, "capture_hold_seconds": 2.0, "well": "plate.A2",
+    }}
+    assert spec.objective.path == "11.delta_e_00"
+    candidate = next(sequence for sequence in spec.sequences if sequence.name == "candidate_well")
+    assert {binding.step_index for binding in candidate.bindings} == {1, 4, 7, 8, 10, 11, 13}
+
+
+def test_builder_rejects_photo_pose_outside_carriage_bounds(tmp_path: Path):
+    with pytest.raises(ValueError, match="outside the gantry working volume"):
+        build_color_campaign(
+            setup(photo_position=(301.0, 144.0, 94.601)),
+            tmp_path,
+            source_protocol_yaml=SOURCE_PROTOCOL,
+            gantry_config=gantry_config(),
+        )
+
+
+def test_photo_position_round_trips_through_setup_and_preset():
+    position = (244.589, 144.0, 94.601)
+    restored = ColorCampaignSetup.model_validate_json(
+        setup(photo_position=position).model_dump_json()
+    )
+    draft = ColorCampaignPresetDraft(
+        source_protocol_file="source.yaml",
+        candidate_wells=["plate.A4"],
+        photo_position=restored.photo_position,
+    )
+    assert ColorCampaignPresetDraft.model_validate_json(
+        draft.model_dump_json()
+    ).photo_position == position
 
 
 def test_builder_persists_validated_camera_target_provenance(tmp_path: Path):

@@ -33,6 +33,7 @@ _MIX_STEPS_LEGACY = (9, 10, 11, 12, 13)
 _DYE_STEPS_DILUENT = ((0, 1, 2), (3, 4, 5), (6, 7, 8), (9, 10, 11))
 _MIX_STEPS_DILUENT = (12, 13, 14, 15, 16)
 _MAX_COMPONENT_TRANSFER_UL = 300.0
+_PHOTO_TAIL = ("move", "photo_pause")
 
 
 @dataclass(frozen=True)
@@ -55,10 +56,10 @@ def _detect_layout(
     document = yaml.safe_load(protocol_yaml)
     steps = document.get("protocol") if isinstance(document, dict) else None
     commands = _commands(steps) if isinstance(steps, list) else ()
-    if commands == _BATCH_COMMANDS_DILUENT:
-        return _BATCH_COMMANDS_DILUENT, _DYE_STEPS_DILUENT, _MIX_STEPS_DILUENT
-    if commands == _BATCH_COMMANDS_LEGACY:
-        return _BATCH_COMMANDS_LEGACY, _DYE_STEPS_LEGACY, _MIX_STEPS_LEGACY
+    if commands in (_BATCH_COMMANDS_DILUENT, _BATCH_COMMANDS_DILUENT + _PHOTO_TAIL):
+        return commands, _DYE_STEPS_DILUENT, _MIX_STEPS_DILUENT
+    if commands in (_BATCH_COMMANDS_LEGACY, _BATCH_COMMANDS_LEGACY + _PHOTO_TAIL):
+        return commands, _DYE_STEPS_LEGACY, _MIX_STEPS_LEGACY
     raise ValueError(
         "Color batch template must use the explicit color-and-dedicated-mix "
         "workflow: three pickup/transfer/drop groups (legacy), or four groups "
@@ -179,9 +180,10 @@ def compile_color_trial_batch(
             )
         ):
             raise ValueError("Mix and color measurement must target the sample well")
-        for index in mix_steps:
+        sample_tail = mix_steps + tuple(range(mix_steps[-1] + 1, len(sample)))
+        for index in sample_tail:
             output.append(copy.deepcopy(sample[index]))
-        measurement_index = len(output) - 1
+        measurement_index = len(output) - len(sample_tail) + sample_tail.index(measure_index)
         objective_path = f"{measurement_index}.delta_e_00"
         objective_paths.append(objective_path)
         sample_map.append({

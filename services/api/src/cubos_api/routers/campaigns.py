@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 from cubos.gantry.session import GantryNotConnectedError, InterruptFeedHoldTimeoutError
+from cubos.gantry.loader import load_gantry_from_yaml
 from cubos.data import DataStore
 from cubos.optimization import analyze_color_image, rgb_to_lab
 from cubos.protocol_engine.commands.camera import default_images_dir
@@ -449,6 +450,12 @@ def prepare_color_campaign(body: ColorCampaignSetup):
             settings.configs_dir / "protocol",
             available_tip_positions=_available_campaign_tips(body),
             source_protocol_yaml=source_protocol_yaml,
+            gantry_config=(
+                load_gantry_from_yaml(
+                    resolve_config_path(settings.configs_dir, "gantry", body.gantry_file),
+                )
+                if body.photo_position is not None else None
+            ),
         )
     except HTTPException:
         raise

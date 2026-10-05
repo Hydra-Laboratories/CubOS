@@ -219,16 +219,24 @@ class ColorCampaignSetup(CampaignModel):
     expected_center: tuple[float, float] | None = None
     expected_center_source: Literal["operator_selected", "frame_center"] | None = None
     image_height: float | None = None
+    photo_position: tuple[float, float, float] | None = None
     fluid_state_id: int | None = Field(default=None, gt=0)
     mock_mode: bool = False
 
-    @field_validator("target_rgb", "target_lab", "expected_center", mode="before")
+    @field_validator("target_rgb", "target_lab", "expected_center", "photo_position", mode="before")
     @classmethod
     def accept_json_tuple(cls, value):
         # JSON has arrays rather than tuples. Normalize the browser payload before
         # strict validation while retaining a fixed-length tuple in the model.
         if isinstance(value, list):
             return tuple(value)
+        return value
+
+    @field_validator("photo_position")
+    @classmethod
+    def finite_photo_position(cls, value):
+        if value is not None and any(not math.isfinite(coordinate) for coordinate in value):
+            raise ValueError("photo_position coordinates must be finite")
         return value
 
     @model_validator(mode="after")
@@ -374,11 +382,19 @@ class ColorCampaignPresetDraft(CampaignModel):
     camera_instrument: str = Field(default="camera", min_length=1, max_length=80)
     roi_fraction: float = Field(default=0.5, gt=0, le=1)
     image_height: float | None = None
+    photo_position: tuple[float, float, float] | None = None
 
-    @field_validator("target_rgb", mode="before")
+    @field_validator("target_rgb", "photo_position", mode="before")
     @classmethod
     def accept_json_rgb_tuple(cls, value):
         return tuple(value) if isinstance(value, list) else value
+
+    @field_validator("photo_position")
+    @classmethod
+    def finite_photo_position(cls, value):
+        if value is not None and any(not math.isfinite(coordinate) for coordinate in value):
+            raise ValueError("photo_position coordinates must be finite")
+        return value
 
     @field_validator("candidate_wells")
     @classmethod

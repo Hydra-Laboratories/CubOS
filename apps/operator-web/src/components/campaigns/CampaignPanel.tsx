@@ -571,6 +571,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
   const [cameraInstrument, setCameraInstrument] = useState(restoredPreset?.cameraInstrument ?? restoredReview?.cameraInstrument ?? "camera");
   const [roiFraction, setRoiFraction] = useState(restoredPreset?.roiFraction ?? restoredReview?.roiFraction ?? 0.5);
   const [captureImageHeight, setCaptureImageHeight] = useState(restoredPreset?.captureImageHeight ?? restoredReview?.captureImageHeight ?? "");
+  const [photoPosition, setPhotoPosition] = useState<[number, number, number] | null>(null);
   const [sourceProtocolFile, setSourceProtocolFile] = useState(restoredSourceProtocol);
   const [batchSize, setBatchSize] = useState(restoredBatchSize);
   const [targetLab, setTargetLab] = useState<number[] | null>(() => !initialNeedsFreshTarget && restoredReview?.measurement.measurement_status === "accepted" ? numericTriplet(restoredReview.measurement.lab) : null);
@@ -878,6 +879,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
         image_height: imageHeight,
+        photo_position: photoPosition,
       });
       setSelectedPreset(response.filename);
       setPresetFilename(response.filename);
@@ -917,9 +919,11 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         setCameraInstrument(loaded.color_setup.camera_instrument);
         setRoiFraction(loaded.color_setup.roi_fraction);
         setCaptureImageHeight(loaded.color_setup.image_height === null ? "" : String(loaded.color_setup.image_height));
+        setPhotoPosition(loaded.color_setup.photo_position ?? null);
         setTargetMode(loaded.color_setup.target_mode ?? loaded.spec.target_mode ?? "camera");
         setTargetRgb(loaded.color_setup.target_rgb ?? loaded.spec.target_rgb ?? null);
       } else {
+        setPhotoPosition(null);
         setTargetMode(loaded.spec.target_mode ?? "camera");
         setTargetRgb(loaded.spec.target_rgb ?? null);
       }
@@ -1146,6 +1150,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
         image_height: imageHeight,
+        photo_position: photoPosition,
         expected_center: targetMode === "camera" && targetExpectedCenter ? [targetExpectedCenter.x, targetExpectedCenter.y] : null,
         expected_center_source: targetMode === "camera" ? "operator_selected" : null,
         reference_processing_profile_id: targetMode === "camera" ? profileId : null,

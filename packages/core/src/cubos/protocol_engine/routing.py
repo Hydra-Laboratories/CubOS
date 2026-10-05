@@ -30,7 +30,7 @@ from .errors import ProtocolExecutionError
 
 SUPPORTED_PLANNED_COMMANDS = frozenset({
     "move", "pick_up_tip", "transfer", "mix", "drop_tip", "capture",
-    "measure_color",
+    "measure_color", "photo_pause",
 })
 
 
@@ -249,6 +249,8 @@ class RoutingSession:
                 value = PreparedMotionStep(command, (plan,), {})
                 current_target = None
                 current_instrument = args["instrument"]
+            elif command == "photo_pause":
+                value = PreparedMotionStep(command, (), {})
             elif command == "pick_up_tip":
                 value, current, state, current_target, consumed = self._plan_pickup(
                     current,
