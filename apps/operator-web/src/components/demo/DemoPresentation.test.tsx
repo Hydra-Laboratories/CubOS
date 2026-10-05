@@ -73,6 +73,38 @@ describe("DemoPresentation", () => {
     expect(stop).toHaveBeenCalled();
   });
 
+  it("clears the waiting-for-campaign recording status when recording stops", async () => {
+    window.history.replaceState(null, "", "/?view=demo");
+    const stream = {
+      getTracks: () => [{ stop: vi.fn() }],
+      getVideoTracks: () => [{ getSettings: () => ({ deviceId: "camera-1" }) }],
+    } as unknown as MediaStream;
+    class FakeMediaRecorder {
+      static isTypeSupported() { return true; }
+      state: RecordingState = "inactive";
+      mimeType = "video/webm";
+      ondataavailable: ((event: BlobEvent) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onstop: (() => void) | null = null;
+      constructor(...args: unknown[]) { void args; }
+      start() { this.state = "recording"; }
+      stop() { this.state = "inactive"; this.onstop?.(); }
+    }
+    Object.defineProperty(globalThis, "MediaRecorder", { configurable: true, value: FakeMediaRecorder });
+    Object.defineProperty(globalThis, "isSecureContext", { configurable: true, value: true });
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: {
+      getUserMedia: vi.fn().mockResolvedValue(stream),
+      enumerateDevices: vi.fn().mockResolvedValue([{ kind: "videoinput", deviceId: "camera-1", label: "Desk camera" }]),
+    } });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+    renderDemo();
+    fireEvent.click(await screen.findByRole("button", { name: "Enable Mac camera" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Record next campaign" }));
+    expect(screen.getByText("Recording · waiting for the next campaign")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stop & download" }));
+    expect(screen.queryByText("Recording · waiting for the next campaign")).not.toBeInTheDocument();
+  });
+
   it("closes the old camera source when the operator selects another camera", async () => {
     const firstStop = vi.fn();
     const secondStop = vi.fn();

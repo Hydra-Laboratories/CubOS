@@ -356,7 +356,7 @@ export default function DemoPresentation() {
                 </select>
               </label>
               <button type="button" disabled={cameraFinalizing} className={cameraRecording ? "demo-recording-stop" : ""}
-                onClick={cameraRecording ? stopRecording : () => {
+                onClick={cameraRecording ? () => { setArmedForCampaign(false); stopRecording(); } : () => {
                   if (!campaignId) {
                     campaignBaselineRef.current = new Map((campaigns.data ?? []).map((campaign) => [String(campaign.campaign_id), campaign.state]));
                     setArmedForCampaign(true);
@@ -368,7 +368,7 @@ export default function DemoPresentation() {
             </>
           )}
           {cameraError && <span className="demo-video-error" role="alert">{cameraError}</span>}
-          {armedForCampaign && <span className="demo-arm-status" role="status">Recording · waiting for the next campaign</span>}
+          {cameraRecording && armedForCampaign && <span className="demo-arm-status" role="status">Recording · waiting for the next campaign</span>}
           {recoverableRecordings.length > 0 && (
             <details className="demo-recoveries">
               <summary>Saved recordings ({recoverableRecordings.length})</summary>

@@ -175,7 +175,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       const persisted = await loadRecordingChunks(recordingId);
       const persistedByIndex = new Map(persisted.map((entry) => [entry.index, entry.chunk]));
       const merged = Array.from({ length: chunksRef.current.length }, (_, index) => persistedByIndex.get(index) ?? chunksRef.current[index]);
-      const complete = merged.length === chunksRef.current.length && merged.every((chunk) => chunk?.size);
+      const complete = merged.length > 0 && merged.length === chunksRef.current.length && merged.every((chunk) => chunk?.size);
       const sidecar = makeSidecar(associatedCampaignId, recordingId, startedWallRef.current,
         startedPerformanceRef.current, type, syncRef.current, stillsRef.current);
       if (complete) {
