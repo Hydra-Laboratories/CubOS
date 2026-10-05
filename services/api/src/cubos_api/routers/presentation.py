@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
@@ -25,7 +26,8 @@ def _service() -> CampaignPresentationService:
 @router.get("/{campaign_id}/presentation", response_model=PresentationResponse)
 def get_presentation(campaign_id: str) -> PresentationResponse:
     try:
-        return _service().project(campaign_id)
+        projection = _service().project(campaign_id)
+        return projection.model_copy(update={"server_now_epoch_ms": time.time() * 1000.0})
     except KeyError as exc:
         raise HTTPException(404, "Campaign not found") from exc
     except OverflowError as exc:

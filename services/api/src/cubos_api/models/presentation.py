@@ -73,6 +73,7 @@ class DemoMarker(PresentationModel):
 
 class PresentationResponse(PresentationModel):
     schema_version: str = "1"
+    server_now_epoch_ms: float | None = None
     campaign_id: str
     campaign_name: str | None = None
     status: str

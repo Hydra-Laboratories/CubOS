@@ -313,6 +313,23 @@ def test_asset_route_returns_native_browser_image_file(tmp_path, monkeypatch):
     assert response.media_type == "image/png"
 
 
+def test_presentation_route_adds_late_server_clock_sample(tmp_path, monkeypatch):
+    from cubos_api.routers import presentation as routes
+
+    record = campaign(tmp_path, [])
+    projected = CampaignPresentationService(
+        FakeCampaigns(tmp_path / "campaigns", record), FakeRuns(tmp_path / "runs")
+    ).project("campaign-1")
+    service = SimpleNamespace(project=lambda campaign_id: projected)
+    monkeypatch.setattr(routes, "_service", lambda: service)
+    monkeypatch.setattr(routes.time, "time", lambda: 1_760_000_000.125)
+
+    response = routes.get_presentation("campaign-1")
+
+    assert response.server_now_epoch_ms == 1_760_000_000_125.0
+    assert projected.server_now_epoch_ms is None
+
+
 def test_target_assets_are_only_from_the_linked_frozen_target_run(tmp_path):
     record = campaign(tmp_path, [])
     record.spec.target_mode = "camera"
