@@ -32,3 +32,10 @@ Add an optional saved color-campaign end-of-sample carriage pose. Protocol gener
 - Brave at `http://localhost:8742/?view=demo` displayed the MX Brio whole frame at 1920x1080. A short local Record next attempt / Stop test saved `Downloads/cubos-unassociated-campaign-2026-10-05T21-39-09.352Z.webm` (3,585,600 bytes) and its 490-byte sync JSON. Saved-recording recovery showed one recording.
 - Screenshot evidence: `outputs/color-demo-2026-10-05/live-stream-ready.png` and `outputs/color-demo-2026-10-05/photo-campaign-ready.jpg`.
 - No physical protocol was started. `camera-only-a1-alignment-check.yaml` remains an offline-validated optional operator physical test.
+
+## Six-trial burnt-orange setup and autonomy audit
+
+- Native color setup created preset `demo_six_trial_burnt_orange_2026_10_05.yaml` and immutable protocol `ade_color_matching_98710e2c.yaml` for selected RGB `#A84300` (168, 67, 0), wells B1-B6, batch size 1, three exact R/Y/B-dominant initial recipes, and three EI opportunities. Stop conditions are max 6 and target value 2.0; current campaign semantics stop at objective <= 2. Source height -40, mix 60 µL x3 at -7, and the calibrated photo pose are preserved.
+- API validation passed. Offline validation passed 28 motion targets, semantics, and 32 collision-aware plans. Run status remained inactive; state 10 B1-B6 remained empty with zero pending operations and zero reconciliation items.
+- `cubos.service` is active and enabled, runs as `cub`, and restarts on failure after three seconds. Campaign work runs in a server-owned daemon thread, so closing the browser or unplugging the Mac does not cancel the Pi campaign. A service/Pi restart does not resume automatically: startup marks nonterminal campaigns interrupted with `server_restart` for operator inspection.
+- Tailscale and Codex executables were absent. Raspberry Pi Connect is installed but not running; its user service is inactive/dead and user lingering is disabled. No remote-access software was installed, enabled, signed in, or exposed. Mac-local camera recording cannot continue after the Mac is unplugged.
