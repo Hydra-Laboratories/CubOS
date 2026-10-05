@@ -13,6 +13,7 @@ from typing import Callable
 from contextlib import contextmanager
 
 from cubos.data import DataStore
+from cubos.deck.loader import load_deck_from_yaml
 from cubos.gantry.loader import load_gantry_from_yaml
 from cubos_api.config import CubOSSettings, get_settings
 from cubos_api.models.overnight_queue import (
@@ -150,6 +151,7 @@ class OvernightQueueManager:
             return record.model_copy(deep=True)
 
     def prepare(self, request: OvernightQueuePrepare) -> OvernightQueueRecord:
+        self._check_queue_inventory([job.color_setup for job in request.jobs])
         queue_id = uuid.uuid4().hex
         now = time.time()
         directory = self._directory(queue_id)
@@ -232,6 +234,7 @@ class OvernightQueueManager:
                 record = OvernightQueueRecord.model_validate_json(path.read_text())
                 if record.state != "prepared":
                     raise RunConflictError("Only a prepared overnight queue can be started")
+                self._check_queue_inventory([job.color_setup for job in record.jobs])
                 for candidate in self.base.glob("*/queue.json"):
                     other = OvernightQueueRecord.model_validate_json(candidate.read_text())
                     if other.queue_id != queue_id and other.state == "running":
@@ -261,6 +264,14 @@ class OvernightQueueManager:
                 raise KeyError(queue_id)
             if record.state in QUEUE_TERMINAL:
                 raise RunConflictError("Overnight queue has already stopped")
+            if record.state == "prepared":
+                record.cancel_requested = True
+                for job in record.jobs:
+                    job.state = "cancelled"
+                    job.stop_reason = "operator_cancelled"
+                    job.completed_at = time.time()
+                self._stop(record, "cancelled", "operator_cancelled")
+                return record.model_copy(deep=True)
             record.cancel_requested = True
             for job in record.jobs:
                 if job.state == "active":
@@ -274,6 +285,65 @@ class OvernightQueueManager:
         if active_campaign_id is not None:
             self.campaigns.control(active_campaign_id, "cancel")
         return self.get(queue_id)
+
+    def _check_queue_inventory(self, setups) -> None:
+        first = setups[0]
+        if first.fluid_state_id is None:
+            return
+        deck_path = resolve_config_path(
+            self.settings.configs_dir, "deck", first.deck_file,
+        )
+        deck_yaml = deck_path.read_text(encoding="utf-8")
+        self.runs._resolve_run_state(
+            deck_yaml, RunStateSelection(fluid_state_id=first.fluid_state_id),
+        )
+        store = DataStore(self.settings.data_db_path)
+        try:
+            tips = store.get_tip_snapshot(first.fluid_state_id)
+            fluids = store.get_fluid_snapshot(first.fluid_state_id)
+        finally:
+            store.close()
+        available_tips = {
+            (item["rack_key"], item["slot_id"])
+            for item in tips["containers"] if item["status"] == "available"
+        }
+        required_tips = sum(
+            3 * ((len(setup.candidate_wells) + setup.batch_size - 1) // setup.batch_size)
+            + len(setup.candidate_wells)
+            for setup in setups
+        )
+        if len(available_tips) < required_tips:
+            raise ValueError(
+                f"Overnight queue needs {required_tips} distinct available tips; "
+                f"durable state {first.fluid_state_id} has {len(available_tips)}"
+            )
+        containers = {
+            f"{item['labware_key']}.{item['location_id']}"
+            if item["location_id"] else item["labware_key"]: item
+            for item in fluids["containers"]
+        }
+        requirements: dict[str, float] = {}
+        for setup in setups:
+            for source in (setup.red_source, setup.yellow_source, setup.blue_source):
+                requirements[source] = requirements.get(source, 0.0) + (
+                    setup.total_volume_ul + 5 * setup.component_max_ul
+                )
+        deck = load_deck_from_yaml(deck_path)
+        for source, required in requirements.items():
+            container = containers.get(source)
+            if container is None:
+                raise ValueError(f"Durable state has no queued stock source {source}")
+            resolved = deck.resolve_labware_target(source)
+            labware = resolved.labware
+            if resolved.location_id is not None and hasattr(labware, "vials"):
+                labware = labware.vials[resolved.location_id]
+            dead = float(getattr(labware, "dead_volume_ul", 0.0))
+            usable = max(0.0, float(container["current_volume_ul"]) - dead)
+            if usable + 1e-6 < required:
+                raise ValueError(
+                    f"Overnight queue needs {required:g} uL usable from {source}; "
+                    f"durable state has {usable:g} uL after {dead:g} uL dead volume"
+                )
 
     def _available_tips(self, setup) -> list[str] | None:
         if setup.fluid_state_id is None:

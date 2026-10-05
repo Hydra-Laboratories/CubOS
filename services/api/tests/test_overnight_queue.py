@@ -157,6 +157,7 @@ def _manager(tmp_path, campaigns, builder=lambda *_a, **_k: _Spec()):
     )
     manager._available_tips = lambda _setup: [f"tips.A{i}" for i in range(1, 97)]
     manager._validate_job_inputs = lambda _setup, _job_dir: None
+    manager._check_queue_inventory = lambda _setups: None
     return manager
 
 
@@ -334,3 +335,85 @@ def test_failure_after_campaign_start_cancels_active_campaign(tmp_path):
     assert final.state == "failed"
     assert final.jobs[0].campaign_id == "campaign-1"
     assert campaigns.cancelled == [("campaign-1", "cancel")]
+
+
+def test_cancel_prepared_queue_terminalizes_without_start(tmp_path):
+    manager = _manager(tmp_path, _Campaigns())
+    queue = manager.prepare(_request())
+    cancelled = manager.cancel(queue.queue_id)
+    assert cancelled.state == "cancelled"
+    assert [job.state for job in cancelled.jobs] == ["cancelled"] * 5
+    with pytest.raises(RunConflictError):
+        manager.start(queue.queue_id)
+
+
+@pytest.mark.parametrize("tip_count", [17, 84])
+def test_queue_inventory_rejects_fewer_than_85_distinct_tips(tmp_path, monkeypatch, tip_count):
+    manager = _manager(tmp_path, _Campaigns())
+    setups = [job.color_setup for job in _request().jobs]
+    class Store:
+        def __init__(self, _path): pass
+        def close(self): pass
+        def get_tip_snapshot(self, _state):
+            return {"containers": [
+                {"rack_key": "tips", "slot_id": str(i), "status": "available"}
+                for i in range(tip_count)
+            ]}
+        def get_fluid_snapshot(self, _state): return {"containers": []}
+    monkeypatch.setattr("cubos_api.services.overnight_queue.DataStore", Store)
+    with pytest.raises(ValueError, match="85 distinct available tips"):
+        OvernightQueueManager._check_queue_inventory(manager, setups)
+
+
+@pytest.mark.parametrize("volume,passes", [(3249.0, False), (3250.0, True)])
+def test_queue_inventory_checks_aggregate_stock_budget(tmp_path, monkeypatch, volume, passes):
+    manager = _manager(tmp_path, _Campaigns())
+    setups = [job.color_setup for job in _request().jobs]
+    class Store:
+        def __init__(self, _path): pass
+        def close(self): pass
+        def get_tip_snapshot(self, _state):
+            return {"containers": [
+                {"rack_key": "tips", "slot_id": str(i), "status": "available"}
+                for i in range(85)
+            ]}
+        def get_fluid_snapshot(self, _state):
+            return {"containers": [
+                {"labware_key": "stocks", "location_id": slot, "current_volume_ul": volume}
+                for slot in ("A1", "A2", "A3")
+            ]}
+    class Deck:
+        def resolve_labware_target(self, _source):
+            return SimpleNamespace(labware=SimpleNamespace(dead_volume_ul=0.0), location_id=None)
+    monkeypatch.setattr("cubos_api.services.overnight_queue.DataStore", Store)
+    monkeypatch.setattr("cubos_api.services.overnight_queue.load_deck_from_yaml", lambda _path: Deck())
+    if passes:
+        OvernightQueueManager._check_queue_inventory(manager, setups)
+    else:
+        with pytest.raises(ValueError, match="3250 uL usable"):
+            OvernightQueueManager._check_queue_inventory(manager, setups)
+
+
+def test_queue_inventory_subtracts_configured_dead_volume(tmp_path, monkeypatch):
+    manager = _manager(tmp_path, _Campaigns())
+    setups = [job.color_setup for job in _request().jobs]
+    class Store:
+        def __init__(self, _path): pass
+        def close(self): pass
+        def get_tip_snapshot(self, _state):
+            return {"containers": [
+                {"rack_key": "tips", "slot_id": str(i), "status": "available"}
+                for i in range(85)
+            ]}
+        def get_fluid_snapshot(self, _state):
+            return {"containers": [
+                {"labware_key": "stocks", "location_id": slot, "current_volume_ul": 3300.0}
+                for slot in ("A1", "A2", "A3")
+            ]}
+    class Deck:
+        def resolve_labware_target(self, _source):
+            return SimpleNamespace(labware=SimpleNamespace(dead_volume_ul=51.0), location_id=None)
+    monkeypatch.setattr("cubos_api.services.overnight_queue.DataStore", Store)
+    monkeypatch.setattr("cubos_api.services.overnight_queue.load_deck_from_yaml", lambda _path: Deck())
+    with pytest.raises(ValueError, match="after 51 uL dead volume"):
+        OvernightQueueManager._check_queue_inventory(manager, setups)
