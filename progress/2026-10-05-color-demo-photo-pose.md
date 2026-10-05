@@ -13,4 +13,6 @@ Add an optional saved color-campaign end-of-sample carriage pose. Protocol gener
 ## Status
 
 - Completed locally: schema, protocol generation, batch preservation, completion-event contract, and focused offline tests.
+- Presentation responses expose `server_now_epoch_ms` immediately before return so the recorder can compare the server-clock capture deadline without assuming host clocks are synchronized.
+- Read-only Pi snapshot: `picus120_fast.yaml` still stores camera offset X 12.0, Y -46.0, depth -87.0. The reported unsaved alignment proposal was not treated as current configuration.
 - Pending: deployment and supervised physical validation.
