@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { campaignToAssociate, isPhotoPauseEvent, stopMediaStream, supportedRecorderMime, syncEvent } from "./recording";
+import { campaignToAssociate, isPhotoPauseEvent, stopMediaStream, supportedRecorderMime, syncEvent, verifiedPhotoWindowRemainingMs } from "./recording";
 import type { DemoEvent } from "./types";
 
 const photoEvent: DemoEvent = {
@@ -52,5 +52,12 @@ describe("demo browser recording", () => {
     expect(campaignToAssociate([
       { campaign_id: "old", state: "completed" },
     ], baseline)).toBeNull();
+  });
+
+  it("uses only the backend clock to verify the remaining photo window", () => {
+    const event = { ...photoEvent, data: { ...photoEvent.data, stable_until_server_time: 200 } };
+    expect(verifiedPhotoWindowRemainingMs(event, 199_600)).toBe(400);
+    expect(verifiedPhotoWindowRemainingMs(event, null)).toBeNull();
+    expect(verifiedPhotoWindowRemainingMs(photoEvent, 199_600)).toBeNull();
   });
 });

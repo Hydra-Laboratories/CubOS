@@ -83,6 +83,7 @@ export interface CampaignPresentation {
   markers: DemoMarker[];
   partial: boolean;
   missing: string[];
+  server_now_epoch_ms?: number | null;
 }
 
 export interface DemoCampaignChoice {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DemoEvent } from "./types";
 import {
+  captureVideoStill,
   deleteRecordingChunks,
   downloadBlob,
   isPhotoPauseEvent,
@@ -11,6 +12,7 @@ import {
   stopMediaStream,
   supportedRecorderMime,
   syncEvent,
+  verifiedPhotoWindowRemainingMs,
   type DemoSyncEvent,
   type RecordingManifest,
 } from "./recording";
@@ -24,7 +26,19 @@ interface StillRecord {
   reason?: string;
 }
 
-export function useDemoRecording(campaignId: string, events: DemoEvent[], pollingUncertaintyMs: number) {
+function makeSidecar(campaignId: string, recordingId: string, startedWallTime: string,
+  startedPerformanceMs: number, mimeType: string, events: DemoSyncEvent[], stills: StillRecord[]) {
+  return {
+    schema_version: "1", campaign_id: campaignId || null, recording_id: recordingId,
+    recording_started_wall_time: startedWallTime, recording_started_performance_ms: startedPerformanceMs,
+    mime_type: mimeType, audio: false,
+    clock_note: "video_elapsed_ms is poll-observation time; observation_uncertainty_ms is a one-sided upper bound measured since the prior successful presentation response",
+    events, stills,
+  };
+}
+
+export function useDemoRecording(campaignId: string, events: DemoEvent[], pollingUncertaintyMs: number,
+  serverNowEstimateMs: number | null, serverClockObservedPerformanceMs: number | null) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
@@ -45,6 +59,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   const startedWallRef = useRef("");
   const recordingIdRef = useRef("");
   const manifestWriteRef = useRef<Promise<boolean>>(Promise.resolve(false));
+  const manifestRef = useRef<RecordingManifest | null>(null);
   const campaignIdRef = useRef(campaignId);
 
   useEffect(() => { campaignIdRef.current = campaignId; }, [campaignId]);
@@ -105,14 +120,15 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     stillsRef.current = [];
     observedSequencesRef.current = new Set(events.map((event) => event.sequence));
     photoSequencesRef.current = new Set();
-    manifestWriteRef.current = saveRecordingManifest({
+    manifestRef.current = {
       recordingId,
       campaignId: campaignIdRef.current || null,
       startedWallTime: startedWallRef.current,
       mimeType: recorder.mimeType || mimeType || "video/webm",
       chunkCount: 0,
       status: "recording",
-    });
+    };
+    manifestWriteRef.current = saveRecordingManifest(manifestRef.current);
     void manifestWriteRef.current.then((saved) => { if (!saved) setError("Persistent recording storage is unavailable; this recording is using browser memory until download."); });
     recorder.ondataavailable = (event) => {
       if (!event.data.size) return;
@@ -120,7 +136,13 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       const write = persistRecordingChunk(recordingId, index, event.data);
       chunkWritesRef.current.push(write);
       void write.then((persisted) => {
-        if (persisted) chunksRef.current[index] = new Blob();
+        if (!persisted) return;
+        chunksRef.current[index] = new Blob();
+        if (!manifestRef.current || manifestRef.current.recordingId !== recordingId) return;
+        manifestRef.current = { ...manifestRef.current, chunkCount: Math.max(manifestRef.current.chunkCount, index + 1),
+          sidecar: makeSidecar(campaignIdRef.current, recordingId, startedWallRef.current,
+            startedPerformanceRef.current, recorder.mimeType || mimeType || "video/webm", syncRef.current, stillsRef.current) };
+        manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
       });
     };
     recorder.onerror = () => {
@@ -135,29 +157,25 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       await Promise.allSettled([manifestWriteRef.current, ...chunkWritesRef.current]);
       const persisted = await loadRecordingChunks(recordingId);
       const persistedByIndex = new Map(persisted.map((entry) => [entry.index, entry.chunk]));
-      const merged = Array.from({ length: chunksRef.current.length }, (_, index) => persistedByIndex.get(index) ?? chunksRef.current[index])
-        .filter((chunk) => chunk?.size);
-      downloadBlob(new Blob(merged, { type }), `${base}.${type.includes("mp4") ? "mp4" : "webm"}`);
-      downloadBlob(new Blob([JSON.stringify({
-        schema_version: "1",
-        campaign_id: associatedCampaignId || null,
-        recording_id: recordingId,
-        recording_started_wall_time: startedWallRef.current,
-        recording_started_performance_ms: startedPerformanceRef.current,
-        mime_type: type,
-        audio: false,
-        clock_note: "video_elapsed_ms is the local poll-observation time, not an exact hardware-frame timestamp; observation_uncertainty_ms includes the 1 s poll cadence plus half the request duration",
-        events: syncRef.current,
-        stills: stillsRef.current,
-      }, null, 2)], { type: "application/json" }), `${base}.sync.json`);
-      await saveRecordingManifest({
+      const merged = Array.from({ length: chunksRef.current.length }, (_, index) => persistedByIndex.get(index) ?? chunksRef.current[index]);
+      const complete = merged.length === chunksRef.current.length && merged.every((chunk) => chunk?.size);
+      const sidecar = makeSidecar(associatedCampaignId, recordingId, startedWallRef.current,
+        startedPerformanceRef.current, type, syncRef.current, stillsRef.current);
+      if (complete) {
+        downloadBlob(new Blob(merged, { type }), `${base}.${type.includes("mp4") ? "mp4" : "webm"}`);
+        downloadBlob(new Blob([JSON.stringify(sidecar, null, 2)], { type: "application/json" }), `${base}.sync.json`);
+      } else setError("A recording chunk is missing. No truncated download was created; inspect Saved recordings.");
+      manifestRef.current = {
         recordingId,
         campaignId: associatedCampaignId || null,
         startedWallTime: startedWallRef.current,
         mimeType: type,
         chunkCount: chunksRef.current.length,
-        status: "ready",
-      });
+        status: complete ? "ready" : "incomplete",
+        sidecar,
+      };
+      manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
+      await manifestWriteRef.current;
       setRecoverable(await listRecordingManifests());
       setRecording(false);
       setFinalizing(false);
@@ -174,12 +192,13 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
 
   const downloadRecoverable = useCallback(async (manifest: RecordingManifest) => {
     const entries = await loadRecordingChunks(manifest.recordingId);
-    if (entries.length !== manifest.chunkCount) {
+    if (entries.length !== manifest.chunkCount || !entries.every((entry, index) => entry.index === index && entry.chunk.size > 0)) {
       setError("The recoverable recording is incomplete and was not downloaded.");
       return;
     }
     const extension = manifest.mimeType.includes("mp4") ? "mp4" : "webm";
     downloadBlob(new Blob(entries.map((entry) => entry.chunk), { type: manifest.mimeType }), `cubos-${manifest.campaignId ?? "unassociated-campaign"}-${manifest.startedWallTime.replaceAll(":", "-")}.${extension}`);
+    if (manifest.sidecar) downloadBlob(new Blob([JSON.stringify(manifest.sidecar, null, 2)], { type: "application/json" }), `cubos-${manifest.campaignId ?? "unassociated-campaign"}-${manifest.startedWallTime.replaceAll(":", "-")}.sync.json`);
   }, []);
 
   const discardRecoverable = useCallback(async (recordingId: string) => {
@@ -195,14 +214,38 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     newlyObserved.forEach((event) => {
       observedSequencesRef.current.add(event.sequence);
       syncRef.current.push(syncEvent(event, startedPerformanceRef.current, observed, pollingUncertaintyMs));
+      if (manifestRef.current) {
+        manifestRef.current.sidecar = makeSidecar(campaignIdRef.current, recordingIdRef.current,
+          startedWallRef.current, startedPerformanceRef.current, manifestRef.current.mimeType, syncRef.current, stillsRef.current);
+        manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
+      }
       if (!isPhotoPauseEvent(event) || photoSequencesRef.current.has(event.sequence)) return;
       photoSequencesRef.current.add(event.sequence);
       const still: StillRecord = { event_sequence: event.sequence, requested_performance_ms: observed, status: "scheduled" };
       stillsRef.current.push(still);
-      still.status = "unavailable";
-      still.reason = "pose_window_unverified";
+      const serverNowAtCapture = serverNowEstimateMs == null || serverClockObservedPerformanceMs == null
+        ? null
+        : serverNowEstimateMs + Math.max(0, performance.now() - serverClockObservedPerformanceMs);
+      const remainingWindowMs = verifiedPhotoWindowRemainingMs(event, serverNowAtCapture);
+      const hasVerifiedWindow = remainingWindowMs != null && remainingWindowMs > 150;
+      if (hasVerifiedWindow && previewRef.current) {
+        const filename = `cubos-${campaignIdRef.current || "campaign"}-event-${event.sequence}.jpg`;
+        const captured = captureVideoStill(previewRef.current, filename);
+        still.captured_performance_ms = performance.now();
+        still.filename = captured ? filename : undefined;
+        still.status = captured ? "captured" : "unavailable";
+        still.reason = captured ? undefined : "preview_frame_unavailable";
+      } else {
+        still.status = "unavailable";
+        still.reason = "pose_window_unverified";
+      }
+      if (manifestRef.current) {
+        manifestRef.current.sidecar = makeSidecar(campaignIdRef.current, recordingIdRef.current,
+          startedWallRef.current, startedPerformanceRef.current, manifestRef.current.mimeType, syncRef.current, stillsRef.current);
+        manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
+      }
     });
-  }, [campaignId, events, pollingUncertaintyMs, recording]);
+  }, [campaignId, events, pollingUncertaintyMs, recording, serverClockObservedPerformanceMs, serverNowEstimateMs]);
 
   useEffect(() => () => {
     timersRef.current.forEach(window.clearTimeout);

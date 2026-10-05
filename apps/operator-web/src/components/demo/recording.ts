@@ -27,7 +27,8 @@ export interface RecordingManifest {
   startedWallTime: string;
   mimeType: string;
   chunkCount: number;
-  status: "recording" | "ready";
+  status: "recording" | "ready" | "incomplete";
+  sidecar?: Record<string, unknown>;
 }
 
 export function campaignToAssociate(
@@ -53,6 +54,12 @@ export function isPhotoPauseEvent(event: DemoEvent): boolean {
   return event.kind === "photo_pause"
     && event.data?.capture_still === true
     && event.data?.wait_completed === true;
+}
+
+export function verifiedPhotoWindowRemainingMs(event: DemoEvent, serverNowEstimateMs: number | null): number | null {
+  const stableUntil = event.data?.stable_until_server_time;
+  if (serverNowEstimateMs == null || typeof stableUntil !== "number" || !Number.isFinite(stableUntil)) return null;
+  return stableUntil * 1000 - serverNowEstimateMs;
 }
 
 export function syncEvent(
@@ -175,7 +182,7 @@ export async function listRecordingManifests(): Promise<RecordingManifest[]> {
     request.onsuccess = () => {
       const transaction = request.result.transaction("recordings", "readonly");
       const getAll = transaction.objectStore("recordings").getAll();
-      getAll.onsuccess = () => resolve((getAll.result as RecordingManifest[]).filter((item) => item.status === "ready"));
+      getAll.onsuccess = () => resolve((getAll.result as RecordingManifest[]).filter((item) => item.chunkCount > 0 || item.status === "ready"));
       getAll.onerror = () => resolve([]);
       transaction.oncomplete = () => request.result.close();
     };

@@ -165,9 +165,12 @@ export default function DemoPresentation() {
   const [markerState, setMarkerState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [pollingUncertaintyMs, setPollingUncertaintyMs] = useState(500);
   const [armedForCampaign, setArmedForCampaign] = useState(false);
+  const [serverNowEstimateMs, setServerNowEstimateMs] = useState<number | null>(null);
+  const [serverClockObservedPerformanceMs, setServerClockObservedPerformanceMs] = useState<number | null>(null);
   const campaignBaselineRef = useRef(new Map<string, string | undefined>());
   const videoRef = useRef<HTMLVideoElement>(null);
   const markerClientIdRef = useRef<string | null>(null);
+  const lastPresentationResponseRef = useRef<number | null>(null);
 
   const campaigns = useQuery({
     queryKey: ["demo-campaigns"],
@@ -179,7 +182,16 @@ export default function DemoPresentation() {
     queryFn: async () => {
       const started = performance.now();
       const result = await demoApi.presentation(campaignId);
-      setPollingUncertaintyMs(1000 + Math.max(1, (performance.now() - started) / 2));
+      const completed = performance.now();
+      const observationWindow = lastPresentationResponseRef.current == null
+        ? completed - started
+        : completed - lastPresentationResponseRef.current;
+      lastPresentationResponseRef.current = completed;
+      setPollingUncertaintyMs(Math.max(1, observationWindow));
+      setServerNowEstimateMs(typeof result.server_now_epoch_ms === "number"
+        ? result.server_now_epoch_ms + (completed - started)
+        : null);
+      setServerClockObservedPerformanceMs(completed);
       return result;
     },
     enabled: campaignId.length > 0,
@@ -200,7 +212,8 @@ export default function DemoPresentation() {
     stopRecording,
     downloadRecoverable,
     discardRecoverable,
-  } = useDemoRecording(campaignId, presentation.data?.events ?? [], pollingUncertaintyMs);
+  } = useDemoRecording(campaignId, presentation.data?.events ?? [], pollingUncertaintyMs,
+    serverNowEstimateMs, serverClockObservedPerformanceMs);
 
   useEffect(() => {
     if (!armedForCampaign || !campaigns.data) return;
@@ -356,7 +369,7 @@ export default function DemoPresentation() {
               <summary>Saved recordings ({recoverableRecordings.length})</summary>
               {recoverableRecordings.map((item) => (
                 <div key={item.recordingId}>
-                  <span>{item.campaignId ?? "Unassociated"} · {new Date(item.startedWallTime).toLocaleString()}</span>
+                  <span>{item.status === "ready" ? "Saved" : "Interrupted"} · {item.campaignId ?? "Unassociated"} · {new Date(item.startedWallTime).toLocaleString()}</span>
                   <button type="button" onClick={() => void downloadRecoverable(item)}>Download</button>
                   <button type="button" onClick={() => void discardRecoverable(item.recordingId)}>Discard</button>
                 </div>
