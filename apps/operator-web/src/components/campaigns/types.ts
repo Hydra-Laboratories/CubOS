@@ -60,6 +60,7 @@ export interface ColorCampaignSetup {
   diluent_source?: string | null;
   component_min_ul?: number;
   component_max_ul?: number;
+  total_volume_ul?: number;
   candidate_wells: string[];
   camera_instrument: string; roi_fraction: number;
   image_height?: number | null;
@@ -88,6 +89,7 @@ export interface ColorSetupDraft {
   diluent_source?: string | null;
   component_min_ul?: number;
   component_max_ul?: number;
+  total_volume_ul?: number;
   candidate_wells: string[];
   camera_instrument: string;
   roi_fraction: number;

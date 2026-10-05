@@ -74,6 +74,7 @@ interface PresetWorkspaceDraft {
   diluentSource: string;
   componentMinUl: number;
   componentMaxUl: number;
+  totalVolumeUl: number;
   candidateText: string;
   cameraInstrument: string;
   roiFraction: number;
@@ -108,6 +109,7 @@ function restoredPresetWorkspace(): PresetWorkspaceDraft | null {
       diluentSource: typeof parsed.diluentSource === "string" ? parsed.diluentSource : "stocks.A4",
       componentMinUl: isFiniteNumber(parsed.componentMinUl) ? parsed.componentMinUl : 50,
       componentMaxUl: isFiniteNumber(parsed.componentMaxUl) ? parsed.componentMaxUl : 200,
+      totalVolumeUl: isFiniteNumber(parsed.totalVolumeUl) ? parsed.totalVolumeUl : 300,
       candidateText: typeof parsed.candidateText === "string" ? parsed.candidateText : CANDIDATE_WELLS.join(", "),
       cameraInstrument: typeof parsed.cameraInstrument === "string" ? parsed.cameraInstrument : "camera",
       roiFraction: isFiniteNumber(parsed.roiFraction) ? parsed.roiFraction : 0.5,
@@ -567,6 +569,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
   const [diluentSource, setDiluentSource] = useState(restoredPreset?.diluentSource ?? "stocks.A4");
   const [componentMinUl, setComponentMinUl] = useState(restoredPreset?.componentMinUl ?? 50);
   const [componentMaxUl, setComponentMaxUl] = useState(restoredPreset?.componentMaxUl ?? 200);
+  const [totalVolumeUl, setTotalVolumeUl] = useState(restoredPreset?.totalVolumeUl ?? 300);
   const [candidateText, setCandidateText] = useState(restoredPreset?.candidateText ?? CANDIDATE_WELLS.join(", "));
   const [cameraInstrument, setCameraInstrument] = useState(restoredPreset?.cameraInstrument ?? restoredReview?.cameraInstrument ?? "camera");
   const [roiFraction, setRoiFraction] = useState(restoredPreset?.roiFraction ?? restoredReview?.roiFraction ?? 0.5);
@@ -662,6 +665,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       diluentSource,
       componentMinUl,
       componentMaxUl,
+      totalVolumeUl,
       candidateText,
       cameraInstrument,
       roiFraction,
@@ -671,7 +675,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
       targetMode,
       targetRgb,
     } satisfies PresetWorkspaceDraft));
-  }, [presetNeedsFreshTarget, presetExpectedFiles, selectedPreset, presetFilename, presetName, targetWell, redSource, yellowSource, blueSource, diluentEnabled, diluentSource, componentMinUl, componentMaxUl, candidateText, cameraInstrument, roiFraction, captureImageHeight, sourceProtocolFile, batchSize, targetMode, targetRgb]);
+  }, [presetNeedsFreshTarget, presetExpectedFiles, selectedPreset, presetFilename, presetName, targetWell, redSource, yellowSource, blueSource, diluentEnabled, diluentSource, componentMinUl, componentMaxUl, totalVolumeUl, candidateText, cameraInstrument, roiFraction, captureImageHeight, sourceProtocolFile, batchSize, targetMode, targetRgb]);
   const refreshPresets = useCallback(async () => {
     try {
       const next = await campaignApi.listPresets();
@@ -875,6 +879,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         diluent_source: diluentEnabled ? diluentSource : null,
         component_min_ul: componentMinUl,
         component_max_ul: componentMaxUl,
+        total_volume_ul: totalVolumeUl,
         candidate_wells: candidateText.split(/[\n,]/).map((value) => value.trim()).filter(Boolean),
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
@@ -915,6 +920,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         setDiluentSource(loaded.color_setup.diluent_source || "stocks.A4");
         setComponentMinUl(loaded.color_setup.component_min_ul ?? 50);
         setComponentMaxUl(loaded.color_setup.component_max_ul ?? 200);
+        setTotalVolumeUl(loaded.color_setup.total_volume_ul ?? 300);
         setCandidateText(loaded.color_setup.candidate_wells.join(", "));
         setCameraInstrument(loaded.color_setup.camera_instrument);
         setRoiFraction(loaded.color_setup.roi_fraction);
@@ -1146,6 +1152,7 @@ export default function CampaignPanel(props: CampaignPanelProps) {
         diluent_source: diluentEnabled ? diluentSource : null,
         component_min_ul: componentMinUl,
         component_max_ul: componentMaxUl,
+        total_volume_ul: totalVolumeUl,
         candidate_wells: candidateWells,
         camera_instrument: cameraInstrument,
         roi_fraction: roiFraction,
@@ -1449,14 +1456,15 @@ export default function CampaignPanel(props: CampaignPanelProps) {
           <label className="campaign-field">Red stock<input aria-label="Red stock" value={redSource} onChange={(event) => { setRedSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Yellow stock<input aria-label="Yellow stock" value={yellowSource} onChange={(event) => { setYellowSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field">Blue stock<input aria-label="Blue stock" value={blueSource} onChange={(event) => { setBlueSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
+          <label className="campaign-field">Sample volume µL<input aria-label="Color sample total microliters" type="number" min="15" step="2.5" value={totalVolumeUl} onChange={(event) => { setTotalVolumeUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
+          <label className="campaign-field">Dye min µL<input aria-label="Dye minimum microliters" type="number" min="5" step={totalVolumeUl / 60} value={componentMinUl} onChange={(event) => { setComponentMinUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
+          <label className="campaign-field">Dye max µL<input aria-label="Dye maximum microliters" type="number" min="5" step={totalVolumeUl / 60} value={componentMaxUl} onChange={(event) => { setComponentMaxUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
           <label className="campaign-field campaign-diluent-toggle">
             <input type="checkbox" aria-label="Water (diluent)" checked={diluentEnabled} onChange={(event) => { setDiluentEnabled(event.target.checked); invalidateBuiltCampaign(); }} />
             {" "}Water (diluent)
           </label>
           {diluentEnabled && <>
             <label className="campaign-field">Water source<input aria-label="Water source" value={diluentSource} onChange={(event) => { setDiluentSource(event.target.value); invalidateBuiltCampaign(); }} /></label>
-            <label className="campaign-field">Dye min µL<input aria-label="Dye minimum microliters" type="number" min="5" step="5" value={componentMinUl} onChange={(event) => { setComponentMinUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
-            <label className="campaign-field">Dye max µL<input aria-label="Dye maximum microliters" type="number" min="5" step="5" value={componentMaxUl} onChange={(event) => { setComponentMaxUl(Number(event.target.value)); invalidateBuiltCampaign(); }} /></label>
           </>}
           <label className="campaign-field campaign-candidate-field">Candidate wells <span>{candidateCount} selected</span><textarea aria-label="Color candidate wells" value={candidateText} onChange={(event) => { setCandidateText(event.target.value); invalidateBuiltCampaign(); }} /></label>
         </div>

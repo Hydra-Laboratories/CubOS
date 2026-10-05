@@ -213,6 +213,7 @@ class ColorCampaignSetup(CampaignModel):
     diluent_source: str | None = Field(default=None, min_length=1, max_length=160)
     component_min_ul: float = Field(default=50.0, ge=5)
     component_max_ul: float = Field(default=200.0)
+    total_volume_ul: float = Field(default=300.0, gt=0, le=5000)
     candidate_wells: list[str] = Field(min_length=6, max_length=96)
     camera_instrument: str = Field(default="camera", min_length=1, max_length=80)
     roi_fraction: float = Field(default=0.5, gt=0, le=1)
@@ -259,24 +260,33 @@ class ColorCampaignSetup(CampaignModel):
                 f"{len(self.candidate_wells)} candidates with batch size {self.batch_size}; "
                 "a tip rack holds 96"
             )
+        if self.component_max_ul < self.component_min_ul:
+            raise ValueError(
+                "component_max_ul must be greater than or equal to component_min_ul"
+            )
+        component_step_ul = self.total_volume_ul / 60.0
+        if not math.isclose(
+            self.component_min_ul,
+            round(self.component_min_ul / component_step_ul) * component_step_ul,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                f"component_min_ul must be a multiple of the {component_step_ul:g} "
+                "µL dosing step"
+            )
         if self.diluent_source is not None:
-            if self.component_max_ul < self.component_min_ul:
+            if 3 * self.component_min_ul + component_step_ul > self.total_volume_ul:
                 raise ValueError(
-                    "component_max_ul must be greater than or equal to component_min_ul"
-                )
-            if not math.isclose(
-                self.component_min_ul, round(self.component_min_ul / 5.0) * 5.0,
-                abs_tol=1e-9,
-            ):
-                raise ValueError(
-                    "component_min_ul must be a multiple of the 5 µL dosing step "
-                    "so every component lands on the shared volume grid"
-                )
-            if 3 * self.component_min_ul + 5 > 300:
-                raise ValueError(
-                    "component_min_ul leaves no room for at least 5 µL of water "
+                    "component_min_ul leaves no room for water "
                     "once red, yellow, and blue are all at their minimum"
                 )
+        elif not (
+            3 * self.component_min_ul <= self.total_volume_ul
+            <= 3 * self.component_max_ul
+        ):
+            raise ValueError(
+                "total_volume_ul must be reachable by three components within their bounds"
+            )
         if self.expected_center is not None and any(
             value < 0 or value > 1 for value in self.expected_center
         ):
@@ -378,6 +388,7 @@ class ColorCampaignPresetDraft(CampaignModel):
     diluent_source: str | None = Field(default=None, min_length=1, max_length=160)
     component_min_ul: float = Field(default=50.0, ge=5)
     component_max_ul: float = Field(default=200.0)
+    total_volume_ul: float = Field(default=300.0, gt=0, le=5000)
     candidate_wells: list[str] = Field(min_length=1, max_length=96)
     camera_instrument: str = Field(default="camera", min_length=1, max_length=80)
     roi_fraction: float = Field(default=0.5, gt=0, le=1)
@@ -418,6 +429,23 @@ class ColorCampaignPresetDraft(CampaignModel):
         if self.diluent_source is not None and self.component_max_ul < self.component_min_ul:
             raise ValueError(
                 "component_max_ul must be greater than or equal to component_min_ul"
+            )
+        component_step_ul = self.total_volume_ul / 60.0
+        if not math.isclose(
+            self.component_min_ul,
+            round(self.component_min_ul / component_step_ul) * component_step_ul,
+            abs_tol=1e-9,
+        ):
+            raise ValueError(
+                f"component_min_ul must be a multiple of the {component_step_ul:g} "
+                "µL dosing step"
+            )
+        if self.diluent_source is None and not (
+            3 * self.component_min_ul <= self.total_volume_ul
+            <= 3 * self.component_max_ul
+        ):
+            raise ValueError(
+                "total_volume_ul must be reachable by three components within their bounds"
             )
         return self
 

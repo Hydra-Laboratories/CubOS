@@ -14,18 +14,32 @@ from cubos.optimization import rgb_to_lab
 from cubos_api.models.campaigns import CampaignSpec, ColorCampaignSetup
 
 
-INITIAL_POINTS = [
-    {"red_ul": 200.0, "yellow_ul": 50.0, "blue_ul": 50.0},
-    {"red_ul": 50.0, "yellow_ul": 200.0, "blue_ul": 50.0},
-    {"red_ul": 50.0, "yellow_ul": 50.0, "blue_ul": 200.0},
-    {"red_ul": 125.0, "yellow_ul": 125.0, "blue_ul": 50.0},
-    {"red_ul": 125.0, "yellow_ul": 50.0, "blue_ul": 125.0},
-    {"red_ul": 50.0, "yellow_ul": 125.0, "blue_ul": 125.0},
-]
+def _component_step(total_volume_ul: float) -> float:
+    return total_volume_ul / 60.0
 
-_STEP_UL = 5.0
-_TOTAL_UL = 300.0
-_WATER_MIN_UL = 5.0
+
+def _three_component_initial_points(
+    component_min_ul: float,
+    component_max_ul: float,
+    total_volume_ul: float,
+) -> list[dict[str, float]]:
+    dominant = total_volume_ul - 2 * component_min_ul
+    if dominant > component_max_ul:
+        raise ValueError("Component maximum cannot fit a dominant initial recipe")
+    middle = (total_volume_ul - component_min_ul) / 2
+    if middle > component_max_ul:
+        raise ValueError("Component maximum cannot fit a mixed initial recipe")
+    return [
+        {"red_ul": dominant, "yellow_ul": component_min_ul, "blue_ul": component_min_ul},
+        {"red_ul": component_min_ul, "yellow_ul": dominant, "blue_ul": component_min_ul},
+        {"red_ul": component_min_ul, "yellow_ul": component_min_ul, "blue_ul": dominant},
+        {"red_ul": middle, "yellow_ul": middle, "blue_ul": component_min_ul},
+        {"red_ul": middle, "yellow_ul": component_min_ul, "blue_ul": middle},
+        {"red_ul": component_min_ul, "yellow_ul": middle, "blue_ul": middle},
+    ]
+
+
+INITIAL_POINTS = _three_component_initial_points(50.0, 200.0, 300.0)
 
 _NO_DILUENT_COMMANDS = [
     "pick_up_tip", "transfer", "drop_tip",
@@ -38,23 +52,25 @@ _DILUENT_COMMANDS = [
 
 
 def _four_component_initial_points(
-    component_min_ul: float, component_max_ul: float,
+    component_min_ul: float, component_max_ul: float, total_volume_ul: float = 300.0,
 ) -> list[dict[str, float]]:
     """Six dye-dominant-corner and mixed points, every one summing to 300 uL."""
     minimum = component_min_ul
-    grid_max = minimum + _STEP_UL * math.floor(
-        (component_max_ul - minimum) / _STEP_UL + 1e-9
+    step_ul = _component_step(total_volume_ul)
+    water_min_ul = step_ul
+    grid_max = minimum + step_ul * math.floor(
+        (component_max_ul - minimum) / step_ul + 1e-9
     )
-    corner_ceiling = min(grid_max, _TOTAL_UL - 2 * minimum - _WATER_MIN_UL)
-    corner_dye = minimum + _STEP_UL * math.floor(
-        (corner_ceiling - minimum) / _STEP_UL + 1e-9
+    corner_ceiling = min(grid_max, total_volume_ul - 2 * minimum - water_min_ul)
+    corner_dye = minimum + step_ul * math.floor(
+        (corner_ceiling - minimum) / step_ul + 1e-9
     )
-    corner_water = _TOTAL_UL - corner_dye - 2 * minimum
-    mid_ceiling = min(grid_max, (_TOTAL_UL - minimum - _WATER_MIN_UL) / 2)
-    mid_dye = minimum + _STEP_UL * math.floor(
-        (mid_ceiling - minimum) / _STEP_UL + 1e-9
+    corner_water = total_volume_ul - corner_dye - 2 * minimum
+    mid_ceiling = min(grid_max, (total_volume_ul - minimum - water_min_ul) / 2)
+    mid_dye = minimum + step_ul * math.floor(
+        (mid_ceiling - minimum) / step_ul + 1e-9
     )
-    mixed_water = _TOTAL_UL - 2 * mid_dye - minimum
+    mixed_water = total_volume_ul - 2 * mid_dye - minimum
 
     def point(red: float, yellow: float, blue: float, water: float) -> dict[str, float]:
         return {"red_ul": red, "yellow_ul": yellow, "blue_ul": blue, "water_ul": water}
@@ -198,8 +214,12 @@ def build_color_campaign(
     component_count = 4 if has_diluent else 3
     component_names = (["water"] if has_diluent else []) + ["red", "yellow", "blue"]
     initial_points = (
-        _four_component_initial_points(setup.component_min_ul, setup.component_max_ul)
-        if has_diluent else INITIAL_POINTS
+        _four_component_initial_points(
+            setup.component_min_ul, setup.component_max_ul, setup.total_volume_ul,
+        )
+        if has_diluent else _three_component_initial_points(
+            setup.component_min_ul, setup.component_max_ul, setup.total_volume_ul,
+        )
     )
     required_tips = (
         trial_count * component_count if batch_size == 1
@@ -354,15 +374,20 @@ def build_color_campaign(
         for index, argument in destination_indexes
     ]
     if has_diluent:
-        water_max = _TOTAL_UL - 3 * setup.component_min_ul
+        water_min_ul = _component_step(setup.total_volume_ul)
+        water_max = setup.total_volume_ul - 3 * setup.component_min_ul
         bounds = {
-            "water": (_WATER_MIN_UL, water_max),
+            "water": (water_min_ul, water_max),
             "red": (setup.component_min_ul, setup.component_max_ul),
             "yellow": (setup.component_min_ul, setup.component_max_ul),
             "blue": (setup.component_min_ul, setup.component_max_ul),
         }
     else:
-        bounds = {"red": (50.0, 200.0), "yellow": (50.0, 200.0), "blue": (50.0, 200.0)}
+        bounds = {
+            "red": (setup.component_min_ul, setup.component_max_ul),
+            "yellow": (setup.component_min_ul, setup.component_max_ul),
+            "blue": (setup.component_min_ul, setup.component_max_ul),
+        }
     spec = CampaignSpec(
         name="CIEDE2000 color matching",
         gantry_file=setup.gantry_file,
@@ -370,7 +395,7 @@ def build_color_campaign(
         protocol_file=filename,
         parameters=[
             {"name": f"{name}_ul", "minimum": bounds[name][0], "maximum": bounds[name][1],
-             "step": _STEP_UL,
+             "step": _component_step(setup.total_volume_ul),
              "bindings": [{"step_index": transfer_indexes[index], "argument": "volume_ul"}]}
             for index, name in enumerate(component_names)
         ],
@@ -392,7 +417,8 @@ def build_color_campaign(
         stop={"max_trials": trial_count, "target_value": 3.0, "patience": 0,
               "min_improvement": 0.0, "max_seconds": None},
         sum_constraint={
-            "parameters": [f"{name}_ul" for name in component_names], "total": _TOTAL_UL,
+            "parameters": [f"{name}_ul" for name in component_names],
+            "total": setup.total_volume_ul,
         },
         mock_mode=setup.mock_mode,
         fluid_state_id=setup.fluid_state_id,

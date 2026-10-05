@@ -123,6 +123,76 @@ def test_builder_writes_complete_protocol_and_campaign(tmp_path: Path):
     assert spec.sequences[1].values[:2] == ["tips.A1", "tips.A4"]
 
 
+def test_half_volume_builder_scales_grid_and_initial_recipes_without_changing_mix(tmp_path: Path):
+    spec = build_color_campaign(
+        setup(
+            total_volume_ul=150.0,
+            component_min_ul=25.0,
+            component_max_ul=100.0,
+        ),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL.replace("'-20'", "'-40'"),
+    )
+    protocol = yaml.safe_load((tmp_path / spec.protocol_file).read_text())["protocol"]
+
+    assert spec.sum_constraint.total == 150.0
+    assert {parameter.step for parameter in spec.parameters} == {2.5}
+    assert spec.optimizer.initial_points[:3] == [
+        {"red_ul": 100.0, "yellow_ul": 25.0, "blue_ul": 25.0},
+        {"red_ul": 25.0, "yellow_ul": 100.0, "blue_ul": 25.0},
+        {"red_ul": 25.0, "yellow_ul": 25.0, "blue_ul": 100.0},
+    ]
+    assert protocol[1]["transfer"]["source_height"] == "-40"
+    assert protocol[8]["mix"] == {
+        "position": "plate.A2", "volume_ul": 60, "cycles": 3, "height": -7,
+    }
+    assert sum(spec.optimizer.initial_points[0].values()) == 150.0
+
+
+def test_half_volume_preset_round_trip():
+    draft = ColorCampaignPresetDraft(
+        source_protocol_file="source.yaml",
+        candidate_wells=["plate.A4"],
+        component_min_ul=25.0,
+        component_max_ul=100.0,
+        total_volume_ul=150.0,
+    )
+    restored = ColorCampaignPresetDraft.model_validate_json(draft.model_dump_json())
+    assert restored.total_volume_ul == 150.0
+    assert restored.component_min_ul == 25.0
+    assert restored.component_max_ul == 100.0
+
+
+def test_five_half_volume_campaigns_fit_stock_and_tip_envelopes(tmp_path: Path):
+    spec = build_color_campaign(
+        setup(
+            batch_size=3,
+            candidate_wells=candidate_wells(8),
+            total_volume_ul=150.0,
+            component_min_ul=25.0,
+            component_max_ul=100.0,
+        ),
+        tmp_path,
+        source_protocol_yaml=SOURCE_PROTOCOL,
+    )
+    allocated_tips = {
+        tip
+        for sequence in spec.sequences
+        if sequence.name.endswith("_tip")
+        for tip in sequence.values
+    }
+    seed_use_per_dye = sum(
+        point["red_ul"] for point in spec.optimizer.initial_points[:3]
+    )
+    worst_case_per_dye_per_campaign = seed_use_per_dye + 5 * 100.0
+
+    assert len(allocated_tips) == 17
+    assert 5 * len(allocated_tips) == 85
+    assert seed_use_per_dye == 150.0
+    assert 5 * worst_case_per_dye_per_campaign == 3250.0
+    assert 40 * spec.sum_constraint.total == 6000.0
+
+
 def test_builder_appends_optional_photo_pose_without_shifting_objective(tmp_path: Path):
     position = (244.589, 144.0, 94.601)
     spec = build_color_campaign(
