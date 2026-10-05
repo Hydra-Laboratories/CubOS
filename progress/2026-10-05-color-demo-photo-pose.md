@@ -16,3 +16,11 @@ Add an optional saved color-campaign end-of-sample carriage pose. Protocol gener
 - Presentation responses expose `server_now_epoch_ms` immediately before return so the recorder can compare the server-clock capture deadline without assuming host clocks are synchronized.
 - Read-only Pi snapshot: `picus120_fast.yaml` still stores camera offset X 12.0, Y -46.0, depth -87.0. The reported unsaved alignment proposal was not treated as current configuration.
 - Pending: deployment and supervised physical validation.
+
+## Deployed configuration artifacts
+
+- Existing preset and immutable protocol backed up under `/home/cub/cubos-data/backups/pre-photo-pose-20261005/`.
+- Native color-setup API generated `ade_color_matching_a8a209b0.yaml` against state 10 and saved `photo_position: [244.589, 144.0, 94.601]` in `demo_single_well_2026_10_05.yaml`.
+- Saved camera mount X -21.63, Y 18.305, depth -87.0 resolves the carriage pose to camera position `[222.959, 162.305, 181.601]`; offline validation reconstructed the exact carriage endpoint and passed 32 collision-aware plans.
+- `camera-only-a1-alignment-check.yaml` contains only a native camera move and color measurement at `plate.A1`; offline validation passed one collision-aware plan. It was not executed.
+- Run status remained inactive and state 10 retained full 4 mL stocks, empty A4-A11 candidates, zero pending operations, and zero reconciliation items.
