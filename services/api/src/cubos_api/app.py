@@ -19,6 +19,7 @@ from cubos_api.routers import (
     fluid_states,
     gantry,
     instruments,
+    overnight_queue,
     protocol,
     presentation,
     raw,
@@ -171,6 +172,8 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(system.router)
     app.include_router(runs.router)
+    # Register fixed overnight paths before the campaign-id catch-all routes.
+    app.include_router(overnight_queue.router)
     app.include_router(campaigns.router)
     app.include_router(presentation.router)
     app.include_router(fluid_states.router)
