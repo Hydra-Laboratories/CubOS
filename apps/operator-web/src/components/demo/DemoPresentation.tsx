@@ -211,6 +211,7 @@ export default function DemoPresentation() {
     startRecording,
     stopRecording,
     downloadRecoverable,
+    downloadRecoverableStill,
     discardRecoverable,
   } = useDemoRecording(campaignId, presentation.data?.events ?? [], pollingUncertaintyMs,
     serverNowEstimateMs, serverClockObservedPerformanceMs);
@@ -372,6 +373,11 @@ export default function DemoPresentation() {
                   <span>{item.status === "ready" ? "Saved" : "Interrupted"} · {item.campaignId ?? "Unassociated"} · {new Date(item.startedWallTime).toLocaleString()}</span>
                   <button type="button" onClick={() => void downloadRecoverable(item)}>Download</button>
                   <button type="button" onClick={() => void discardRecoverable(item.recordingId)}>Discard</button>
+                  {(item.stills ?? []).map((still) => (
+                    <button key={still.eventSequence} type="button" onClick={() => void downloadRecoverableStill(item, still.eventSequence, still.filename)}>
+                      Download still {still.eventSequence}
+                    </button>
+                  ))}
                 </div>
               ))}
             </details>

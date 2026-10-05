@@ -29,6 +29,7 @@ export interface RecordingManifest {
   chunkCount: number;
   status: "recording" | "ready" | "incomplete";
   sidecar?: Record<string, unknown>;
+  stills?: { eventSequence: number; filename: string }[];
 }
 
 export function campaignToAssociate(
@@ -62,6 +63,11 @@ export function verifiedPhotoWindowRemainingMs(event: DemoEvent, serverNowEstima
   return stableUntil * 1000 - serverNowEstimateMs;
 }
 
+export function hasVerifiedPhotoCaptureWindow(event: DemoEvent, serverNowEstimateMs: number | null): boolean {
+  const remaining = verifiedPhotoWindowRemainingMs(event, serverNowEstimateMs);
+  return remaining != null && remaining > 250;
+}
+
 export function syncEvent(
   event: DemoEvent,
   recordingStartedPerformanceMs: number,
@@ -93,23 +99,23 @@ export function downloadBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function captureVideoStill(video: HTMLVideoElement, filename: string): boolean {
-  if (!video.videoWidth || !video.videoHeight) return false;
+export function captureVideoStill(video: HTMLVideoElement): Promise<Blob | null> {
+  if (!video.videoWidth || !video.videoHeight) return Promise.resolve(null);
   const canvas = document.createElement("canvas");
   canvas.width = video.videoWidth;
   canvas.height = video.videoHeight;
   canvas.getContext("2d")?.drawImage(video, 0, 0);
-  canvas.toBlob((blob) => { if (blob) downloadBlob(blob, filename); }, "image/jpeg", 0.94);
-  return true;
+  return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.94));
 }
 
 export async function persistRecordingChunk(recordingId: string, index: number, chunk: Blob): Promise<boolean> {
   if (!("indexedDB" in globalThis)) return false;
   return new Promise<boolean>((resolve) => {
-    const request = indexedDB.open("cubos-demo-recordings", 2);
+    const request = indexedDB.open("cubos-demo-recordings", 3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("chunks")) request.result.createObjectStore("chunks", { keyPath: ["recordingId", "index"] });
       if (!request.result.objectStoreNames.contains("recordings")) request.result.createObjectStore("recordings", { keyPath: "recordingId" });
+      if (!request.result.objectStoreNames.contains("stills")) request.result.createObjectStore("stills", { keyPath: ["recordingId", "eventSequence"] });
     };
     request.onerror = () => resolve(false);
     request.onsuccess = () => {
@@ -124,12 +130,13 @@ export async function persistRecordingChunk(recordingId: string, index: number, 
 export async function deleteRecordingChunks(recordingId: string): Promise<void> {
   if (!("indexedDB" in globalThis)) return;
   await new Promise<void>((resolve) => {
-    const request = indexedDB.open("cubos-demo-recordings", 2);
+    const request = indexedDB.open("cubos-demo-recordings", 3);
     request.onerror = () => resolve();
     request.onsuccess = () => {
-      const transaction = request.result.transaction(["chunks", "recordings"], "readwrite");
+      const transaction = request.result.transaction(["chunks", "recordings", "stills"], "readwrite");
       transaction.objectStore("chunks").delete(IDBKeyRange.bound([recordingId, 0], [recordingId, Number.MAX_SAFE_INTEGER]));
       transaction.objectStore("recordings").delete(recordingId);
+      transaction.objectStore("stills").delete(IDBKeyRange.bound([recordingId, 0], [recordingId, Number.MAX_SAFE_INTEGER]));
       transaction.oncomplete = () => { request.result.close(); resolve(); };
       transaction.onerror = () => { request.result.close(); resolve(); };
     };
@@ -139,7 +146,7 @@ export async function deleteRecordingChunks(recordingId: string): Promise<void> 
 export async function loadRecordingChunks(recordingId: string): Promise<{ index: number; chunk: Blob }[]> {
   if (!("indexedDB" in globalThis)) return [];
   return new Promise<{ index: number; chunk: Blob }[]>((resolve) => {
-    const request = indexedDB.open("cubos-demo-recordings", 2);
+    const request = indexedDB.open("cubos-demo-recordings", 3);
     request.onerror = () => resolve([]);
     request.onsuccess = () => {
       const transaction = request.result.transaction("chunks", "readonly");
@@ -155,10 +162,11 @@ export async function loadRecordingChunks(recordingId: string): Promise<{ index:
 export async function saveRecordingManifest(manifest: RecordingManifest): Promise<boolean> {
   if (!("indexedDB" in globalThis)) return false;
   return new Promise<boolean>((resolve) => {
-    const request = indexedDB.open("cubos-demo-recordings", 2);
+    const request = indexedDB.open("cubos-demo-recordings", 3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("chunks")) request.result.createObjectStore("chunks", { keyPath: ["recordingId", "index"] });
       if (!request.result.objectStoreNames.contains("recordings")) request.result.createObjectStore("recordings", { keyPath: "recordingId" });
+      if (!request.result.objectStoreNames.contains("stills")) request.result.createObjectStore("stills", { keyPath: ["recordingId", "eventSequence"] });
     };
     request.onerror = () => resolve(false);
     request.onsuccess = () => {
@@ -173,10 +181,11 @@ export async function saveRecordingManifest(manifest: RecordingManifest): Promis
 export async function listRecordingManifests(): Promise<RecordingManifest[]> {
   if (!("indexedDB" in globalThis)) return [];
   return new Promise<RecordingManifest[]>((resolve) => {
-    const request = indexedDB.open("cubos-demo-recordings", 2);
+    const request = indexedDB.open("cubos-demo-recordings", 3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains("chunks")) request.result.createObjectStore("chunks", { keyPath: ["recordingId", "index"] });
       if (!request.result.objectStoreNames.contains("recordings")) request.result.createObjectStore("recordings", { keyPath: "recordingId" });
+      if (!request.result.objectStoreNames.contains("stills")) request.result.createObjectStore("stills", { keyPath: ["recordingId", "eventSequence"] });
     };
     request.onerror = () => resolve([]);
     request.onsuccess = () => {
@@ -184,6 +193,35 @@ export async function listRecordingManifests(): Promise<RecordingManifest[]> {
       const getAll = transaction.objectStore("recordings").getAll();
       getAll.onsuccess = () => resolve((getAll.result as RecordingManifest[]).filter((item) => item.chunkCount > 0 || item.status === "ready"));
       getAll.onerror = () => resolve([]);
+      transaction.oncomplete = () => request.result.close();
+    };
+  });
+}
+
+export async function persistRecordingStill(recordingId: string, eventSequence: number, blob: Blob): Promise<boolean> {
+  if (!("indexedDB" in globalThis)) return false;
+  return new Promise<boolean>((resolve) => {
+    const request = indexedDB.open("cubos-demo-recordings", 3);
+    request.onerror = () => resolve(false);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction("stills", "readwrite");
+      transaction.objectStore("stills").put({ recordingId, eventSequence, blob });
+      transaction.oncomplete = () => { request.result.close(); resolve(true); };
+      transaction.onerror = () => { request.result.close(); resolve(false); };
+    };
+  });
+}
+
+export async function loadRecordingStill(recordingId: string, eventSequence: number): Promise<Blob | null> {
+  if (!("indexedDB" in globalThis)) return null;
+  return new Promise<Blob | null>((resolve) => {
+    const request = indexedDB.open("cubos-demo-recordings", 3);
+    request.onerror = () => resolve(null);
+    request.onsuccess = () => {
+      const transaction = request.result.transaction("stills", "readonly");
+      const get = transaction.objectStore("stills").get([recordingId, eventSequence]);
+      get.onsuccess = () => resolve((get.result as { blob?: Blob } | undefined)?.blob ?? null);
+      get.onerror = () => resolve(null);
       transaction.oncomplete = () => request.result.close();
     };
   });

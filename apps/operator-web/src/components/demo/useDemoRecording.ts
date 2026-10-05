@@ -6,13 +6,15 @@ import {
   downloadBlob,
   isPhotoPauseEvent,
   loadRecordingChunks,
+  loadRecordingStill,
   listRecordingManifests,
   persistRecordingChunk,
+  persistRecordingStill,
   saveRecordingManifest,
   stopMediaStream,
   supportedRecorderMime,
   syncEvent,
-  verifiedPhotoWindowRemainingMs,
+  hasVerifiedPhotoCaptureWindow,
   type DemoSyncEvent,
   type RecordingManifest,
 } from "./recording";
@@ -22,7 +24,7 @@ interface StillRecord {
   requested_performance_ms: number;
   captured_performance_ms?: number;
   filename?: string;
-  status: "scheduled" | "captured" | "unavailable";
+  status: "scheduled" | "stored" | "unavailable";
   reason?: string;
 }
 
@@ -50,6 +52,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const chunkWritesRef = useRef<Promise<boolean>[]>([]);
+  const stillWritesRef = useRef<Promise<void>[]>([]);
   const syncRef = useRef<DemoSyncEvent[]>([]);
   const stillsRef = useRef<StillRecord[]>([]);
   const observedSequencesRef = useRef(new Set<number>());
@@ -116,6 +119,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     const recordingId = recordingIdRef.current;
     chunksRef.current = [];
     chunkWritesRef.current = [];
+    stillWritesRef.current = [];
     syncRef.current = [];
     stillsRef.current = [];
     observedSequencesRef.current = new Set(events.map((event) => event.sequence));
@@ -154,7 +158,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       const associatedCampaignId = campaignIdRef.current;
       const base = `cubos-${associatedCampaignId || "unassociated-campaign"}-${startedWallRef.current.replaceAll(":", "-")}`;
       const type = recorder.mimeType || mimeType || "video/webm";
-      await Promise.allSettled([manifestWriteRef.current, ...chunkWritesRef.current]);
+      await Promise.allSettled([manifestWriteRef.current, ...chunkWritesRef.current, ...stillWritesRef.current]);
       const persisted = await loadRecordingChunks(recordingId);
       const persistedByIndex = new Map(persisted.map((entry) => [entry.index, entry.chunk]));
       const merged = Array.from({ length: chunksRef.current.length }, (_, index) => persistedByIndex.get(index) ?? chunksRef.current[index]);
@@ -173,6 +177,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
         chunkCount: chunksRef.current.length,
         status: complete ? "ready" : "incomplete",
         sidecar,
+        stills: manifestRef.current?.stills,
       };
       manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
       await manifestWriteRef.current;
@@ -201,6 +206,15 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     if (manifest.sidecar) downloadBlob(new Blob([JSON.stringify(manifest.sidecar, null, 2)], { type: "application/json" }), `cubos-${manifest.campaignId ?? "unassociated-campaign"}-${manifest.startedWallTime.replaceAll(":", "-")}.sync.json`);
   }, []);
 
+  const downloadRecoverableStill = useCallback(async (manifest: RecordingManifest, eventSequence: number, filename: string) => {
+    const blob = await loadRecordingStill(manifest.recordingId, eventSequence);
+    if (!blob) {
+      setError("The saved still is unavailable.");
+      return;
+    }
+    downloadBlob(blob, filename);
+  }, []);
+
   const discardRecoverable = useCallback(async (recordingId: string) => {
     await deleteRecordingChunks(recordingId);
     setRecoverable(await listRecordingManifests());
@@ -226,15 +240,30 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       const serverNowAtCapture = serverNowEstimateMs == null || serverClockObservedPerformanceMs == null
         ? null
         : serverNowEstimateMs + Math.max(0, performance.now() - serverClockObservedPerformanceMs);
-      const remainingWindowMs = verifiedPhotoWindowRemainingMs(event, serverNowAtCapture);
-      const hasVerifiedWindow = remainingWindowMs != null && remainingWindowMs > 150;
+      const hasVerifiedWindow = hasVerifiedPhotoCaptureWindow(event, serverNowAtCapture);
       if (hasVerifiedWindow && previewRef.current) {
         const filename = `cubos-${campaignIdRef.current || "campaign"}-event-${event.sequence}.jpg`;
-        const captured = captureVideoStill(previewRef.current, filename);
-        still.captured_performance_ms = performance.now();
-        still.filename = captured ? filename : undefined;
-        still.status = captured ? "captured" : "unavailable";
-        still.reason = captured ? undefined : "preview_frame_unavailable";
+        const captureRecordingId = recordingIdRef.current;
+        const stillWrite = captureVideoStill(previewRef.current).then(async (blob) => {
+          still.captured_performance_ms = performance.now();
+          if (!blob) {
+            still.status = "unavailable";
+            still.reason = "preview_frame_unavailable";
+            return;
+          }
+          const stored = await persistRecordingStill(captureRecordingId, event.sequence, blob);
+          still.filename = stored ? filename : undefined;
+          still.status = stored ? "stored" : "unavailable";
+          still.reason = stored ? undefined : "still_storage_failed";
+          if (!manifestRef.current || manifestRef.current.recordingId !== captureRecordingId) return;
+          manifestRef.current.stills = stored
+            ? [...(manifestRef.current.stills ?? []), { eventSequence: event.sequence, filename }]
+            : manifestRef.current.stills;
+          manifestRef.current.sidecar = makeSidecar(campaignIdRef.current, captureRecordingId,
+            startedWallRef.current, startedPerformanceRef.current, manifestRef.current.mimeType, syncRef.current, stillsRef.current);
+          manifestWriteRef.current = manifestWriteRef.current.then(() => saveRecordingManifest({ ...manifestRef.current! }));
+        });
+        stillWritesRef.current.push(stillWrite);
       } else {
         still.status = "unavailable";
         still.reason = "pose_window_unverified";
@@ -255,6 +284,6 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
 
   return {
     devices, deviceId, setDeviceId, stream, recording, finalizing, recoverable, error,
-    setPreviewElement, enableCamera, startRecording, stopRecording, downloadRecoverable, discardRecoverable,
+    setPreviewElement, enableCamera, startRecording, stopRecording, downloadRecoverable, downloadRecoverableStill, discardRecoverable,
   };
 }
