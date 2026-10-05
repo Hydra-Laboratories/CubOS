@@ -30,7 +30,8 @@ describe("demo browser recording", () => {
       sequence: 9,
       timeline_elapsed_ms: 42000,
       video_elapsed_ms: 1750,
-      polling_uncertainty_ms: 43,
+      observation_uncertainty_ms: 43,
+      video_time_basis: "poll_observation",
     });
     expect(isPhotoPauseEvent(photoEvent)).toBe(true);
     expect(isPhotoPauseEvent({ ...photoEvent, kind: "measurement" })).toBe(false);
@@ -38,12 +39,16 @@ describe("demo browser recording", () => {
     expect(isPhotoPauseEvent({ ...photoEvent, data: { capture_still: true, wait_completed: false } })).toBe(false);
   });
 
-  it("associates only a new campaign or an existing campaign that starts running", () => {
+  it("associates only a newly created running campaign", () => {
     const baseline = new Map([["old", "completed"], ["prepared", "pending"]]);
     expect(campaignToAssociate([
       { campaign_id: "old", state: "completed", created_at: "2026-10-05T10:00:00Z" },
       { campaign_id: "prepared", state: "running", created_at: "2026-10-05T11:00:00Z" },
-    ], baseline)?.campaign_id).toBe("prepared");
+      { campaign_id: "new", state: "running", created_at: "2026-10-05T12:00:00Z" },
+    ], baseline)?.campaign_id).toBe("new");
+    expect(campaignToAssociate([
+      { campaign_id: "prepared", state: "running" },
+    ], baseline)).toBeNull();
     expect(campaignToAssociate([
       { campaign_id: "old", state: "completed" },
     ], baseline)).toBeNull();

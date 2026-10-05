@@ -179,7 +179,7 @@ export default function DemoPresentation() {
     queryFn: async () => {
       const started = performance.now();
       const result = await demoApi.presentation(campaignId);
-      setPollingUncertaintyMs(Math.max(1, (performance.now() - started) / 2));
+      setPollingUncertaintyMs(1000 + Math.max(1, (performance.now() - started) / 2));
       return result;
     },
     enabled: campaignId.length > 0,
@@ -191,11 +191,15 @@ export default function DemoPresentation() {
     setDeviceId: setCameraDeviceId,
     stream: cameraStream,
     recording: cameraRecording,
+    finalizing: cameraFinalizing,
+    recoverable: recoverableRecordings,
     error: cameraError,
     setPreviewElement,
     enableCamera,
     startRecording,
     stopRecording,
+    downloadRecoverable,
+    discardRecoverable,
   } = useDemoRecording(campaignId, presentation.data?.events ?? [], pollingUncertaintyMs);
 
   useEffect(() => {
@@ -313,7 +317,7 @@ export default function DemoPresentation() {
         <header className="demo-producer-bar">
           <a className="demo-brand" href="/" aria-label="Back to CubOS Operator"><span aria-hidden="true">C</span><strong>CubOS Color Lab</strong></a>
           <label>Campaign
-            <select value={campaignId} onChange={(event) => selectCampaign(event.target.value)}>
+            <select value={campaignId} disabled={cameraRecording || cameraFinalizing} onChange={(event) => selectCampaign(event.target.value)}>
               <option value="">Choose a campaign…</option>
               {(campaigns.data ?? []).map((campaign) => (
                 <option key={campaign.campaign_id} value={campaign.campaign_id}>{campaign.spec?.name ?? `Campaign ${campaign.campaign_id}`}</option>
@@ -333,7 +337,7 @@ export default function DemoPresentation() {
                   {cameraDevices.map((device, index) => <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}
                 </select>
               </label>
-              <button type="button" className={cameraRecording ? "demo-recording-stop" : ""}
+              <button type="button" disabled={cameraFinalizing} className={cameraRecording ? "demo-recording-stop" : ""}
                 onClick={cameraRecording ? stopRecording : () => {
                   if (!campaignId) {
                     campaignBaselineRef.current = new Map((campaigns.data ?? []).map((campaign) => [String(campaign.campaign_id), campaign.state]));
@@ -341,12 +345,24 @@ export default function DemoPresentation() {
                   }
                   startRecording();
                 }}>
-                {cameraRecording ? "Stop & download" : campaignId ? "Start recording" : "Record next campaign"}
+                {cameraFinalizing ? "Preparing files…" : cameraRecording ? "Stop & download" : campaignId ? "Start recording" : "Record next campaign"}
               </button>
             </>
           )}
           {cameraError && <span className="demo-video-error" role="alert">{cameraError}</span>}
           {armedForCampaign && <span className="demo-arm-status" role="status">Recording · waiting for the next campaign</span>}
+          {recoverableRecordings.length > 0 && (
+            <details className="demo-recoveries">
+              <summary>Saved recordings ({recoverableRecordings.length})</summary>
+              {recoverableRecordings.map((item) => (
+                <div key={item.recordingId}>
+                  <span>{item.campaignId ?? "Unassociated"} · {new Date(item.startedWallTime).toLocaleString()}</span>
+                  <button type="button" onClick={() => void downloadRecoverable(item)}>Download</button>
+                  <button type="button" onClick={() => void discardRecoverable(item.recordingId)}>Discard</button>
+                </div>
+              ))}
+            </details>
+          )}
           {videoError && <span className="demo-video-error" role="alert">{videoError}</span>}
           <label>Video offset
             <input type="number" value={footageOffsetMs} step={100} onChange={(event) => setFootageOffsetMs(Number(event.target.value) || 0)} />

@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DemoEvent } from "./types";
 import {
-  captureVideoStill,
+  deleteRecordingChunks,
   downloadBlob,
   isPhotoPauseEvent,
   loadRecordingChunks,
+  listRecordingManifests,
   persistRecordingChunk,
+  saveRecordingManifest,
   stopMediaStream,
   supportedRecorderMime,
   syncEvent,
   type DemoSyncEvent,
+  type RecordingManifest,
 } from "./recording";
 
 interface StillRecord {
@@ -18,6 +21,7 @@ interface StillRecord {
   captured_performance_ms?: number;
   filename?: string;
   status: "scheduled" | "captured" | "unavailable";
+  reason?: string;
 }
 
 export function useDemoRecording(campaignId: string, events: DemoEvent[], pollingUncertaintyMs: number) {
@@ -25,11 +29,13 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   const [deviceId, setDeviceId] = useState("");
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [recording, setRecording] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [recoverable, setRecoverable] = useState<RecordingManifest[]>([]);
   const [error, setError] = useState<string | null>(null);
   const previewRef = useRef<HTMLVideoElement | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
-  const chunkWritesRef = useRef<Promise<void>[]>([]);
+  const chunkWritesRef = useRef<Promise<boolean>[]>([]);
   const syncRef = useRef<DemoSyncEvent[]>([]);
   const stillsRef = useRef<StillRecord[]>([]);
   const observedSequencesRef = useRef(new Set<number>());
@@ -38,9 +44,11 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   const startedPerformanceRef = useRef(0);
   const startedWallRef = useRef("");
   const recordingIdRef = useRef("");
+  const manifestWriteRef = useRef<Promise<boolean>>(Promise.resolve(false));
   const campaignIdRef = useRef(campaignId);
 
   useEffect(() => { campaignIdRef.current = campaignId; }, [campaignId]);
+  useEffect(() => { void listRecordingManifests().then(setRecoverable); }, []);
 
   const setPreviewElement = useCallback((element: HTMLVideoElement | null) => {
     previewRef.current = element;
@@ -79,6 +87,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   }, [deviceId, refreshDevices]);
 
   const startRecording = useCallback(() => {
+    if (finalizing) return;
     if (!stream || !("MediaRecorder" in globalThis)) {
       setError("This browser cannot record the camera preview.");
       return;
@@ -89,50 +98,93 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
     startedPerformanceRef.current = now;
     startedWallRef.current = new Date().toISOString();
     recordingIdRef.current = globalThis.crypto?.randomUUID?.() ?? `recording-${Date.now()}`;
+    const recordingId = recordingIdRef.current;
     chunksRef.current = [];
     chunkWritesRef.current = [];
     syncRef.current = [];
     stillsRef.current = [];
     observedSequencesRef.current = new Set(events.map((event) => event.sequence));
     photoSequencesRef.current = new Set();
+    manifestWriteRef.current = saveRecordingManifest({
+      recordingId,
+      campaignId: campaignIdRef.current || null,
+      startedWallTime: startedWallRef.current,
+      mimeType: recorder.mimeType || mimeType || "video/webm",
+      chunkCount: 0,
+      status: "recording",
+    });
+    void manifestWriteRef.current.then((saved) => { if (!saved) setError("Persistent recording storage is unavailable; this recording is using browser memory until download."); });
     recorder.ondataavailable = (event) => {
       if (!event.data.size) return;
       const index = chunksRef.current.push(event.data) - 1;
-      chunkWritesRef.current.push(persistRecordingChunk(recordingIdRef.current, index, event.data));
+      const write = persistRecordingChunk(recordingId, index, event.data);
+      chunkWritesRef.current.push(write);
+      void write.then((persisted) => {
+        if (persisted) chunksRef.current[index] = new Blob();
+      });
     };
     recorder.onerror = () => {
       setError("Recording stopped because the browser reported a recorder error.");
       setRecording(false);
     };
     recorder.onstop = async () => {
+      setFinalizing(true);
       const associatedCampaignId = campaignIdRef.current;
       const base = `cubos-${associatedCampaignId || "unassociated-campaign"}-${startedWallRef.current.replaceAll(":", "-")}`;
       const type = recorder.mimeType || mimeType || "video/webm";
-      await Promise.allSettled(chunkWritesRef.current);
-      const persisted = await loadRecordingChunks(recordingIdRef.current);
-      downloadBlob(new Blob(persisted.length ? persisted : chunksRef.current, { type }), `${base}.${type.includes("mp4") ? "mp4" : "webm"}`);
+      await Promise.allSettled([manifestWriteRef.current, ...chunkWritesRef.current]);
+      const persisted = await loadRecordingChunks(recordingId);
+      const persistedByIndex = new Map(persisted.map((entry) => [entry.index, entry.chunk]));
+      const merged = Array.from({ length: chunksRef.current.length }, (_, index) => persistedByIndex.get(index) ?? chunksRef.current[index])
+        .filter((chunk) => chunk?.size);
+      downloadBlob(new Blob(merged, { type }), `${base}.${type.includes("mp4") ? "mp4" : "webm"}`);
       downloadBlob(new Blob([JSON.stringify({
         schema_version: "1",
         campaign_id: associatedCampaignId || null,
-        recording_id: recordingIdRef.current,
+        recording_id: recordingId,
         recording_started_wall_time: startedWallRef.current,
         recording_started_performance_ms: startedPerformanceRef.current,
         mime_type: type,
         audio: false,
-        clock_note: "video_elapsed_ms uses performance.now(); polling_uncertainty_ms is half the presentation request duration",
+        clock_note: "video_elapsed_ms is the local poll-observation time, not an exact hardware-frame timestamp; observation_uncertainty_ms includes the 1 s poll cadence plus half the request duration",
         events: syncRef.current,
         stills: stillsRef.current,
       }, null, 2)], { type: "application/json" }), `${base}.sync.json`);
+      await saveRecordingManifest({
+        recordingId,
+        campaignId: associatedCampaignId || null,
+        startedWallTime: startedWallRef.current,
+        mimeType: type,
+        chunkCount: chunksRef.current.length,
+        status: "ready",
+      });
+      setRecoverable(await listRecordingManifests());
       setRecording(false);
+      setFinalizing(false);
     };
     recorderRef.current = recorder;
     recorder.start(2000);
     setRecording(true);
     setError(null);
-  }, [events, stream]);
+  }, [events, finalizing, stream]);
 
   const stopRecording = useCallback(() => {
     if (recorderRef.current?.state !== "inactive") recorderRef.current?.stop();
+  }, []);
+
+  const downloadRecoverable = useCallback(async (manifest: RecordingManifest) => {
+    const entries = await loadRecordingChunks(manifest.recordingId);
+    if (entries.length !== manifest.chunkCount) {
+      setError("The recoverable recording is incomplete and was not downloaded.");
+      return;
+    }
+    const extension = manifest.mimeType.includes("mp4") ? "mp4" : "webm";
+    downloadBlob(new Blob(entries.map((entry) => entry.chunk), { type: manifest.mimeType }), `cubos-${manifest.campaignId ?? "unassociated-campaign"}-${manifest.startedWallTime.replaceAll(":", "-")}.${extension}`);
+  }, []);
+
+  const discardRecoverable = useCallback(async (recordingId: string) => {
+    await deleteRecordingChunks(recordingId);
+    setRecoverable(await listRecordingManifests());
   }, []);
 
   useEffect(() => {
@@ -147,19 +199,8 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
       photoSequencesRef.current.add(event.sequence);
       const still: StillRecord = { event_sequence: event.sequence, requested_performance_ms: observed, status: "scheduled" };
       stillsRef.current.push(still);
-      const serverMs = typeof event.server_time === "number"
-        ? (event.server_time < 1e12 ? event.server_time * 1000 : event.server_time)
-        : Date.parse(event.server_time);
-      const eventAgeMs = Number.isFinite(serverMs) ? Math.max(0, Date.now() - serverMs) : Infinity;
-      if (eventAgeMs > Math.max(2500, pollingUncertaintyMs * 2 + 500)) {
-        still.status = "unavailable";
-        return;
-      }
-      const filename = `cubos-${campaignId || "campaign"}-event-${event.sequence}.jpg`;
-      const captured = previewRef.current ? captureVideoStill(previewRef.current, filename) : false;
-      still.captured_performance_ms = performance.now();
-      still.filename = captured ? filename : undefined;
-      still.status = captured ? "captured" : "unavailable";
+      still.status = "unavailable";
+      still.reason = "pose_window_unverified";
     });
   }, [campaignId, events, pollingUncertaintyMs, recording]);
 
@@ -170,7 +211,7 @@ export function useDemoRecording(campaignId: string, events: DemoEvent[], pollin
   }, [stream]);
 
   return {
-    devices, deviceId, setDeviceId, stream, recording, error,
-    setPreviewElement, enableCamera, startRecording, stopRecording,
+    devices, deviceId, setDeviceId, stream, recording, finalizing, recoverable, error,
+    setPreviewElement, enableCamera, startRecording, stopRecording, downloadRecoverable, discardRecoverable,
   };
 }
