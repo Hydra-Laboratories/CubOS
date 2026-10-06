@@ -417,6 +417,104 @@ class CampaignManager:
             self._save(record)
             return record.model_copy(deep=True)
 
+    @staticmethod
+    def _underexposed_only(trial, measurement) -> bool:
+        if not trial.objective_path or trial.objective_path.rsplit(".", 1)[-1] not in {"delta_e_00", "delta_e_76"}:
+            return False
+        if not isinstance(measurement, dict):
+            return False
+        quality = measurement.get("quality")
+        identity = measurement.get("well_identity")
+        if (
+            not isinstance(quality, dict)
+            or quality.get("flags") != ["underexposed"]
+            or quality.get("accepted") is not False
+            or quality.get("status") != "rejected"
+            or measurement.get("measurement_status") != "rejected"
+            or measurement.get("comparison_status") != "rejected"
+            or not isinstance(identity, dict)
+            or identity.get("expected_well") != trial.sample_well
+        ):
+            return False
+        # Check all non-exposure provenance without altering the stored evidence.
+        provenance = copy.deepcopy(measurement)
+        provenance["measurement_status"] = "accepted"
+        provenance["comparison_status"] = "accepted"
+        provenance["quality"]["accepted"] = True
+        try:
+            validate_objective_provenance(trial.objective_path, provenance)
+        except (TemplateError, ValueError):
+            return False
+        return True
+
+    def resume_underexposed(self, campaign_id):
+        with self._lock:
+            record = self._records.get(campaign_id)
+            if record is None:
+                raise KeyError(campaign_id)
+            if (
+                record.state != "failed"
+                or record.stop_reason != "batch_objective_rejected"
+                or record.spec.batch_size <= 1
+                or record.pending_batch is not None
+                or record.active_run_id is not None
+                or campaign_id in self._workers
+                or not record.trials
+                or len(record.trials) > record.spec.stop.max_trials
+                or (len(record.trials) % record.spec.batch_size != 0 and len(record.trials) != record.spec.stop.max_trials)
+            ):
+                raise RunConflictError("Only a completed batch rejected solely for underexposure can resume")
+            rejected = False
+            for index, trial in enumerate(record.trials):
+                child = self.runs.get(trial.run_id)
+                if trial.index != index or trial.batch_index != index // record.spec.batch_size + 1 or trial.state != "succeeded" or child is None or child.state != "succeeded":
+                    raise RunConflictError("All prior native batches must have succeeded")
+                measurement = extract_result_context(child.result, trial.objective_path or "")
+                if trial.objective_status == "rejected":
+                    rejected = True
+                    if trial.objective is not None or not self._underexposed_only(trial, measurement):
+                        raise RunConflictError("Rejected sample has unsafe or unknown measurement provenance")
+                elif trial.objective_status != "accepted" or trial.objective is None:
+                    raise RunConflictError("Prior samples must be accepted or solely underexposed")
+                else:
+                    validate_objective_provenance(trial.objective_path or "", measurement)
+                    if not isinstance(measurement, dict) or measurement.get("well_identity", {}).get("expected_well") != trial.sample_well:
+                        raise RunConflictError("Accepted sample identifies the wrong protocol well")
+                    if extract_result_objective(child.result, trial.objective_path or "") != trial.objective:
+                        raise RunConflictError("Persisted objective differs from the native result")
+            if not rejected:
+                raise RunConflictError("No underexposed sample to skip")
+            bundle = tuple(
+                (self.base / campaign_id / f"{name}.yaml").read_text()
+                for name in ("gantry", "deck", "protocol")
+            )
+            if not record.spec.mock_mode:
+                from cubos_api.routers import gantry as gantry_router
+                session = gantry_router.current_session()
+                if session is None or not session.connected:
+                    raise ValueError("Connect the calibrated gantry before resuming a real campaign")
+                if record.spec.fluid_state_id is None:
+                    raise RunConflictError("A durable physical state is required")
+            if record.spec.fluid_state_id is not None:
+                self.runs._resolve_run_state(bundle[1], RunStateSelection(fluid_state_id=record.spec.fluid_state_id))
+                tips = self._tip_snapshot(record.spec.fluid_state_id)
+                if tips is None or tips["pipette"]["attachment_uncertain"] or tips["pipette"]["tip_extension_mm"] is not None:
+                    raise RunConflictError("Resume requires a verified bare pipette")
+            self.runs.reserve_campaign(campaign_id)
+            record.spec.skip_underexposed = True
+            accepted = [trial.objective for trial in record.trials if trial.objective_status == "accepted"]
+            record.best_objective = (min(accepted) if record.spec.objective.direction == "minimize" else max(accepted)) if accepted else None
+            record.pause_requested = False
+            record.stop_requested = False
+            record.pause_reason = None
+            record.stop_reason = None
+            record.error = None
+            record.state = "running"
+            self._save(record)
+            self._workers.add(campaign_id)
+            threading.Thread(target=self._loop, args=(campaign_id, bundle), daemon=True, name=f"cubos-campaign-{campaign_id}").start()
+            return record.model_copy(deep=True)
+
     def control(self, campaign_id, action):
         with self._lock:
             record = self._records.get(campaign_id)
@@ -1026,9 +1124,10 @@ class CampaignManager:
                         except (TemplateError, ValueError) as exc:
                             trial.objective_status = "rejected"
                             trial.error = f"{type(exc).__name__}: {exc}"
-                            rejected.append(
-                                f"sample {trial.index + 1} ({trial.sample_well}): {exc}"
-                            )
+                            if not (spec.skip_underexposed and self._underexposed_only(trial, trial.measurement)):
+                                rejected.append(
+                                    f"sample {trial.index + 1} ({trial.sample_well}): {exc}"
+                                )
                     self._save(record)
                     if rejected:
                         self._finish(
@@ -1040,6 +1139,8 @@ class CampaignManager:
 
                     target_reached = False
                     for trial in batch_trials:
+                        if trial.objective_status != "accepted":
+                            continue
                         value = trial.objective
                         assert value is not None
                         previous = record.best_objective

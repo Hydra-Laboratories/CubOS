@@ -791,3 +791,156 @@ def test_preflight_uses_durable_available_tips_across_trials(tmp_path, monkeypat
     mock_spec = spec.model_copy(update={"mock_mode": True, "fluid_state_id": None})
     manager._preflight(mock_spec, manager._bundle(mock_spec))
     assert validations[-1][3] is None
+
+
+def _dark_recovery_fixture(tmp_path):
+    from cubos_api.models.campaigns import CampaignTrial
+    settings, spec = _setup(tmp_path, mock=True, max_trials=8)
+    spec = spec.model_copy(update={"batch_size": 3, "source_protocol_file": "source.yaml"})
+    runs = FakeRuns()
+    manager = CampaignManager(settings, runs, validator=lambda *args: None)
+    record = CampaignRecord(campaign_id="dark", spec=spec, state="failed",
+        stop_reason="batch_objective_rejected", created_at=time.time(), updated_at=time.time())
+    results = []
+    for index in range(6):
+        dark = index == 3
+        measurement = {
+            "measurement_status": "rejected" if dark else "accepted",
+            "comparison_status": "rejected" if dark else "accepted",
+            "quality": {"accepted": not dark, "status": "rejected" if dark else "accepted", "flags": ["underexposed"] if dark else []},
+            "processing_profile": {"schema": "cubos.camera-well-cielab.v1", "id": "profile"},
+            "reference_processing_profile_id": "profile",
+            "well_identity": {"expected_well": f"plate.{chr(65 + index)}5"},
+        }
+        if not dark:
+            measurement["delta_e_00"] = float(40 - index)
+        results.append(measurement)
+        record.trials.append(CampaignTrial(index=index, parameters={"x": 1.0},
+            run_id="native", state="succeeded", objective=None if dark else float(40-index),
+            objective_status="rejected" if dark else "accepted", measurement=measurement,
+            objective_path=f"{index}.delta_e_00", sample_well=f"plate.{chr(65 + index)}5", batch_index=index // 3 + 1))
+    runs.records["native"] = RunRecord(run_id="native", state="succeeded", created_at=time.time(), mock_mode=True, result={"results": results})
+    manager._records["dark"] = record
+    manager._save(record)
+    for name, content in zip(("gantry", "deck", "protocol"), manager._bundle(spec)):
+        (manager.base / "dark" / f"{name}.yaml").write_text(content)
+    return manager, runs, record
+
+
+def test_underexposure_resume_preserves_six_trials_and_accepted_scores(tmp_path, monkeypatch):
+    import cubos_api.services.campaign_manager as module
+    manager, runs, record = _dark_recovery_fixture(tmp_path)
+    before = [trial.model_dump() for trial in record.trials]
+    launched = []
+    monkeypatch.setattr(module.threading.Thread, "start", lambda self: launched.append(self))
+    resumed = manager.resume_underexposed("dark")
+    assert resumed.state == "running"
+    assert resumed.spec.skip_underexposed is True
+    assert len(resumed.trials) == 6
+    assert [trial.model_dump() for trial in resumed.trials] == before
+    assert resumed.best_objective == 35.0
+    assert runs.submissions == []
+    assert runs.state_resolutions == []
+    assert len(launched) == 1
+    with pytest.raises(RunConflictError):
+        manager.resume_underexposed("dark")
+    restored = CampaignManager(manager.settings, runs, validator=lambda *args: None)
+    assert restored.get("dark").state == "interrupted"
+    assert restored._workers == set()
+    assert runs.submissions == []
+
+
+@pytest.mark.parametrize("unsafe", ["centering", "profile", "native_failed", "pending", "wrong_well", "unknown_quality"])
+def test_underexposure_resume_refuses_unsafe_evidence(tmp_path, unsafe):
+    manager, runs, record = _dark_recovery_fixture(tmp_path)
+    measurement = runs.records["native"].result["results"][3]
+    if unsafe == "centering":
+        measurement["quality"]["flags"].append("expected_center_residual_too_large")
+    elif unsafe == "profile":
+        measurement["reference_processing_profile_id"] = "other"
+    elif unsafe == "native_failed":
+        runs.records["native"].state = "failed"
+    elif unsafe == "pending":
+        record.pending_batch = PendingBatch(batch_index=3, parameters=[{"x": 1.0}], protocol_yaml=PROTOCOL,
+            objective_paths=["0.delta_e_00"], sample_map=[{"candidate_well": "plate.G5"}])
+    elif unsafe == "wrong_well":
+        runs.records["native"].result["results"][0]["well_identity"]["expected_well"] = "plate.H5"
+    else:
+        measurement["quality"]["flags"] = []
+    with pytest.raises(RunConflictError):
+        manager.resume_underexposed("dark")
+    assert record.state == "failed"
+    assert record.spec.skip_underexposed is False
+    assert runs.owner is None
+    assert runs.submissions == []
+
+
+@pytest.mark.parametrize("final_dark", [False, True])
+def test_resumed_dark_batch_continues_at_g5_h5_and_never_scores_dark(tmp_path, monkeypatch, final_dark):
+    import cubos_api.services.campaign_manager as module
+    import cubos_api.services.color_batch as batch_module
+    from cubos_api.services.color_batch import BatchCompilation
+    manager, runs, record = _dark_recovery_fixture(tmp_path)
+    monkeypatch.setattr(module.threading.Thread, "start", lambda self: None)
+    manager.resume_underexposed("dark")
+    original = [trial.model_dump() for trial in record.trials]
+    suggestions = []
+    def suggest(_spec, observations, **kwargs):
+        suggestions.append(observations)
+        return {"x": float(len(suggestions) - 1)}
+    monkeypatch.setattr(manager, "_suggest", suggest)
+    monkeypatch.setattr(manager, "_batch_stock_shortages", lambda *args: [])
+    starts = []
+    def compile_batch(_yaml, _spec, parameters, start):
+        starts.append(start)
+        return BatchCompilation(PROTOCOL, ("0.delta_e_00", "1.delta_e_00"), tuple(
+            {"sample_index": start + offset, "candidate_well": f"plate.{chr(71 + offset)}5", "parameters": point, "objective_path": f"{offset}.delta_e_00"}
+            for offset, point in enumerate(parameters)))
+    monkeypatch.setattr(batch_module, "compile_color_trial_batch", compile_batch)
+    native_measurements = []
+    for offset in range(2):
+        measurement = dict(runs.records["native"].result["results"][0])
+        measurement["well_identity"] = {"expected_well": f"plate.{chr(71 + offset)}5"}
+        measurement["delta_e_00"] = float(34-offset)
+        if final_dark and offset == 1:
+            measurement = dict(runs.records["native"].result["results"][3])
+            measurement["well_identity"] = {"expected_well": "plate.H5"}
+        native_measurements.append(measurement)
+    run_id = "dark-batch-3"
+    runs.records[run_id] = RunRecord(run_id=run_id, state="succeeded", created_at=time.time(), mock_mode=True, result={"results": native_measurements})
+    manager._loop_batch("dark", manager._bundle(record.spec))
+    final = manager.get("dark")
+    assert final.state == "completed"
+    assert final.stop_reason == "trial_budget"
+    assert len(final.trials) == 8
+    assert [trial.model_dump() for trial in final.trials[:6]] == original
+    assert [trial.sample_well for trial in final.trials[6:]] == ["plate.G5", "plate.H5"]
+    assert starts == [6]
+    assert all(len(observations) == 5 for observations in suggestions)
+    assert final.best_objective == (34.0 if final_dark else 33.0)
+    assert final.trials[3].objective is None
+    assert final.trials[3].objective_status == "rejected"
+    assert runs.submissions == []
+
+
+@pytest.mark.parametrize("unsafe_tip", [False, True])
+def test_dark_resume_checks_durable_state_and_never_mutates_tips(tmp_path, monkeypatch, unsafe_tip):
+    import copy
+    import cubos_api.services.campaign_manager as module
+    manager, runs, record = _dark_recovery_fixture(tmp_path)
+    record.spec.fluid_state_id = 7
+    snapshot = {"pipette": {"attachment_uncertain": unsafe_tip, "tip_extension_mm": None}, "containers": [{"status": "used"}]}
+    before = copy.deepcopy(snapshot)
+    monkeypatch.setattr(manager, "_tip_snapshot", lambda *_args: snapshot)
+    monkeypatch.setattr(module.threading.Thread, "start", lambda self: None)
+    if unsafe_tip:
+        with pytest.raises(RunConflictError):
+            manager.resume_underexposed("dark")
+        assert record.state == "failed"
+        assert runs.owner is None
+    else:
+        manager.resume_underexposed("dark")
+        assert record.state == "running"
+    assert snapshot == before
+    assert runs.state_resolutions == [("deck: {}", 7)]
+    assert runs.submissions == []

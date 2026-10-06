@@ -79,6 +79,7 @@ class CampaignSpec(CampaignModel):
     mock_mode: bool = False
     fluid_state_id: int | None = Field(default=None, gt=0)
     batch_size: int = Field(default=1, ge=1, le=8)
+    skip_underexposed: bool = False
     source_protocol_file: str | None = Field(default=None, min_length=1, max_length=255)
     target_mode: Literal["camera", "rgb"] = "camera"
     target_rgb: tuple[float, float, float] | None = None
