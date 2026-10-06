@@ -11,11 +11,11 @@ test.describe("protocol fluid-state seed rows", () => {
     await page.goto("/");
 
     // Load gantry and deck so the Protocol tab unlocks, then a protocol.
-    await page.getByLabel("Import gantry config").selectOption("cub.yaml");
+    await page.getByLabel("Gantry config", { exact: true }).selectOption("cub.yaml");
     await page.getByRole("button", { name: "Deck", exact: true }).click();
-    await page.getByLabel("Import deck config").selectOption("asmi_deck.yaml");
+    await page.getByLabel("Deck config", { exact: true }).selectOption("asmi_deck.yaml");
     await page.getByRole("button", { name: "Protocol", exact: true }).click();
-    await page.getByLabel("Import protocol config").selectOption("indentation.yaml");
+    await page.getByLabel("Protocol config", { exact: true }).selectOption("indentation.yaml");
     await expect(page.getByText("Step 1:")).toBeVisible();
 
     await page.getByRole("radio", { name: "New fluid state" }).check();
