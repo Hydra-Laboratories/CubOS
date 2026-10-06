@@ -237,6 +237,34 @@ class Mill:
                 return True
         return False
 
+    def recover_critical_alarm(self, port: str, timeout: float = 3.0) -> str:
+        """Explicit reset-only recovery on one configured port; always close it."""
+        if self.active_connection or (self.ser_mill and self.ser_mill.is_open):
+            raise MillConnectionError("Controller serial session is already owned")
+        if not port:
+            raise MillConnectionError("Critical-alarm recovery requires a configured serial port")
+        self._init_state()
+        try:
+            self.ser_mill = serial.Serial(
+                port=port, baudrate=115200, timeout=0.1, write_timeout=0.5, exclusive=True,
+            )
+            # Remove a stale boot banner before requiring evidence of this reset.
+            self.ser_mill.reset_input_buffer()
+            self._write_serial(b"\x18")
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                line = self.ser_mill.readline().decode("ascii", errors="replace").strip()
+                if re.fullmatch(r"Grbl [0-9]+\.[0-9]+[a-z]? \['\$' for help\]", line):
+                    return line
+            raise MillConnectionError("No GRBL reset banner received; controller recovery unverified")
+        finally:
+            try:
+                if self.ser_mill is not None:
+                    self.ser_mill.close()
+            finally:
+                self.ser_mill = None
+                self._init_state()
+
     def connect(
         self,
         port: Optional[str] = None,

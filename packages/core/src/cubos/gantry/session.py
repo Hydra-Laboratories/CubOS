@@ -204,6 +204,31 @@ class GantrySession:
 
         return self.position()
 
+    def recover_critical_alarm(self, config_path: str | Path) -> GantryPositionSnapshot:
+        """Recover a disconnected controller without publishing a motion session."""
+        if not self._lock.acquire(blocking=False):
+            raise GantrySessionError("Gantry operation is busy")
+        try:
+            if self._gantry is not None:
+                raise GantrySessionError("Disconnect the owned gantry session before recovery")
+            config = self._load_config_from_yaml(config_path)
+            port = str(config.get("serial_port") or "")
+            if not port:
+                raise GantrySessionError("Critical-alarm recovery requires a configured serial port")
+            staged = self._gantry_factory(config=self._runtime_connect_config(config))
+            banner = staged.recover_critical_alarm(port)
+            self._last_position = None
+            return GantryPositionSnapshot(
+                connected=False,
+                status=f"{banner}: reset verified; disconnected. Alarm, homing and frame unverified",
+                calibration_warning=(
+                    "Soft reset clears modal and G92 state. EEPROM calibration is retained; "
+                    "verify WCO and position before separate unlock or motion."
+                ),
+            )
+        finally:
+            self._lock.release()
+
     def disconnect(self) -> GantryPositionSnapshot:
         if self._gantry is None:
             return GantryPositionSnapshot(connected=False, status="Disconnected")

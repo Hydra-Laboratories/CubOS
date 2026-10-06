@@ -225,6 +225,18 @@ class OvernightQueueManager:
             self._records[queue_id] = record
         return record.model_copy(deep=True)
 
+    @contextmanager
+    def controller_recovery(self):
+        """Exclude queue starts throughout a disconnected controller reset."""
+        with self._lock:
+            with self._claim_lock():
+                for path in self.base.glob("*/queue.json"):
+                    record = OvernightQueueRecord.model_validate_json(path.read_text())
+                    if record.state not in QUEUE_TERMINAL and record.state != "prepared":
+                        raise RunConflictError("An overnight queue owns the station")
+                with self.campaigns.controller_recovery():
+                    yield
+
     def start(self, queue_id: str) -> OvernightQueueRecord:
         with self._lock:
             with self._claim_lock():

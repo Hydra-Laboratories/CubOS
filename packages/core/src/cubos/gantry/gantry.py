@@ -105,6 +105,13 @@ class Gantry:
             self.logger.error("Error connecting to gantry: %s", exc)
             raise
 
+    def recover_critical_alarm(self, port: str) -> str:
+        """Reset the controller explicitly without connecting, unlocking or moving."""
+        if self._offline:
+            raise MillConnectionError("Critical-alarm recovery requires a physical controller")
+        assert self._mill is not None
+        return self._mill.recover_critical_alarm(port)
+
     def connected_port(self) -> str | None:
         """Return the connected serial port, if one is available."""
         if self._offline:

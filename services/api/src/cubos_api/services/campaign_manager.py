@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import json
 import logging
 import math
@@ -74,6 +75,15 @@ class CampaignManager:
         temporary = directory / "campaign.json.tmp"
         temporary.write_text(record.model_dump_json(indent=2))
         temporary.replace(directory / "campaign.json")
+
+    @contextmanager
+    def controller_recovery(self):
+        """Exclude campaign starts and every nonterminal campaign during reset."""
+        with self._lock:
+            if any(record.state not in TERMINAL for record in self._records.values()):
+                raise RunConflictError("An active-learning campaign owns the station")
+            with self.runs.inventory_edit():
+                yield
 
     def list(self):
         with self._lock:
