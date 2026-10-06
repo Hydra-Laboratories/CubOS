@@ -661,14 +661,14 @@ def set_grbl_setting(req: SetGrblSettingRequest) -> GrblSettingsResponse:
 @router.post("/recover-critical-alarm")
 def recover_critical_alarm(body: ConnectRequest) -> GantryPosition:
     """Explicit reset only; no unlock, homing or coordinate commands."""
-    from cubos_api.services.overnight_queue import get_overnight_queue_manager
+    from cubos_api.services.run_manager import get_run_manager
     from cubos_api.services.run_manager import RunConflictError
 
     if not body.filename:
         raise HTTPException(400, "Critical-alarm recovery requires an explicit gantry filename")
     session = _get_or_create_session()
     try:
-        with get_overnight_queue_manager().controller_recovery():
+        with get_run_manager().inventory_edit():
             with _run_state_lock:
                 if _run_state["active"]:
                     raise HTTPException(409, "Gantry is busy running a protocol")

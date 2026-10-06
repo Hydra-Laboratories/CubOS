@@ -12,12 +12,10 @@ describe("EditorTabs", () => {
     expect(screen.getByRole("button", { name: "Gantry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deck" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Protocol" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Active Learning" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Active Learning" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Deck" }));
     expect(onTabChange).toHaveBeenCalledWith("Deck");
-    await user.click(screen.getByRole("button", { name: "Active Learning" }));
-    expect(onTabChange).toHaveBeenCalledWith("Active Learning");
   });
 
   it("shows an unsaved dot on dirty tabs without changing the accessible name", () => {

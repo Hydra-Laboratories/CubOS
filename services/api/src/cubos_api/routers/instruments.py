@@ -125,10 +125,10 @@ def _sha256(path: Path) -> str:
 
 def _alignment_idle_snapshot(gantry_file: str):
     _reject_if_run_active()
-    from cubos_api.services.run_manager import active_campaign_owner
+    from cubos_api.services.run_manager import active_reservation_owner
 
-    if active_campaign_owner() is not None:
-        raise HTTPException(409, "A campaign owns the station")
+    if active_reservation_owner() is not None:
+        raise HTTPException(409, "An external client reserves the station")
     with _manual_lock:
         if _manual_instruments:
             raise HTTPException(
@@ -553,12 +553,12 @@ def save_camera_alignment(
             ) from exc
         runtime_config = validated.model_dump(mode="json", exclude_none=True)
         def persist_alignment() -> None:
-            from cubos_api.services.run_manager import active_campaign_owner
+            from cubos_api.services.run_manager import active_reservation_owner
 
             _reject_if_run_active()
-            if active_campaign_owner() is not None:
+            if active_reservation_owner() is not None:
                 raise HTTPException(
-                    409, "A campaign started before alignment save; preview again",
+                    409, "A reservation started before alignment save; preview again",
                 )
             with _manual_lock:
                 if _manual_instruments:

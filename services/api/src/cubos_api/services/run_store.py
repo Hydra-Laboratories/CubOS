@@ -5,10 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 import threading
 import time
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -18,8 +16,7 @@ from cubos_api.models.runs import RunEvent, RunRecord
 INPUT_ARTIFACTS = ("gantry.yaml", "deck.yaml", "protocol.yaml")
 OUTPUT_ARTIFACTS = ("result.json", "error.txt", "events.jsonl", "run.json")
 ALLOWED_ARTIFACTS = frozenset((*INPUT_ARTIFACTS, *OUTPUT_ARTIFACTS))
-COLOR_TARGET_ARTIFACT = re.compile(r"^color-target-analysis-\d+\.(?:json|png)$")
-COLOR_TARGET_SOURCE_ARTIFACT = "color-target-source.tiff"
+MEASUREMENT_ARTIFACT = re.compile(r"^measurement-\d+-(?:image_path|annotated_preview_path)\.(?:png|tif|tiff|jpg|jpeg|webp)$")
 
 
 def sha256_text(text: str) -> str:
@@ -158,146 +155,62 @@ class RunStore:
     def artifact_path(self, run_id: str, name: str) -> Path | None:
         if (
             name not in ALLOWED_ARTIFACTS
-            and name != COLOR_TARGET_SOURCE_ARTIFACT
-            and COLOR_TARGET_ARTIFACT.fullmatch(name) is None
+            and MEASUREMENT_ARTIFACT.fullmatch(name) is None
         ):
             return None
         path = self.run_dir(run_id) / name
         return path if path.is_file() else None
 
-    def freeze_color_target_source(
-        self,
-        record: RunRecord,
-        source: Path,
-        *,
-        allowed_root: Path,
-        capture_sha256: str,
-        initial_analysis: dict[str, Any],
-        annotated_preview: Path,
-    ) -> None:
-        """Copy and hash the captured target frame into the immutable run store."""
-        if re.fullmatch(r"[0-9a-f]{64}", capture_sha256) is None:
-            raise ValueError("Capture-time image digest must be lowercase SHA-256")
-        resolved_source = source.expanduser().resolve()
-        resolved_root = allowed_root.expanduser().resolve()
-        try:
-            resolved_source.relative_to(resolved_root)
-        except ValueError as exc:
-            raise ValueError("Color target image is outside the configured image root") from exc
-        if not resolved_source.is_file():
-            raise FileNotFoundError(f"Color target image was not found: {resolved_source}")
-        resolved_preview = annotated_preview.expanduser().resolve()
-        try:
-            resolved_preview.relative_to(resolved_root)
-        except ValueError as exc:
-            raise ValueError("Color target annotation is outside the configured image root") from exc
-        if not resolved_preview.is_file():
-            raise FileNotFoundError(
-                f"Color target annotation was not found: {resolved_preview}"
-            )
+    def collect_measurement_evidence(self, record: RunRecord, result: Any, *, allowed_root: Path) -> None:
+        """Preserve images from native measurements as addressable run evidence."""
+        roots = allowed_root.expanduser().resolve()
+        evidence = []
+        seen: dict[Path, tuple[str, str]] = {}
+        def collect(value: Any, result_path: str) -> None:
+            if isinstance(value, list):
+                for index, item in enumerate(value):
+                    collect(item, f"{result_path}.{index}" if result_path else str(index))
+            elif isinstance(value, dict):
+                for field in ("image_path", "annotated_preview_path"):
+                    source_text = value.get(field)
+                    if not isinstance(source_text, str) or not source_text:
+                        continue
+                    source = Path(source_text).expanduser().resolve()
+                    try:
+                        source.relative_to(roots)
+                    except ValueError as exc:
+                        raise ValueError("Measurement evidence is outside the configured image root") from exc
+                    if not source.is_file():
+                        raise FileNotFoundError(f"Measurement evidence is missing: {source.name}")
+                    if source not in seen:
+                        payload = source.read_bytes()
+                        digest = hashlib.sha256(payload).hexdigest()
+                        frame_metadata = value.get("frame_metadata")
+                        expected = frame_metadata.get("image_sha256") if isinstance(frame_metadata, dict) else None
+                        if field == "image_path" and expected is not None and expected != digest:
+                            raise ValueError("Measurement image no longer matches its capture digest")
+                        suffix = source.suffix.lower()
+                        if suffix not in {".png", ".tif", ".tiff", ".jpg", ".jpeg", ".webp"}:
+                            raise ValueError("Unsupported measurement image format")
+                        name = f"measurement-{len(seen)}-{field}{suffix}"
+                        destination = self.run_dir(record.run_id) / name
+                        if destination.exists():
+                            raise FileExistsError("Immutable measurement artifact already exists")
+                        temporary = destination.with_suffix(destination.suffix + ".tmp")
+                        temporary.write_bytes(payload)
+                        temporary.replace(destination)
+                        destination.chmod(0o444)
+                        seen[source] = (name, digest)
+                        record.artifacts.append(name)
+                    name, digest = seen[source]
+                    evidence.append({"result_path": result_path, "field": field, "artifact": name,
+                                     "sha256": digest, "source_path": source_text})
+                for key, item in value.items():
+                    if isinstance(item, (dict, list)):
+                        collect(item, f"{result_path}.{key}" if result_path else str(key))
         with self._artifact_lock:
-            destination = self.run_dir(record.run_id) / COLOR_TARGET_SOURCE_ARTIFACT
-            analysis_json = self.run_dir(record.run_id) / "color-target-analysis-0.json"
-            analysis_image = self.run_dir(record.run_id) / "color-target-analysis-0.png"
-            if destination.exists() or analysis_json.exists() or analysis_image.exists():
-                raise FileExistsError("Immutable color-target source already exists")
-            source_digest = hashlib.sha256(resolved_source.read_bytes()).hexdigest()
-            if source_digest != capture_sha256:
-                raise ValueError(
-                    "Color target image no longer matches its capture-time digest"
-                )
-            temporary = destination.with_suffix(".tiff.tmp")
-            shutil.copyfile(resolved_source, temporary)
-            copied_digest = hashlib.sha256(temporary.read_bytes()).hexdigest()
-            if copied_digest != source_digest:
-                temporary.unlink(missing_ok=True)
-                raise OSError("Color target source changed while it was being preserved")
-            temporary.replace(destination)
-            destination.chmod(0o444)
-            preview_tmp = analysis_image.with_suffix(".png.tmp")
-            shutil.copyfile(resolved_preview, preview_tmp)
-            preview_tmp.replace(analysis_image)
-            _atomic_write(
-                analysis_json,
-                json.dumps({
-                    "schema": "cubos.color-target-reanalysis.v1",
-                    "revision": 0,
-                    "source_image_sha256": capture_sha256,
-                    "analysis": initial_analysis,
-                }, indent=2, sort_keys=True, default=str) + "\n",
-            )
-            record.metadata["color_target_source_artifact"] = COLOR_TARGET_SOURCE_ARTIFACT
-            record.metadata["color_target_source_sha256"] = capture_sha256
-            if COLOR_TARGET_SOURCE_ARTIFACT not in record.artifacts:
-                record.artifacts.append(COLOR_TARGET_SOURCE_ARTIFACT)
-            for name in ("color-target-analysis-0.json", "color-target-analysis-0.png"):
-                if name not in record.artifacts:
-                    record.artifacts.append(name)
-
-    def append_color_target_analysis(
-        self,
-        record: RunRecord,
-        *,
-        artifact: dict[str, Any],
-        annotated_preview: Path,
-    ) -> tuple[RunRecord, dict[str, Any]]:
-        """Persist one immutable same-frame color-analysis revision."""
-        with self._artifact_lock:
-            current = self.read(record.run_id) or record
-            revisions = current.metadata.get("color_target_reanalyses", [])
-            history = list(revisions) if isinstance(revisions, list) else []
-            revision = max(
-                (
-                    int(item.get("revision", 0))
-                    for item in history if isinstance(item, dict)
-                ),
-                default=0,
-            ) + 1
-            stem = f"color-target-analysis-{revision}"
-            json_name = f"{stem}.json"
-            image_name = f"{stem}.png"
-            directory = self.run_dir(record.run_id)
-            json_path = directory / json_name
-            image_path = directory / image_name
-            if json_path.exists() or image_path.exists():
-                raise FileExistsError(
-                    f"Color-target analysis revision {revision} already exists"
-                )
-            complete_artifact = {**artifact, "revision": revision}
-            analysis = complete_artifact.get("analysis")
-            if isinstance(analysis, dict):
-                complete_artifact["analysis"] = {
-                    **analysis,
-                    "annotated_preview_path": str(image_path),
-                }
-            image_tmp = image_path.with_suffix(".png.tmp")
-            shutil.copyfile(annotated_preview, image_tmp)
-            image_tmp.replace(image_path)
-            _atomic_write(
-                json_path,
-                json.dumps(
-                    complete_artifact, indent=2, sort_keys=True, default=str,
-                ) + "\n",
-            )
-            history.append({
-                "revision": revision,
-                "source_image_sha256": complete_artifact["source_image_sha256"],
-                "json_artifact": json_name,
-                "image_artifact": image_name,
-                "analysis": complete_artifact["analysis"],
-            })
-            current.metadata["color_target_reanalyses"] = history
-            for name in (json_name, image_name):
-                if name not in current.artifacts:
-                    current.artifacts.append(name)
-            self.write(current)
-            return current, complete_artifact
-
-    @contextmanager
-    def color_target_analysis_transaction(self):
-        """Serialize same-frame analysis and immutable revision persistence."""
-        with self._artifact_lock:
-            yield
+            collect(result, "")
+            record.metadata["evidence_artifacts"] = evidence
 
     def incomplete_records(self) -> Iterable[RunRecord]:
         for path in self.base_dir.glob("*/run.json"):

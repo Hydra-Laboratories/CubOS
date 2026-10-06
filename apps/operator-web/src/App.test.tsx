@@ -1918,25 +1918,37 @@ describe("CubOS editor interactions", () => {
     expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/runs", expect.anything());
   });
 
-  it("keeps Protocol and Active Learning as independent tabs and preserves both drafts", async () => {
-    const user = userEvent.setup();
+  it("keeps learning workflows outside the hardware operator", async () => {
     renderApp();
     await waitForSettingsLoad();
-    await loadRequiredProtocolDependencies(user);
-
-    expect(screen.getByRole("button", { name: "Active Learning" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Protocol" }));
-    await importConfig(user, "Protocol config", "move.yaml");
-    expect(screen.getByRole("combobox", { name: "Protocol config" })).toHaveValue("move.yaml");
-
-    await user.click(screen.getByRole("button", { name: "Active Learning" }));
-    expect(screen.getByRole("combobox", { name: "Campaign protocol template" })).toHaveValue("move.yaml");
-    await user.clear(screen.getByLabelText("Campaign name"));
-    await user.type(screen.getByLabelText("Campaign name"), "saved campaign draft");
-
-    await user.click(screen.getByRole("button", { name: "Protocol" }));
-    expect(screen.getByRole("combobox", { name: "Protocol config" })).toHaveValue("move.yaml");
-    await user.click(screen.getByRole("button", { name: "Active Learning" }));
-    expect(screen.getByLabelText("Campaign name")).toHaveValue("saved campaign draft");
+    expect(screen.queryByRole("button", { name: "Active Learning" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Overnight" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Demo" })).not.toBeInTheDocument();
   });
+  it("requires operator confirmation before releasing an external station reservation", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetchMock(createState());
+    const original = fetchMock.getMockImplementation()!;
+    let reserved = true;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (input === "/api/v1/station/status") {
+        return jsonResponse({ reserved, owner: reserved ? "optimizer" : null, active_run_id: null });
+      }
+      if (input === "/api/v1/station/reservation/operator-release") {
+        expect(JSON.parse(String(init?.body))).toEqual({ owner: "optimizer", confirmation: "release optimizer" });
+        reserved = false;
+        return jsonResponse({ reserved: false, owner: null });
+      }
+      return original(input, init);
+    });
+    renderApp();
+    await waitForSettingsLoad();
+    await user.click(await screen.findByRole("button", { name: "Release reservation" }));
+    const dialog = screen.getByRole("alertdialog");
+    expect(within(dialog).getByText(/inspect the physical inventory/i)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/v1/station/reservation/operator-release", expect.anything());
+    await user.click(within(dialog).getByRole("button", { name: "Release reservation" }));
+    await waitFor(() => expect(screen.queryByText("Reserved by optimizer")).not.toBeInTheDocument());
+  });
+
 });

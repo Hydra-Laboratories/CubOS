@@ -528,7 +528,7 @@ class TestCameraMonitor:
 
         service = FakeMonitorService()
         service.running = True
-        monkeypatch.setattr(run_manager, "active_campaign_owner", lambda: "campaign-1")
+        monkeypatch.setattr(run_manager, "active_reservation_owner", lambda: "campaign-1")
         monkeypatch.setattr(
             instruments_router,
             "get_camera_monitor_service",
@@ -552,7 +552,7 @@ class TestCameraMonitor:
 
         service = FakeMonitorService()
         camera = object.__new__(OpenCVCamera)
-        monkeypatch.setattr(run_manager, "active_campaign_owner", lambda: "campaign-1")
+        monkeypatch.setattr(run_manager, "active_reservation_owner", lambda: "campaign-1")
         monkeypatch.setattr(
             instruments_router,
             "get_camera_monitor_service",
@@ -609,7 +609,7 @@ class TestCameraMonitor:
     ):
         from cubos_api.services import run_manager
 
-        monkeypatch.setattr(run_manager, "active_campaign_owner", lambda: "campaign-1")
+        monkeypatch.setattr(run_manager, "active_reservation_owner", lambda: "campaign-1")
 
         response = api_request(
             create_app(),

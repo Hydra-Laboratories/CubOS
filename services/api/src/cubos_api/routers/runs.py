@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Response
+from pathlib import Path
+from typing import Any
+from pydantic import Field
+import tempfile
+import logging
+from cubos.data import DataStore
+from cubos.protocol_engine.setup_validator import run_setup_validation
 from fastapi.responses import FileResponse
 from cubos.data import CapStateError, FluidStateError, TipStateError
 from cubos.protocol_engine.loader import load_protocol_from_yaml
@@ -20,6 +27,7 @@ from cubos_api.models.runs import (
     RunRecord,
     RunSubmission,
 )
+from cubos_api.models.state import RunStateSelection
 from cubos_api.services.run_manager import (
     RunConflictError,
     RunPolicyError,
@@ -54,6 +62,66 @@ def _jsonable(value):
     if isinstance(value, dict):
         return {str(key): _jsonable(item) for key, item in value.items()}
     return str(value)
+
+
+class RunValidationRequest(RunSubmission):
+    tip_snapshot: dict[str, Any] | None = Field(default=None)
+
+
+@router.post("/validate")
+def validate_run(body: RunValidationRequest) -> dict:
+    manager = get_run_manager()
+    try:
+        gantry_yaml, deck_yaml, protocol_yaml = manager._resolve_bundle(body)
+        manager._validate_bundle(gantry_yaml, deck_yaml, protocol_yaml)
+        tip_snapshot = None
+        if body.mock_mode and body.state is not None:
+            raise ValueError("Mock runs cannot modify durable physical state")
+        if body.state is not None:
+            if body.state.initial_state is not None:
+                raise ValueError("Create and seed the durable state before validating a stateful run")
+            state_id = manager._resolve_run_state(deck_yaml, body.state)
+            store = DataStore(manager.settings.data_db_path)
+            try:
+                tip_snapshot = store.get_tip_snapshot(state_id)
+            finally:
+                store.close()
+        if body.tip_snapshot is not None:
+            virtual_state_id = body.tip_snapshot.get("fluid_state_id")
+            if tip_snapshot is None and virtual_state_id is not None:
+                state_id = manager._resolve_run_state(deck_yaml, RunStateSelection(fluid_state_id=virtual_state_id))
+                store = DataStore(manager.settings.data_db_path)
+                try:
+                    tip_snapshot = store.get_tip_snapshot(state_id)
+                finally:
+                    store.close()
+            if tip_snapshot is None and not body.mock_mode:
+                raise ValueError("A virtual tip snapshot requires an existing durable state or mock mode")
+            if tip_snapshot is not None:
+                current = {(item["rack_key"], item["slot_id"]): item for item in tip_snapshot["containers"]}
+                virtual = body.tip_snapshot.get("containers", [])
+                if {(item["rack_key"], item["slot_id"]) for item in virtual} != set(current):
+                    raise ValueError("Virtual tip inventory must contain exactly the current slots")
+                for item in virtual:
+                    actual = current[(item["rack_key"], item["slot_id"])]
+                    if item["status"] == "available" and actual["status"] != "available":
+                        raise ValueError("Virtual tip inventory cannot make consumed tips available")
+                if body.tip_snapshot.get("pipette") != tip_snapshot["pipette"]:
+                    raise ValueError("Virtual validation cannot override physical pipette attachment")
+            tip_snapshot = body.tip_snapshot
+        with tempfile.TemporaryDirectory(prefix="cubos-run-check-") as directory:
+            paths = []
+            for name, content in (("gantry", gantry_yaml), ("deck", deck_yaml), ("protocol", protocol_yaml)):
+                path = Path(directory) / f"{name}.yaml"
+                path.write_text(content, encoding="utf-8")
+                paths.append(str(path))
+            result = run_setup_validation(*paths, tip_snapshot=tip_snapshot)
+        return {"valid": result.passed, "errors": list(result.errors), "output": result.output}
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return {"valid": False, "errors": [f"{type(exc).__name__}: {exc}"], "output": ""}
+    except Exception as exc:
+        logging.exception("Run validation failed unexpectedly")
+        return {"valid": False, "errors": [f"{type(exc).__name__}: {exc}"], "output": ""}
 
 
 @router.post("", response_model=RunRecord, status_code=202)

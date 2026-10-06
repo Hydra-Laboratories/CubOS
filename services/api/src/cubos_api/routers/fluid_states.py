@@ -355,8 +355,9 @@ def _require_station_idle() -> None:
     manager = get_run_manager()
     if status.get("active") or manager.active_run_id is not None:
         raise HTTPException(409, "station is busy with an active protocol run")
-    if manager.campaign_owner is not None:
-        raise HTTPException(409, "station is reserved by an active-learning campaign")
+    from cubos_api.services.run_manager import reservation_context
+    if manager.reservation_owner is not None and not manager.owns_reservation(reservation_context.get()):
+        raise HTTPException(409, "station is reserved by an external client")
 
 
 @router.post(

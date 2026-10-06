@@ -6,7 +6,7 @@
 .camera-alignment-fields label,.camera-alignment-fields>div { display:flex; flex-direction:column; gap:4px; color:var(--z-text-muted); font-size:11px; }
 .camera-alignment-fields select { min-width:0; padding:7px 8px; color:var(--z-ink); background:var(--z-surface-sunken); border:1px solid var(--z-border-strong); border-radius:6px; }
 .camera-alignment-fields code { padding:8px; color:var(--z-ink); background:var(--z-surface-sunken); border:1px solid var(--z-border); border-radius:6px; }
-.campaign-camera-alignment .campaign-camera-frame { max-width:720px; }
+.camera-camera-alignment .camera-camera-frame { max-width:720px; }
 .camera-alignment-actions { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }
 .camera-alignment-actions span { color:var(--z-text-muted); font-size:11px; }
 .camera-alignment-proposal { display:flex; flex-direction:column; gap:7px; padding:11px; border:1px solid var(--z-border); border-radius:7px; background:var(--z-surface-sunken); }
@@ -20,3 +20,14 @@
 .camera-alignment-error { color:var(--z-danger-text); background:var(--z-danger-bg); border:1px solid var(--z-danger-border); }
 .camera-alignment-success { color:var(--z-success-text); background:var(--z-success-bg); border:1px solid var(--z-success-border); }
 @media (max-width:780px) { .camera-alignment-fields { grid-template-columns:1fr; } .camera-alignment-header { flex-direction:column; } }
+
+.camera-camera { display:flex; flex-direction:column; gap:8px; }
+.camera-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.camera-toolbar h4 { margin:0; }
+.camera-note { font-size:12px; color:var(--z-text-muted); }
+.camera-camera-stale { font-size:12px; color:var(--z-warning-text); }
+.camera-camera-frame { position:relative; width:100%; overflow:hidden; border:1px solid var(--z-border); border-radius:6px; background:#101216; }
+.camera-camera-frame img { display:block; width:100%; height:100%; object-fit:contain; }
+.camera-camera-frame svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+.camera-optical-center { stroke:#f35c5c; stroke-width:1; vector-effect:non-scaling-stroke; }
+.camera-banner.camera-error { color:var(--z-danger-text); font-size:12px; }

@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { instrumentsApi } from "../../api/client";
 import type { CameraAlignmentProposal, DeckResponse, GantryPosition, GantryResponse } from "../../types";
 import * as theme from "../../theme";
-import CampaignCameraMonitor from "../campaigns/CampaignCameraMonitor";
+import CameraAlignmentPreview from "./CameraAlignmentPreview";
 import "./CameraAlignmentPanel.css";
 
 interface Props {
@@ -126,7 +126,7 @@ export default function CameraAlignmentPanel({
         <div><span>Current head WPos X, Y, Z</span><code>{currentHead}</code></div>
       </div>
 
-      {previewOpen && camera && <CampaignCameraMonitor instrument={camera} variant="alignment" onAlignmentStatusChange={handlePreviewStatus} />}
+      {previewOpen && camera && <CameraAlignmentPreview instrument={camera} onAlignmentStatusChange={handlePreviewStatus} />}
       {previewOpen && <div className={previewStatus.ready ? "camera-alignment-success" : "camera-alignment-warning"}>
         {previewStatus.ready
           ? `Live frame is fresh (${previewStatus.frameAgeSeconds?.toFixed(1)} s old).`

@@ -14,16 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from cubos_api.config import get_settings
 from cubos_api.routers import (
     data,
-    campaigns,
     deck,
     fluid_states,
     gantry,
     instruments,
-    overnight_queue,
     protocol,
-    presentation,
     raw,
     runs,
+    station,
     settings,
     system,
 )
@@ -119,27 +117,33 @@ async def _origin_host_middleware(request: Request, call_next):
             if scheme.lower() != "bearer" or not hmac.compare_digest(supplied, expected):
                 return JSONResponse({"detail": "Invalid API token"}, status_code=401)
 
+    from cubos_api.services.run_manager import get_run_manager, reservation_context, active_reservation_owner
+    supplied_reservation = request.headers.get("x-cubos-reservation")
     if request.method in _STATE_CHANGING_METHODS:
-        from cubos_api.services.run_manager import active_campaign_owner
-        owner = active_campaign_owner()
+        owner = active_reservation_owner()
+        manager = get_run_manager() if owner else None
         path = request.url.path
-        emergency = path in {"/api/v1/gantry/feed-hold", "/api/v1/gantry/jog-cancel"}
-        campaign_action = path.startswith("/api/v1/campaigns/")
-        camera_monitor_action = (
-            request.method == "POST"
-            and path
-            in {
-                "/api/v1/instruments/camera/monitor/start",
-                "/api/v1/instruments/camera/monitor/heartbeat",
-                "/api/v1/instruments/camera/monitor/stop",
-            }
-        )
+        emergency = path in {
+            "/api/v1/gantry/feed-hold", "/api/v1/gantry/jog-cancel", "/api/v1/protocol/cancel",
+        }
+        monitor_action = path in {
+            "/api/v1/instruments/camera/monitor/start",
+            "/api/v1/instruments/camera/monitor/heartbeat",
+            "/api/v1/instruments/camera/monitor/stop",
+        }
         native_cancel = path.startswith("/api/v1/runs/") and path.endswith("/cancel")
+        owner_checked_run = path in {"/api/v1/runs", "/api/v1/runs/validate"}
+        state_validation = path in {"/api/v1/station/state/validate", "/api/v1/station/reservation/operator-release"}
         if owner and not (
-            emergency or campaign_action or camera_monitor_action or native_cancel
+            emergency or monitor_action or native_cancel or owner_checked_run
+            or state_validation or manager.owns_reservation(supplied_reservation)
         ):
-            return JSONResponse({"detail": "Station reserved by an active-learning campaign; stop it before changing setup or moving manually."}, status_code=409)
-    return await call_next(request)
+            return JSONResponse({"detail": "Station reserved by an external client; release its reservation before changing setup."}, status_code=409)
+    context_token = reservation_context.set(supplied_reservation)
+    try:
+        return await call_next(request)
+    finally:
+        reservation_context.reset(context_token)
 
 
 @asynccontextmanager
@@ -172,10 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(system.router)
     app.include_router(runs.router)
-    # Register fixed overnight paths before the campaign-id catch-all routes.
-    app.include_router(overnight_queue.router)
-    app.include_router(campaigns.router)
-    app.include_router(presentation.router)
+    app.include_router(station.router)
     app.include_router(fluid_states.router)
 
     if FRONTEND_DIST.is_dir():

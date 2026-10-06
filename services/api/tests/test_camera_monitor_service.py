@@ -374,10 +374,10 @@ def test_expected_well_comes_only_from_stored_protocol_step(tmp_path):
     assert _expected_well(path, 0, None) == "plate.B4"
 
 
-def test_active_context_retains_persisted_measurement_frame_provenance(
+def test_active_context_uses_native_run_without_campaign_imports(
     tmp_path, monkeypatch,
 ):
-    from cubos_api.services import campaign_manager, run_manager
+    from cubos_api.services import run_manager
 
     run_dir = tmp_path / "runs" / "run-1"
     run_dir.mkdir(parents=True)
@@ -397,15 +397,9 @@ def test_active_context_retains_persisted_measurement_frame_provenance(
             "outcome": "started",
         },
     )
-    measurement = {
-        "image_path": "/images/trial.tiff",
-        "frame_metadata": {"frame_id": 22, "received_at": 200.0},
-        "well_identity": {"expected_well": "plate.A3"},
-        "roi": {"center_x_px": 455},
-    }
     fake_runs = SimpleNamespace(
         active_run_id="run-1",
-        campaign_owner="campaign-1",
+        reservation_owner="campaign-1",
         get=lambda run_id: SimpleNamespace(
             metadata={
                 "active_learning_campaign_id": "campaign-1",
@@ -417,21 +411,8 @@ def test_active_context_retains_persisted_measurement_frame_provenance(
             run_dir=lambda run_id: tmp_path / "runs" / run_id,
         ),
     )
-    campaign = SimpleNamespace(
-        spec=SimpleNamespace(objective=SimpleNamespace(path="0.delta_e_00")),
-        trials=[SimpleNamespace(run_id="run-1", measurement=measurement)],
-    )
     monkeypatch.setattr(run_manager, "get_run_manager", lambda: fake_runs)
-    monkeypatch.setattr(
-        campaign_manager,
-        "get_campaign_manager",
-        lambda: SimpleNamespace(get=lambda campaign_id: campaign),
-    )
-
     context = _active_execution_context()
-
     assert context["expected_well"] == "plate.A3"
-    assert context["analysis"]["frame_metadata"]["frame_id"] == 22
-    assert context["analysis"]["_source_run_id"] == "run-1"
-    assert context["analysis"]["_source_instrument"] == "camera"
-    assert context["analysis"]["_source_well"] == "plate.A3"
+    assert context["run_id"] == "run-1"
+    assert "analysis" not in context

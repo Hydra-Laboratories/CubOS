@@ -1,6 +1,6 @@
 import * as theme from "../../theme";
 
-const TABS = ["Gantry", "Deck", "Protocol", "Active Learning"] as const;
+const TABS = ["Gantry", "Deck", "Protocol"] as const;
 type TabName = (typeof TABS)[number];
 
 interface Props {

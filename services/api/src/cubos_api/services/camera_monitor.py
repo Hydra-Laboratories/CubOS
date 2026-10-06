@@ -604,7 +604,7 @@ def _active_execution_context() -> dict[str, Any]:
 
     manager = get_run_manager()
     run_id = manager.active_run_id
-    campaign_id = manager.campaign_owner
+    campaign_id = manager.reservation_owner
     result: dict[str, Any] = {
         "run_id": run_id,
         "campaign_id": campaign_id,
@@ -612,9 +612,7 @@ def _active_execution_context() -> dict[str, Any]:
     if run_id is not None:
         record = manager.get(run_id)
         if record is not None:
-            result["campaign_id"] = record.metadata.get(
-                "active_learning_campaign_id", campaign_id
-            )
+            result["campaign_id"] = campaign_id
             result["trial_number"] = record.metadata.get("trial")
             step = _active_step(manager.store.events(run_id))
             if step is not None:
@@ -625,25 +623,6 @@ def _active_execution_context() -> dict[str, Any]:
                     step.get("step_substep"),
                 ))
 
-    if campaign_id is not None:
-        try:
-            from cubos_api.services.campaign_manager import get_campaign_manager
-
-            campaign = get_campaign_manager().get(campaign_id)
-        except (KeyError, OSError, ValueError):
-            campaign = None
-        if campaign is not None:
-            for trial in reversed(campaign.trials):
-                if trial.measurement:
-                    analysis = dict(trial.measurement)
-                    analysis["_source_run_id"] = trial.run_id
-                    source = _analysis_protocol_source(
-                        manager.store.run_dir(trial.run_id) / "protocol.yaml",
-                        campaign.spec.objective.path,
-                    )
-                    analysis.update(source)
-                    result["analysis"] = analysis
-                    break
     return result
 
 

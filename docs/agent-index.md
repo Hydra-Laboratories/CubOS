@@ -83,3 +83,9 @@ These rules apply throughout `packages/core/src/cubos/`:
 - Error-stage routing: for any function that returns a result object with a `stage` field, each distinct stage value must have at least one test that triggers it and asserts `result.stage == "<stage>"`.
 - Negative cases for status-matching functions: parametrize healthy status strings such as `"<Idle|WPos:0,0,0>"` and `None` alongside positive cases to prevent regressions from broadened token matching.
 - Validation-engine failures: use `monkeypatch` to make validator functions raise and verify the calling pipeline returns a structured error result rather than propagating the raw exception.
+
+## External experiment applications
+
+- `services/api/src/cubos_api/routers/station.py` — generic station reservations, current state validation and category-specific YAML snapshots.
+- `services/api/src/cubos_api/routers/runs.py`, `services/api/src/cubos_api/services/run_manager.py`, `run_store.py` — asynchronous execution, inline validation and immutable measurement artifacts.
+- `docs/external-clients.md` — operator and HTTP client contract. Active learning, color campaign orchestration and overnight queue policy are maintained in the separate Ursa Learning application.

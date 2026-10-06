@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import logging
+import hmac
+import json
+import secrets
+from contextvars import ContextVar
 import tempfile
 import threading
 import time
@@ -27,6 +31,8 @@ from cubos_api.services.run_store import RunStore, sha256_text
 from cubos_api.services.step_observer import RunStoreStepObserver
 from cubos_api.services.yaml_io import resolve_config_path
 
+
+reservation_context: ContextVar[str | None] = ContextVar("cubos_reservation", default=None)
 
 log = logging.getLogger(__name__)
 
@@ -125,7 +131,13 @@ class RunManager:
         self.store = RunStore(settings.ensure_run_dir())
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
-        self._campaign_owner: str | None = None
+        self._reservation_owner: str | None = None
+        self._reservation_token: str | None = None
+        self._reservation_path = self.settings.ensure_run_dir() / "station-reservation.json"
+        if self._reservation_path.exists():
+            saved = json.loads(self._reservation_path.read_text())
+            self._reservation_owner = saved["owner"]
+            self._reservation_token = saved["reservation_token"]
         self._recover_interrupted_runs()
 
     def _recover_interrupted_runs(self) -> None:
@@ -143,38 +155,72 @@ class RunManager:
             return self._active_run_id
 
     @property
-    def campaign_owner(self) -> str | None:
+    def reservation_owner(self) -> str | None:
         with self._lock:
-            return self._campaign_owner
+            return self._reservation_owner
 
-    def reserve_campaign(self, campaign_id: str) -> None:
+    def owns_reservation(self, token: str | None) -> bool:
         with self._lock:
-            if self._active_run_id is not None or self._campaign_owner is not None:
-                raise RunConflictError("The station already has an active run or campaign")
-            self._campaign_owner = campaign_id
+            return self._matches_reservation(token)
 
-    def release_campaign(self, campaign_id: str) -> None:
+    def _matches_reservation(self, token: str | None) -> bool:
+        return bool(token and self._reservation_token and hmac.compare_digest(token, self._reservation_token))
+
+    def reserve_station(self, owner: str) -> str:
+        from cubos_api.routers import gantry
         with self._lock:
-            if self._campaign_owner == campaign_id:
-                self._campaign_owner = None
+            session = gantry.current_session()
+            if self._active_run_id is not None or self._reservation_owner is not None or gantry.run_active():
+                raise RunConflictError("The station already has an active run or reservation")
+            if session is not None and session.calibration_active:
+                raise RunConflictError("Finish calibration before reserving the station")
+            token = secrets.token_urlsafe(32)
+            from cubos_api.services.run_store import _atomic_write
+            _atomic_write(self._reservation_path, json.dumps({"owner": owner, "reservation_token": token}))
+            self._reservation_owner = owner
+            self._reservation_token = token
+            self._reservation_path.chmod(0o600)
+            return token
+
+    def operator_release_station(self, owner: str, confirmation: str) -> None:
+        from cubos_api.routers import gantry
+        with self._lock:
+            if self._reservation_owner != owner or confirmation != f"release {owner}":
+                raise RunConflictError("Confirm the current reservation owner before releasing it")
+            if self._active_run_id is not None or gantry.run_active():
+                raise RunConflictError("Wait for the active run to finish before releasing the station")
+            self._reservation_path.unlink(missing_ok=True)
+            self._reservation_owner = None
+            self._reservation_token = None
+
+    def release_station(self, token: str) -> None:
+        with self._lock:
+            if not self._matches_reservation(token):
+                raise RunConflictError("The reservation token does not own the station")
+            if self._active_run_id is not None:
+                raise RunConflictError("Wait for the active run to finish before releasing the station")
+            self._reservation_path.unlink(missing_ok=True)
+            self._reservation_owner = None
+            self._reservation_token = None
 
     @contextmanager
     def inventory_edit(self):
-        """Serialize operator inventory edits with campaign ownership changes."""
         with self._lock:
-            if self._active_run_id is not None or self._campaign_owner is not None:
-                raise RunConflictError(
-                    "The station is busy with an active run or campaign"
-                )
+            if self._active_run_id is not None or (
+                self._reservation_owner is not None
+                and not self._matches_reservation(reservation_context.get())
+            ):
+                raise RunConflictError("The station is busy with an active run or reservation")
             yield
 
-    def submit(self, submission: RunSubmission, *, campaign_owner: str | None = None) -> RunRecord:
+    def submit(self, submission: RunSubmission) -> RunRecord:
         run_id = submission.run_id or uuid.uuid4().hex
+        token = submission.reservation_token or reservation_context.get()
         with self._lock:
-            if self._campaign_owner is not None and campaign_owner != self._campaign_owner:
-                raise RunConflictError("The station is reserved by an active-learning campaign")
-            if campaign_owner is not None and campaign_owner != self._campaign_owner:
-                raise RunConflictError("Campaign does not own the station")
+            if self._reservation_owner is not None and not self._matches_reservation(token):
+                raise RunConflictError("The station is reserved by another client")
+            if token is not None and not self._matches_reservation(token):
+                raise RunConflictError("The reservation token does not own the station")
             if self._active_run_id is not None:
                 raise RunConflictError(f"server busy with run {self._active_run_id!r}")
             if self.store.exists(run_id) or self.store.run_dir(run_id).exists():
@@ -182,6 +228,8 @@ class RunManager:
 
             gantry_yaml, deck_yaml, protocol_yaml = self._resolve_bundle(submission)
             self._validate_bundle(gantry_yaml, deck_yaml, protocol_yaml)
+            if submission.mock_mode and submission.state is not None:
+                raise RunPolicyError("Mock runs cannot modify durable physical state")
             fluid_state_id = self._resolve_run_state(deck_yaml, submission.state)
             record = RunRecord(
                 run_id=run_id,
@@ -367,40 +415,7 @@ class RunManager:
                 )
             result = _jsonable(raw_result)
             record = self.store.read(run_id) or record
-            if record.metadata.get("active_learning_target"):
-                target_result = result.get("results") if isinstance(result, dict) else result
-                target_steps = target_result if isinstance(target_result, list) else [target_result]
-                measurement = next(
-                    (
-                        item for item in reversed(target_steps)
-                        if isinstance(item, dict) and item.get("image_path")
-                    ),
-                    None,
-                )
-                if measurement is None:
-                    raise RuntimeError("Color target run produced no saved image result")
-                frame_metadata = measurement.get("frame_metadata")
-                capture_sha256 = (
-                    frame_metadata.get("image_sha256")
-                    if isinstance(frame_metadata, dict) else None
-                )
-                if not isinstance(capture_sha256, str) or not capture_sha256:
-                    raise RuntimeError(
-                        "Color target run produced no capture-time image digest"
-                    )
-                annotated_preview = measurement.get("annotated_preview_path")
-                if not isinstance(annotated_preview, str) or not annotated_preview:
-                    raise RuntimeError(
-                        "Color target run produced no annotated analysis preview"
-                    )
-                self.store.freeze_color_target_source(
-                    record,
-                    Path(measurement["image_path"]),
-                    allowed_root=default_images_dir(),
-                    capture_sha256=capture_sha256,
-                    initial_analysis=measurement,
-                    annotated_preview=Path(annotated_preview),
-                )
+            self.store.collect_measurement_evidence(record, result, allowed_root=default_images_dir())
             record.state = "succeeded"
             record.result = result
             record.finished_at = time.time()
@@ -449,5 +464,10 @@ def reset_run_manager() -> None:
         _manager = None
 
 
-def active_campaign_owner() -> str | None:
-    return _manager.campaign_owner if _manager is not None else None
+def active_reservation_owner() -> str | None:
+    if _manager is None:
+        path = get_settings().run_dir.expanduser().resolve() / "station-reservation.json"
+        if not path.is_file():
+            return None
+        return get_run_manager().reservation_owner
+    return _manager.reservation_owner

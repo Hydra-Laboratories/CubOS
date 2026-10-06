@@ -7,9 +7,8 @@ import pytest
 from fastapi import HTTPException
 from cubos.gantry.session import GantryPositionSnapshot
 from cubos_api.routers import gantry
-from cubos_api.services import overnight_queue
-from cubos_api.services.campaign_manager import CampaignManager
 from cubos_api.services.run_manager import RunConflictError
+from cubos_api.services import run_manager
 
 
 @pytest.fixture
@@ -20,8 +19,8 @@ def recovery_setup(monkeypatch):
     session.recover_critical_alarm.return_value = GantryPositionSnapshot(connected=False)
     monkeypatch.setattr(gantry, '_get_or_create_session', lambda: session)
     monkeypatch.setattr(gantry, '_selected_gantry_path', lambda name: (name, 'selected.yaml'))
-    manager = SimpleNamespace(controller_recovery=lambda: nullcontext())
-    monkeypatch.setattr(overnight_queue, 'get_overnight_queue_manager', lambda: manager)
+    manager = SimpleNamespace(inventory_edit=lambda: nullcontext())
+    monkeypatch.setattr(run_manager, 'get_run_manager', lambda: manager)
     monkeypatch.setitem(gantry._run_state, 'active', False)
     return session, manager
 
@@ -46,7 +45,7 @@ def test_api_busy_guards_before_reset(recovery_setup, monkeypatch, reason):
         def busy():
             raise RunConflictError('campaign owns station')
             yield
-        manager.controller_recovery = busy
+        manager.inventory_edit = busy
     with pytest.raises(HTTPException) as caught:
         gantry.recover_critical_alarm(gantry.ConnectRequest(filename='cub.yaml'))
     assert caught.value.status_code == 409
@@ -61,38 +60,6 @@ def test_api_requires_filename(recovery_setup):
     session.recover_critical_alarm.assert_not_called()
 
 
-@pytest.mark.parametrize('state', ['running', 'paused', 'awaiting_refill'])
-def test_nonterminal_campaign_blocks_between_batches(state):
-    manager = CampaignManager.__new__(CampaignManager)
-    manager._lock = threading.RLock()
-    manager._records = {'campaign': SimpleNamespace(state=state)}
-    manager.runs = MagicMock()
-    with pytest.raises(RunConflictError):
-        with manager.controller_recovery():
-            pytest.fail('recovery should not be entered')
-    manager.runs.inventory_edit.assert_not_called()
-
-
-@pytest.mark.parametrize('state, blocked', [('prepared', False), ('running', True), ('completed', False)])
-def test_queue_guard_keeps_prepared_queue_and_blocks_running(tmp_path, state, blocked):
-    manager = overnight_queue.OvernightQueueManager.__new__(overnight_queue.OvernightQueueManager)
-    manager.base = tmp_path
-    manager._lock = threading.RLock()
-    manager.campaigns = SimpleNamespace(controller_recovery=lambda: nullcontext())
-    (tmp_path / 'job').mkdir()
-    (tmp_path / 'job' / 'queue.json').write_text('placeholder')
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(overnight_queue.OvernightQueueRecord, 'model_validate_json', lambda content: SimpleNamespace(state=state))
-        if blocked:
-            with pytest.raises(RunConflictError):
-                with manager.controller_recovery():
-                    pytest.fail('running queue must block')
-        else:
-            with manager.controller_recovery():
-                pass
-    assert (tmp_path / 'job' / 'queue.json').read_text() == 'placeholder'
-
-
 def test_session_busy_is_conflict(recovery_setup):
     from cubos.gantry.session import GantrySessionError
     session, _ = recovery_setup
@@ -102,28 +69,19 @@ def test_session_busy_is_conflict(recovery_setup):
     assert caught.value.status_code == 409
 
 
-def test_recovery_guard_excludes_campaign_reservation_until_exit():
-    from cubos_api.services.run_manager import RunManager
-    runs = RunManager.__new__(RunManager)
-    runs._lock = threading.Lock()
-    runs._active_run_id = None
-    runs._campaign_owner = None
-    campaigns = CampaignManager.__new__(CampaignManager)
-    campaigns._lock = threading.RLock()
-    campaigns._records = {}
-    campaigns.runs = runs
+def test_recovery_guard_excludes_new_reservation_until_exit(tmp_path):
+    from cubos_api.config import CubOSSettings
+    runs = run_manager.RunManager(CubOSSettings(config_dir=tmp_path / "configs", run_dir=tmp_path / "runs"))
     attempted = threading.Event()
     completed = threading.Event()
-
     def reserve():
         attempted.set()
-        runs.reserve_campaign('new-campaign')
+        runs.reserve_station("new-client")
         completed.set()
-
-    with campaigns.controller_recovery():
+    with runs.inventory_edit():
         worker = threading.Thread(target=reserve)
         worker.start()
         assert attempted.wait(1)
         assert not completed.wait(0.02)
     worker.join(1)
-    assert completed.is_set() and runs.campaign_owner == 'new-campaign'
+    assert completed.is_set() and runs.reservation_owner == "new-client"

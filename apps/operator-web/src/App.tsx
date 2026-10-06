@@ -1,9 +1,5 @@
 import React, { useRef, useState, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import CampaignPanel from "./components/campaigns/CampaignPanel";
-import DemoPresentation from "./components/demo/DemoPresentation";
-import OvernightQueuePanel from "./components/overnight/OvernightQueuePanel";
-import { campaignApi } from "./components/campaigns/api";
 import AppLayout from "./components/layout/AppLayout";
 import DeckVisualization from "./components/deck/DeckVisualization";
 import GantryPositionWidget from "./components/gantry/GantryPositionWidget";
@@ -107,7 +103,7 @@ type SavedMark = { filename: string; at: Date } | null;
 
 function OperatorApp() {
   const qc = useQueryClient();
-  const [activeView, setActiveView] = useState<"Workflow" | "Overnight" | "Run" | "Visualize" | "State" | "Results">("Workflow");
+  const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
   const [stationOpen, setStationOpen] = useState(true);
   const [uiTheme, setUiTheme] = useState<"light" | "dark">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
@@ -154,8 +150,8 @@ function OperatorApp() {
   const restoreWorkspace = (dir: string) => {
     const saved = loadWorkspaceState(dir);
     if (saved.activeTab) {
-      setActiveTab(saved.activeTab);
-      setStationOpen(saved.activeTab !== "Active Learning");
+      setActiveTab(["Gantry", "Deck", "Protocol"].includes(saved.activeTab) ? saved.activeTab : "Gantry");
+      setStationOpen(true);
     }
     setGantryFile(saved.gantryFile);
     setDeckFile(saved.deckFile);
@@ -262,18 +258,37 @@ function OperatorApp() {
   const validateProtocolSetup = useValidateProtocolSetup();
   const runStatus = useRunStatus();
   const serverRunActive = runStatus.data?.active ?? false;
-  const campaignRecords = useQuery({ queryKey: ["active-learning-campaigns", configDir],
-    queryFn: campaignApi.list, refetchInterval: 2000, retry: false });
-  const stationCampaign = Array.isArray(campaignRecords.data) ? campaignRecords.data.find((r) =>
-    !["completed", "stopped", "failed", "interrupted"].includes(r.state)) : undefined;
-  const protocolRunActive = isRunning || serverRunActive || !!stationCampaign;
-  React.useEffect(() => {
-    if (stationCampaign?.active_run_id) setActiveRunId(stationCampaign.active_run_id);
-    if (stationCampaign) {
-      qc.invalidateQueries({ queryKey: ["data", "campaigns"] });
-      qc.invalidateQueries({ queryKey: ["fluid-states"] });
+  const station = useQuery({
+    queryKey: ["station-status"],
+    queryFn: async () => {
+      const response = await fetch("/api/v1/station/status");
+      if (!response.ok) throw new Error("Could not read station ownership");
+      return response.json() as Promise<{ reserved: boolean; owner: string | null; active_run_id: string | null }>;
+    },
+    refetchInterval: 2000,
+    retry: false,
+  });
+  const protocolRunActive = isRunning || serverRunActive;
+  const releaseReservation = async () => {
+    const owner = station.data?.owner;
+    if (!owner || !(await requestConfirm({
+      title: "Release station reservation?",
+      message: `Confirm that ${owner} has stopped and inspect the physical inventory before releasing this reservation. The external client will need to reserve the station again.`,
+      confirmLabel: "Release reservation",
+      danger: true,
+    }))) return;
+    try {
+      const response = await fetch("/api/v1/station/reservation/operator-release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner, confirmation: `release ${owner}` }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await station.refetch();
+    } catch (error) {
+      setRunError(`Reservation release failed: ${errorMessage(error)}`);
     }
-  }, [stationCampaign, qc]);
+  };
   const gantryPosition = useGantryPosition(true);
   const experimentData = useExperimentData();
   const fluidStates = useFluidStates();
@@ -687,11 +702,7 @@ function OperatorApp() {
       // alone cannot say which run to cancel. `isRunning` is true only while
       // this tab's own submission is in flight; anything else active is a run
       // started elsewhere, which the session-wide endpoint below stops.
-      if (stationCampaign) {
-        await campaignApi.cancel(stationCampaign.campaign_id);
-        qc.invalidateQueries({ queryKey: ["active-learning-campaigns"] });
-        setRunError("Campaign cancellation requested.");
-      } else if (activeRunId && isRunning) {
+      if (activeRunId && isRunning) {
         await runsApi.cancel(activeRunId);
         setRunError("Protocol cancellation requested.");
       } else {
@@ -732,7 +743,6 @@ function OperatorApp() {
         {(
           [
             "Workflow",
-            "Overnight",
             // Only offered once a run exists — an empty run view is a dead
             // tab, and the run is what the operator navigates back to.
             ...(activeRunId ? (["Run"] as const) : []),
@@ -755,18 +765,18 @@ function OperatorApp() {
             {view}
           </button>
         ))}
-        <a
-          href="?view=demo"
-          style={{ ...viewToggleButtonStyle, color: theme.color.textMuted, textDecoration: "none" }}
-        >
-          Demo
-        </a>
       </div>
       <div style={{ flex: "1 1 auto" }} />
+      {station.data?.reserved && (
+        <div style={runStatusBannerStyle} role="status">
+          <span>Reserved by {station.data.owner}</span>
+          <button type="button" style={{ ...theme.btn.secondary, ...theme.btnSmall }} disabled={protocolRunActive || Boolean(station.data.active_run_id)} onClick={() => void releaseReservation()}>Release reservation</button>
+        </div>
+      )}
       {protocolRunActive && (
         <div className="cubos-pulse" style={runStatusBannerStyle} role="status">
           <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-            <span style={{ whiteSpace: "nowrap" }}>{stationCampaign ? `● Campaign ${stationCampaign.state.replaceAll("_", " ")}` : "● Protocol running…"}</span>
+            <span style={{ whiteSpace: "nowrap" }}>● Protocol running…</span>
             {runError && (
               <span style={runStatusWarningStyle} title={runError}>{runError}</span>
             )}
@@ -854,10 +864,10 @@ function OperatorApp() {
           activeTab={activeTab}
           onTabChange={(tab) => {
             setActiveTab(tab);
-            setStationOpen(tab !== "Active Learning");
+            setStationOpen(true);
           }}
           dirtyTabs={unsavedConfigs}
-          disabledTabs={!deckQuery.data || !gantryQuery.data ? ["Protocol", "Active Learning"] : []}
+          disabledTabs={!deckQuery.data || !gantryQuery.data ? ["Protocol"] : []}
           disabledMessage={(() => {
             const missing = [
               !gantryQuery.data && "Gantry",
@@ -1066,29 +1076,6 @@ function OperatorApp() {
           )}
         </>
       )}
-      {activeView === "Workflow" && activeTab === "Active Learning" && deckQuery.data && gantryQuery.data && <div>
-        <details className="campaign-template-disclosure">
-          <summary>
-            <span>Protocol template (advanced)</span>
-            <small>{protocolFile ?? "No template selected"}</small>
-          </summary>
-          <label>Saved protocol
-            <select className="campaign-template-select" aria-label="Campaign protocol template" value={protocolFile ?? ""}
-              onChange={(event) => void handleImportProtocol(event.target.value)}>
-              <option value="" disabled>Choose a saved protocol…</option>
-              {(protocolConfigs.data ?? []).map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-          </label>
-        </details>
-        <CampaignPanel gantryFile={gantryFile} deckFile={deckFile} protocolFile={protocolFile}
-          protocolSteps={protocolQuery.data?.steps ?? []}
-          deck={displayDeck ?? deckQuery.data ?? null}
-          gantry={displayGantry ?? gantryQuery.data ?? null}
-          availableFluidStates={fluidStates.data ?? []}
-          disabledReason={unsavedConfigs.length ? `Save ${unsavedConfigs.join(", ")} changes before starting a campaign.` : null}
-          onRunSelected={(runId) => { setActiveRunId(runId); setActiveView("Run"); }} />
-      </div>}
-      {activeView === "Overnight" && <OvernightQueuePanel />}
       {/* The persistent right column already carries the live deck view and
           gantry readout, so the run mode only needs to own the left region. */}
       {activeView === "Run" && activeRunId && (
@@ -1191,8 +1178,7 @@ function OperatorApp() {
 }
 
 export default function App() {
-  const params = new URLSearchParams(window.location.search);
-  return params.get("view") === "demo" ? <DemoPresentation /> : <OperatorApp />;
+  return <OperatorApp />;
 }
 
 function ConfigNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
