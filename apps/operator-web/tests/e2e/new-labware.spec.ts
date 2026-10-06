@@ -47,3 +47,56 @@ test("creates a custom grid through calibration without moving hardware", async 
   await page.screenshot({ path: testInfo.outputPath("new-labware-saved.png"), fullPage: true });
   expect(state.requests.filter((request) => request.method === "POST" && request.path.startsWith("/gantry/"))).toHaveLength(0);
 });
+
+for (const existingBlankDeck of [false, true]) {
+  test(`creates first labware ${existingBlankDeck ? "in blank YAML" : "with no deck files"} and reloads it`, async ({ page }, testInfo) => {
+    const state = await installApiMocks(page, { connected: true });
+    let saved: { labware: Record<string, { name: string; rows?: number; columns?: number }> } | null = null;
+    let x = 100;
+    const filename = existingBlankDeck ? "cub_deck.yaml" : "first-deck.yaml";
+    await page.route("**/api/v1/gantry/position", (route) => route.fulfill({ json: {
+      x, y: 50, z: 20, work_x: x, work_y: 50, work_z: 20, status: "Idle", connected: true, calibration_active: false,
+    } }));
+    await page.route("**/api/v1/deck/configs", (route) => route.fulfill({ json: saved ? [filename] : existingBlankDeck ? ["asmi_deck.yaml"] : [] }));
+    await page.route("**/api/v1/deck/*", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (!path.endsWith(".yaml")) return route.fallback();
+      if (route.request().method() === "PUT") saved = route.request().postDataJSON();
+      await route.fulfill({ json: { filename: path.split("/").at(-1), labware: Object.entries(saved?.labware ?? {}).map(([key, config]) => ({ key, config, wells: null })) } });
+    });
+    await page.goto("/");
+    await page.getByLabel("Gantry config", { exact: true }).selectOption("cub.yaml");
+    await page.getByRole("button", { name: "Deck", exact: true }).click();
+    if (existingBlankDeck) await page.getByLabel("Deck config", { exact: true }).selectOption("asmi_deck.yaml");
+    await expect(page.getByRole("button", { name: "+ Tip Rack", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "+ Tip Disposal", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Calibrate labware", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "New Labware", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    for (const [label, value] of [["Labware name", "First plate"], ["Rows", "4"], ["Columns", "5"], ["Well spacing X (mm)", "12.5"], ["Well spacing Y (mm)", "14"]]) {
+      await dialog.getByLabel(label, { exact: true }).fill(value);
+    }
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await dialog.getByRole("button", { name: "Record A1", exact: true }).click();
+    x = 112.5;
+    await dialog.getByRole("button", { name: "Record A2", exact: true }).click();
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await dialog.getByRole("button", { name: existingBlankDeck ? "Save labware calibration" : "Add to deck", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator("#first_plate-rows")).toHaveValue("4");
+    if (!existingBlankDeck) {
+      expect(saved).toBeNull();
+      await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+      await page.getByPlaceholder("my_deck.yaml", { exact: true }).fill("first-deck");
+      await page.getByRole("button", { name: "Save", exact: true }).click();
+    }
+    await expect.poll(() => saved?.labware.first_plate?.rows).toBe(4);
+    await page.reload();
+    await page.getByRole("button", { name: "Deck", exact: true }).click();
+    await expect(page.locator("#first_plate-rows")).toHaveValue("4");
+    await expect(page.locator("#first_plate-cols")).toHaveValue("5");
+    await expect(page.getByLabel("Calibration A2 Z", { exact: true })).toHaveValue("20");
+    await page.screenshot({ path: testInfo.outputPath("first-labware-saved.png"), fullPage: true });
+    expect(state.requests.filter((request) => request.method === "POST" && request.path.startsWith("/gantry/"))).toHaveLength(0);
+  });
+}

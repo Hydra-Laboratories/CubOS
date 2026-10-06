@@ -100,11 +100,11 @@ const FAILED_RUN: RunScenario = {
 
 async function startRun(page: import("@playwright/test").Page) {
   await page.goto("/");
-  await page.getByLabel("Import gantry config").selectOption("cub.yaml");
+  await page.getByLabel("Gantry config", { exact: true }).selectOption("cub.yaml");
   await page.getByRole("button", { name: "Deck", exact: true }).click();
-  await page.getByLabel("Import deck config").selectOption("asmi_deck.yaml");
+  await page.getByLabel("Deck config", { exact: true }).selectOption("asmi_deck.yaml");
   await page.getByRole("button", { name: "Protocol", exact: true }).click();
-  await page.getByLabel("Import protocol config").selectOption("indentation.yaml");
+  await page.getByLabel("Protocol config", { exact: true }).selectOption("indentation.yaml");
   await page.getByRole("button", { name: "Run Protocol" }).click();
   // Submitting switches the workspace into the Run view.
   await expect(page.getByRole("region", { name: "Run progress" })).toBeVisible();
