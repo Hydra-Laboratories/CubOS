@@ -418,25 +418,54 @@ class CampaignManager:
             return record.model_copy(deep=True)
 
     @staticmethod
-    def _underexposed_only(trial, measurement) -> bool:
+    def _skippable_photometric_rejection(trial, measurement) -> bool:
         if not trial.objective_path or trial.objective_path.rsplit(".", 1)[-1] not in {"delta_e_00", "delta_e_76"}:
             return False
         if not isinstance(measurement, dict):
             return False
         quality = measurement.get("quality")
         identity = measurement.get("well_identity")
+        roi = measurement.get("roi")
+        photometric_flags = {
+            "underexposed", "overexposed", "excessive_low_clipping",
+            "excessive_high_clipping", "excessive_glare",
+        }
+        flags = quality.get("flags") if isinstance(quality, dict) else None
+        if (
+            not isinstance(flags, list)
+            or not flags
+            or any(not isinstance(flag, str) for flag in flags)
+            or not set(flags) <= photometric_flags | {"low_valid_fraction"}
+            or not set(flags) & photometric_flags
+        ):
+            return False
         if (
             not isinstance(quality, dict)
-            or quality.get("flags") != ["underexposed"]
             or quality.get("accepted") is not False
             or quality.get("status") != "rejected"
             or measurement.get("measurement_status") != "rejected"
             or measurement.get("comparison_status") != "rejected"
             or not isinstance(identity, dict)
             or identity.get("expected_well") != trial.sample_well
+            or not isinstance(roi, dict)
+            or roi.get("method") != "detected_well_inner_disc"
+            or roi.get("detection_status") != "selected"
         ):
             return False
-        # Check all non-exposure provenance without altering the stored evidence.
+        radius = roi.get("radius_px")
+        residual = roi.get("center_residual_px")
+        confidence = roi.get("detection_confidence")
+        if (
+            any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)
+                for value in (radius, residual, confidence))
+            or radius <= 0
+            or residual < 0
+            or residual > radius
+            or confidence < 0.65
+            or confidence > 1
+        ):
+            return False
+        # Check non-photometric provenance without altering the stored evidence.
         provenance = copy.deepcopy(measurement)
         provenance["measurement_status"] = "accepted"
         provenance["comparison_status"] = "accepted"
@@ -463,7 +492,7 @@ class CampaignManager:
                 or len(record.trials) > record.spec.stop.max_trials
                 or (len(record.trials) % record.spec.batch_size != 0 and len(record.trials) != record.spec.stop.max_trials)
             ):
-                raise RunConflictError("Only a completed batch rejected solely for underexposure can resume")
+                raise RunConflictError("Only a completed batch with photometric-only rejection can resume")
             rejected = False
             for index, trial in enumerate(record.trials):
                 child = self.runs.get(trial.run_id)
@@ -472,10 +501,10 @@ class CampaignManager:
                 measurement = extract_result_context(child.result, trial.objective_path or "")
                 if trial.objective_status == "rejected":
                     rejected = True
-                    if trial.objective is not None or not self._underexposed_only(trial, measurement):
+                    if trial.objective is not None or not self._skippable_photometric_rejection(trial, measurement):
                         raise RunConflictError("Rejected sample has unsafe or unknown measurement provenance")
                 elif trial.objective_status != "accepted" or trial.objective is None:
-                    raise RunConflictError("Prior samples must be accepted or solely underexposed")
+                    raise RunConflictError("Prior samples must be accepted or have photometric-only rejection")
                 else:
                     validate_objective_provenance(trial.objective_path or "", measurement)
                     if not isinstance(measurement, dict) or measurement.get("well_identity", {}).get("expected_well") != trial.sample_well:
@@ -483,7 +512,9 @@ class CampaignManager:
                     if extract_result_objective(child.result, trial.objective_path or "") != trial.objective:
                         raise RunConflictError("Persisted objective differs from the native result")
             if not rejected:
-                raise RunConflictError("No underexposed sample to skip")
+                raise RunConflictError("No photometric rejection to skip")
+            if not any(trial.objective_status == "accepted" for trial in record.trials):
+                raise RunConflictError("At least one accepted observation is required to continue optimization")
             bundle = tuple(
                 (self.base / campaign_id / f"{name}.yaml").read_text()
                 for name in ("gantry", "deck", "protocol")
@@ -1124,11 +1155,15 @@ class CampaignManager:
                         except (TemplateError, ValueError) as exc:
                             trial.objective_status = "rejected"
                             trial.error = f"{type(exc).__name__}: {exc}"
-                            if not (spec.skip_underexposed and self._underexposed_only(trial, trial.measurement)):
+                            if not (spec.skip_underexposed and self._skippable_photometric_rejection(trial, trial.measurement)):
                                 rejected.append(
                                     f"sample {trial.index + 1} ({trial.sample_well}): {exc}"
                                 )
                     self._save(record)
+                    if spec.skip_underexposed and not rejected and not any(
+                        trial.objective_status == "accepted" for trial in record.trials
+                    ):
+                        rejected.append("At least one accepted observation is required to continue optimization")
                     if rejected:
                         self._finish(
                             record, "failed", "batch_objective_rejected",

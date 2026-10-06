@@ -808,6 +808,7 @@ def _dark_recovery_fixture(tmp_path):
             "measurement_status": "rejected" if dark else "accepted",
             "comparison_status": "rejected" if dark else "accepted",
             "quality": {"accepted": not dark, "status": "rejected" if dark else "accepted", "flags": ["underexposed"] if dark else []},
+            "roi": {"method": "detected_well_inner_disc", "detection_status": "selected", "radius_px": 20, "center_residual_px": 0.0, "detection_confidence": 0.99},
             "processing_profile": {"schema": "cubos.camera-well-cielab.v1", "id": "profile"},
             "reference_processing_profile_id": "profile",
             "well_identity": {"expected_well": f"plate.{chr(65 + index)}5"},
@@ -943,4 +944,147 @@ def test_dark_resume_checks_durable_state_and_never_mutates_tips(tmp_path, monke
         assert record.state == "running"
     assert snapshot == before
     assert runs.state_resolutions == [("deck: {}", 7)]
+    assert runs.submissions == []
+
+
+def _magenta_recovery_fixture(tmp_path):
+    import json
+    manager, runs, _record = _dark_recovery_fixture(tmp_path)
+    payload = json.loads((Path(__file__).parent / "fixtures/color_magenta_photometric_failure.json").read_text())
+    record = CampaignRecord.model_validate(payload)
+    record.spec.mock_mode = True
+    record.spec.fluid_state_id = None
+    cid = record.campaign_id
+    manager._records = {cid: record}
+    manager._save(record)
+    for name, text in (("gantry", "gantry: {}"), ("deck", "deck: {}"), ("protocol", PROTOCOL)):
+        (manager.base / cid / f"{name}.yaml").write_text(text)
+    indexes = [int(trial.objective_path.split(".")[0]) for trial in record.trials]
+    results = [{} for _ in range(max(indexes) + 1)]
+    for index, trial in zip(indexes, record.trials):
+        results[index] = trial.measurement
+    run_id = record.trials[0].run_id
+    runs.records = {run_id: RunRecord(run_id=run_id, state="succeeded", created_at=time.time(), mock_mode=True, result={"results": results})}
+    return manager, runs, record
+
+
+def test_actual_magenta_clipping_recovery_preserves_native_b6_and_continues_d6(tmp_path, monkeypatch):
+    import copy
+    import cubos_api.services.campaign_manager as module
+    import cubos_api.services.color_batch as batch_module
+    from cubos_api.services.color_batch import BatchCompilation
+    manager, runs, record = _magenta_recovery_fixture(tmp_path)
+    cid = record.campaign_id
+    before = [trial.model_dump() for trial in record.trials]
+    assert record.trials[1].measurement["quality"]["flags"] == ["low_valid_fraction", "excessive_low_clipping"]
+    assert record.trials[1].measurement["quality"]["valid_pixel_count"] == 127
+    assert record.trials[1].objective is None
+    monkeypatch.setattr(module.threading.Thread, "start", lambda self: None)
+    resumed = manager.resume_underexposed(cid)
+    assert resumed.best_objective == record.trials[0].objective
+    starts, observations_seen = [], []
+    def suggest(_spec, observations, **kwargs):
+        observations_seen.append(copy.deepcopy(observations))
+        return dict(record.trials[0].parameters)
+    monkeypatch.setattr(manager, "_suggest", suggest)
+    monkeypatch.setattr(manager, "_batch_stock_shortages", lambda *args: [])
+    def compile_batch(_yaml, _spec, parameters, start):
+        starts.append(start)
+        results, samples = [], []
+        for offset, point in enumerate(parameters):
+            well = f"plate.{chr(65+start+offset)}6"
+            dark = start == 3 and offset == 1
+            measurement = copy.deepcopy(record.trials[1 if dark else 0].measurement)
+            measurement["well_identity"]["expected_well"] = well
+            if not dark:
+                measurement["delta_e_00"] = 30.0
+            results.append(measurement)
+            samples.append({"sample_index": start+offset, "candidate_well": well, "parameters": point, "objective_path": f"{offset}.delta_e_00"})
+        run_id = f"{cid}-batch-{start//3+1}"
+        runs.records[run_id] = RunRecord(run_id=run_id, state="succeeded", created_at=time.time(), mock_mode=True, result={"results": results})
+        return BatchCompilation(PROTOCOL, tuple(sample["objective_path"] for sample in samples), tuple(samples))
+    monkeypatch.setattr(batch_module, "compile_color_trial_batch", compile_batch)
+    bundle = tuple((manager.base/cid/f"{name}.yaml").read_text() for name in ("gantry", "deck", "protocol"))
+    manager._loop_batch(cid, bundle)
+    final = manager.get(cid)
+    assert final.state == "completed"
+    assert final.stop_reason == "trial_budget"
+    assert starts == [3, 6]
+    assert [trial.model_dump() for trial in final.trials[:3]] == before
+    assert [trial.sample_well for trial in final.trials[3:]] == ["plate.D6", "plate.E6", "plate.F6", "plate.G6", "plate.H6"]
+    assert [len(observations) for observations in observations_seen] == [2, 2, 2, 4, 4]
+    assert final.trials[4].objective_status == "rejected"
+    assert final.trials[4].objective is None
+    assert "rgb" not in final.trials[4].measurement
+    assert runs.submissions == []
+
+
+@pytest.mark.parametrize("defect", ["geometry_flag", "unknown_flag", "low_valid_only", "insufficient_pixels", "missing_roi", "full_frame", "no_detection", "off_center", "low_confidence", "no_accepted"])
+def test_photometric_recovery_refuses_geometry_unknown_or_unseeded_data(tmp_path, defect):
+    manager, runs, record = _magenta_recovery_fixture(tmp_path)
+    measurement = record.trials[1].measurement
+    if defect == "geometry_flag":
+        measurement["quality"]["flags"].append("ambiguous_well_detection")
+    elif defect == "unknown_flag":
+        measurement["quality"]["flags"].append("unknown_quality")
+    elif defect == "low_valid_only":
+        measurement["quality"]["flags"] = ["low_valid_fraction"]
+    elif defect == "insufficient_pixels":
+        measurement["quality"]["flags"].append("insufficient_valid_pixels")
+    elif defect == "missing_roi":
+        measurement.pop("roi")
+    elif defect == "full_frame":
+        measurement["roi"]["method"] = "full_frame"
+    elif defect == "no_detection":
+        measurement["roi"]["detection_status"] = "not_detected"
+    elif defect == "off_center":
+        measurement["roi"]["center_residual_px"] = 21.0
+    elif defect == "low_confidence":
+        measurement["roi"]["detection_confidence"] = 0.6
+    else:
+        for trial in record.trials:
+            trial.objective = None
+            trial.objective_status = "rejected"
+            trial.measurement.update({"measurement_status": "rejected", "comparison_status": "rejected"})
+            trial.measurement["quality"].update({"accepted": False, "status": "rejected", "flags": ["underexposed"]})
+    with pytest.raises(RunConflictError):
+        manager.resume_underexposed(record.campaign_id)
+    assert record.state == "failed"
+    assert runs.owner is None
+    assert runs.submissions == []
+
+
+def test_opted_in_first_batch_without_any_accepted_observation_stops(tmp_path, monkeypatch):
+    import copy
+    import cubos_api.services.color_batch as batch_module
+    from cubos_api.services.color_batch import BatchCompilation
+    manager, runs, record = _dark_recovery_fixture(tmp_path)
+    rejected = copy.deepcopy(record.trials[3].measurement)
+    record.trials = []
+    record.state = "running"
+    record.stop_reason = None
+    record.spec.skip_underexposed = True
+    runs.owner = "dark"
+    monkeypatch.setattr(manager, "_suggest", lambda *args, **kwargs: {"x": 1.0})
+    monkeypatch.setattr(manager, "_batch_stock_shortages", lambda *args: [])
+    starts = []
+    def compile_batch(_yaml, _spec, parameters, start):
+        starts.append(start)
+        samples, results = [], []
+        for offset, point in enumerate(parameters):
+            well = f"plate.{chr(65+offset)}5"
+            measurement = copy.deepcopy(rejected)
+            measurement["well_identity"]["expected_well"] = well
+            samples.append({"sample_index": offset, "candidate_well": well, "parameters": point, "objective_path": f"{offset}.delta_e_00"})
+            results.append(measurement)
+        runs.records["dark-batch-1"] = RunRecord(run_id="dark-batch-1", state="succeeded", created_at=time.time(), mock_mode=True, result={"results": results})
+        return BatchCompilation(PROTOCOL, tuple(sample["objective_path"] for sample in samples), tuple(samples))
+    monkeypatch.setattr(batch_module, "compile_color_trial_batch", compile_batch)
+    manager._loop_batch("dark", manager._bundle(record.spec))
+    final = manager.get("dark")
+    assert final.state == "failed"
+    assert final.stop_reason == "batch_objective_rejected"
+    assert len(final.trials) == 3
+    assert all(trial.objective is None and trial.objective_status == "rejected" for trial in final.trials)
+    assert starts == [0]
     assert runs.submissions == []
