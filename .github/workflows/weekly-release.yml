@@ -1,0 +1,149 @@
+name: Weekly Release
+
+# Deliberate release gate for the Pi in-app updater (see #284): merging to
+# main is not shipping to appliances. Tags the repo with a calver release
+# (vYYYY.MM.DD) once a week when there is something new to ship, after the
+# test suite passes. Appliances in tag mode (CUBOS_UPDATE_MODE=tag, the
+# default) only offer an update when a new tag lands here.
+
+on:
+  schedule:
+    - cron: "0 8 * * 0" # Sundays, 08:00 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Find last release tag and check for new commits
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet --tags origin
+
+          TAG_PATTERN='v[0-9][0-9][0-9][0-9].[0-9][0-9].[0-9][0-9]'
+          ALL_TAGS=$(git tag --list "$TAG_PATTERN" | sort)
+          LAST_TAG=$(printf '%s\n' "$ALL_TAGS" | tail -n1)
+
+          # A previous run may have pushed its tag and then failed while
+          # creating the GitHub Release. Repair that release before cutting a
+          # newer tag; otherwise a zero-commit week would skip it forever.
+          if [[ -n "$LAST_TAG" ]] && ! gh release view "$LAST_TAG" >/dev/null 2>&1; then
+            PREVIOUS_TAG=$(printf '%s\n' "$ALL_TAGS" | awk -v current="$LAST_TAG" '
+              $0 != current { previous = $0 }
+              END { print previous }
+            ')
+            echo "Recovering missing GitHub Release for existing tag $LAST_TAG."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=false" >> "$GITHUB_OUTPUT"
+            echo "target_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+            echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -z "$LAST_TAG" ]]; then
+            COUNT=$(git rev-list --count HEAD)
+          else
+            COUNT=$(git rev-list --count "$LAST_TAG..HEAD")
+          fi
+          if [[ "$COUNT" -eq 0 ]]; then
+            echo "No commits since ${LAST_TAG:-repository start}; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          TARGET_TAG="v$(date -u +'%Y.%m.%d')"
+          if git rev-parse "$TARGET_TAG" >/dev/null 2>&1; then
+            echo "Tag $TARGET_TAG already exists and its GitHub Release is present; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$COUNT commit(s) since ${LAST_TAG:-repository start}."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            echo "create_tag=true" >> "$GITHUB_OUTPUT"
+            echo "target_tag=$TARGET_TAG" >> "$GITHUB_OUTPUT"
+            echo "previous_tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-python@v5
+        if: steps.check.outputs.should_release == 'true'
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.should_release == 'true'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/operator-web/package-lock.json
+
+      - name: Test core
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          pip install -e "packages/core[dev]"
+          python -m pytest packages/core/tests -q
+
+      - name: Test API
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          pip install -e packages/core
+          pip install -e "services/api[dev]"
+          python -m pytest services/api/tests -q
+
+      - name: Test client SDK
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          pip install -e "sdk/python[dev]"
+          python -m pytest sdk/python/tests -q
+
+      - name: Test and build the operator web app
+        if: steps.check.outputs.should_release == 'true'
+        working-directory: apps/operator-web
+        run: |
+          npm ci
+          npm run lint
+          npm run test -- --run
+          npm run build
+
+      - name: Create and push release tag
+        if: steps.check.outputs.should_release == 'true' && steps.check.outputs.create_tag == 'true'
+        env:
+          TARGET_TAG: ${{ steps.check.outputs.target_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TARGET_TAG" -m "CubOS $TARGET_TAG"
+          git push origin "$TARGET_TAG"
+
+      - name: Create or recover GitHub release
+        if: steps.check.outputs.should_release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_TAG: ${{ steps.check.outputs.target_tag }}
+          PREVIOUS_TAG: ${{ steps.check.outputs.previous_tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TARGET_TAG" >/dev/null 2>&1; then
+            echo "GitHub Release $TARGET_TAG already exists; nothing to do."
+            exit 0
+          fi
+          if [[ -n "$PREVIOUS_TAG" ]]; then
+            git log --oneline "$PREVIOUS_TAG..$TARGET_TAG" > release-notes.md
+          else
+            git log --oneline "$TARGET_TAG" > release-notes.md
+          fi
+          gh release create "$TARGET_TAG" --title "$TARGET_TAG" --notes-file release-notes.md

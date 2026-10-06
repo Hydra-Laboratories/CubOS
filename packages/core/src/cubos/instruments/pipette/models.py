@@ -221,7 +221,7 @@ PIPETTE_MODELS: dict[str, PlungerPipetteConfig] = {
 # 07|2024), not a calibrated value: the pipette owns its piston, so there is
 # no CubOS-side plunger geometry to measure.
 #
-# Only the two models Ursa runs are registered; the other single-channel
+# Only the models Ursa runs are registered; the other single-channel
 # variants are a four-line addition each, with no driver change. Multichannel
 # variants are deliberately absent -- an 8-channel pipette moves 8x the
 # commanded volume while the deck model records a single well, so registering
@@ -254,5 +254,13 @@ PICUS2_MODELS: dict[str, PipetteConfig] = {
         max_volume=1000.0,
         min_volume=50.0,
         volume_increment_ul=1.0,
+    ),
+    "picus2_1ch_5000": PipetteConfig(
+        name="picus2_1ch_5000",
+        family=PipetteFamily.PICUS2,
+        channels=1,
+        max_volume=5000.0,
+        min_volume=100.0,
+        volume_increment_ul=5.0,
     ),
 }

@@ -14,14 +14,15 @@ const deck: DeckResponse = {
         model_name: "panda_2x2_tip_rack",
         rows: 2,
         columns: 2,
-        z_pickup: 30,
-        z_drop: 24,
-        tips: {
-          A1: { x: 10, y: 20, z: 30 },
-          A2: { x: 19, y: 20, z: 30 },
-          B1: { x: 10, y: 11, z: 30 },
-          B2: { x: 19, y: 11, z: 30 },
+        pickup_z: 30,
+        drop_z: 24,
+        tip_length: 59.3,
+        calibration: {
+          a1: { x: 10, y: 20 },
+          a2: { x: 19, y: 20 },
         },
+        x_offset: 9,
+        y_offset: 9,
       },
       wells: null,
       location: { x: 10, y: 20, z: 30 },
@@ -61,6 +62,24 @@ const deck: DeckResponse = {
         "plate.A2": { x: 109, y: 120, z: 45 },
         "plate.B1": { x: 100, y: 111, z: 45 },
         "plate.B2": { x: 109, y: 111, z: 45 },
+      },
+    },
+    {
+      key: "tip_disposal",
+      config: {
+        type: "tip_disposal",
+        name: "Panda Trash",
+        model_name: "panda_black_tip_disposal",
+        location: { x: 250, y: 118, z: 38 },
+        length: 58,
+        width: 150,
+        height: 38,
+      },
+      wells: null,
+      location: { x: 250, y: 118, z: 38 },
+      geometry: { length: 58, width: 150, height: 38 },
+      positions: {
+        discard: { x: 250, y: 118, z: 38 },
       },
     },
     {
@@ -104,10 +123,43 @@ describe("DeckVisualization", () => {
     );
 
     expect(screen.getByText("Rack A")).toBeInTheDocument();
+    expect(screen.getByText("Panda Trash")).toBeInTheDocument();
     expect(screen.getByText("Plate Holder")).toBeInTheDocument();
     expect(screen.getByText("Panda Plate")).toBeInTheDocument();
     expect(screen.getByText("Panda Vials")).toBeInTheDocument();
     expect(screen.getByText("Sample 1")).toBeInTheDocument();
+  });
+
+  it("renders an unsaved tip disposal from its config alone", () => {
+    render(
+      <DeckVisualization
+        deck={{
+          filename: "unsaved",
+          labware: [
+            {
+              key: "tipdisposal_1",
+              config: {
+                type: "tip_disposal",
+                name: "New Trash",
+                model_name: "tip_disposal",
+                location: { x: 200, y: 100, z: 38 },
+                length: 58,
+                width: 150,
+                height: 38,
+              },
+              wells: null,
+            },
+          ],
+        }}
+        instruments={null}
+        gantryPosition={null}
+        machineXRange={[0, 300]}
+        machineYRange={[0, 200]}
+      />,
+    );
+
+    expect(screen.getByText("New Trash")).toBeInTheDocument();
+    expect(screen.getByTestId("deck-visualization").outerHTML).not.toContain("NaN");
   });
 
   it("letterboxes unequal machine ranges and scales well radii from mm", () => {

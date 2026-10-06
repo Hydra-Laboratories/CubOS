@@ -904,9 +904,16 @@ export default function CalibrationWizard({
                 <h3 style={sectionTitleStyle}>Prepare</h3>
                 <p style={instructionStyle}>
                   {isMulti
-                    ? "Choose a file name for the calibrated config, pick the reference and lowest instruments, then continue."
+                    ? "Choose a file name for the calibrated config, pick the leftmost and lowest instruments, then continue."
                     : "Choose a file name for the calibrated config, then continue."}
                 </p>
+                {isMulti && (
+                  <p style={instructionStyle}>
+                    Choose the physically leftmost contact instrument as viewed from
+                    the front of the gantry. It defines zero X/Y offset. Choose the
+                    lowest instrument separately to define Z; they may be the same tool.
+                  </p>
+                )}
                 {instruments.length === 0 && (
                   <div style={noInstrumentsStyle}>
                     Add and save at least one mounted instrument in the Gantry configuration before calibrating.
@@ -925,7 +932,7 @@ export default function CalibrationWizard({
                   {isMulti && (
                     <>
                       <label style={fieldStyle}>
-                        <span style={labelStyle}>Reference instrument</span>
+                        <span style={labelStyle}>Leftmost instrument</span>
                         <select
                           value={selectedReference}
                           onChange={(event) => setReferenceInstrument(event.target.value)}
@@ -1076,8 +1083,8 @@ export default function CalibrationWizard({
                 <h3 style={sectionTitleStyle}>Set XY Origin</h3>
                 <p style={instructionStyle}>
                   {originPolicy === "home_origin"
-                    ? "Put the calibration block at the back-right corner of the deck. Jog the tool until it is directly over the mark on the block, then continue."
-                    : "Put the calibration block at the front-left corner of the deck. Jog the tool until it is directly over the mark on the block, then continue."}
+                    ? "Put the calibration block at the back-right corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."
+                    : "Put the calibration block at the front-left corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."}
                 </p>
                 <JogPanel
                   xyStep={xyStep}

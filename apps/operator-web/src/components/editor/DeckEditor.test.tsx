@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import DeckEditor from "./DeckEditor";
 import type { DeckResponse } from "../../types";
 
@@ -63,6 +63,8 @@ function renderDeck(overrides: Partial<React.ComponentProps<typeof DeckEditor>> 
   return props;
 }
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe("DeckEditor", () => {
   it("renders well plate and vial fields and reports edits", async () => {
     const user = userEvent.setup();
@@ -98,6 +100,8 @@ describe("DeckEditor", () => {
     expect(screen.queryByRole("button", { name: "+ Well Plate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "+ Vial" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New Labware" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Tip Rack" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Tip Disposal" })).not.toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Remove" })[0]);
     expect(screen.queryByDisplayValue("Plate A")).not.toBeInTheDocument();
     expect(screen.getByDisplayValue("Vial A")).toBeInTheDocument();
@@ -165,6 +169,57 @@ describe("DeckEditor", () => {
     expect(screen.getByText("vial_holder")).toBeInTheDocument();
   });
 
+  it("edits an existing tip rack", async () => {
+    const user = userEvent.setup();
+    const props = renderDeck({ deck: { filename: "deck.yaml", labware: [{ key: "tiprack_1", wells: null, config: { type: "tip_rack", name: "tiprack_1", model_name: "tip_rack", rows: 8, columns: 12, pickup_z: 43, drop_z: 34, tip_length: 59.3, calibration: { a1: { x: 100, y: 50 }, a2: { x: 109, y: 50 } }, x_offset: 9, y_offset: 9 } }] } });
+    expect(screen.getByText("tiprack_1")).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Pickup Z/)).toHaveValue("43");
+    expect(screen.getByLabelText(/^Tip length/)).toHaveValue("59.3");
+
+    await user.clear(screen.getByLabelText(/^Pickup Z/));
+    await user.type(screen.getByLabelText(/^Pickup Z/), "40");
+    await user.clear(screen.getByLabelText("Calibration A1 (tip top) X"));
+    await user.type(screen.getByLabelText("Calibration A1 (tip top) X"), "168");
+    // Calibration inputs are XY-only: Z comes from pickup_z.
+    expect(screen.queryByLabelText("Calibration A1 (tip top) Z")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const [, body] = vi.mocked(props.onSave).mock.calls.at(-1)!;
+    const rack = body.labware.tiprack_1;
+    expect(rack).toMatchObject({
+      type: "tip_rack",
+      pickup_z: 40,
+      tip_length: 59.3,
+      calibration: { a1: { x: 168, y: 50 }, a2: { x: 109, y: 50 } },
+    });
+  });
+
+  it("edits an existing tip disposal", async () => {
+    const user = userEvent.setup();
+    const props = renderDeck({ deck: { filename: "deck.yaml", labware: [{ key: "tipdisposal_1", wells: null, config: { type: "tip_disposal", name: "tipdisposal_1", model_name: "tip_disposal", location: { x: 300, y: 120, z: 38 }, length: 198, width: 62, height: 30 } }] } });
+    expect(screen.getByText("tipdisposal_1")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Drop point (tip-end height) X"));
+    await user.type(screen.getByLabelText("Drop point (tip-end height) X"), "306");
+    await user.clear(screen.getByLabelText("Length (mm)"));
+    await user.type(screen.getByLabelText("Length (mm)"), "60");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const [, body] = vi.mocked(props.onSave).mock.calls.at(-1)!;
+    expect(body.labware.tipdisposal_1).toMatchObject({
+      type: "tip_disposal",
+      location: { x: 306, y: 120, z: 38 },
+      length: 60,
+    });
+  });
+
+  it("disables Save when a tip rack name is blank", async () => {
+    const user = userEvent.setup();
+    renderDeck({ deck: { filename: "deck.yaml", labware: [{ key: "tiprack_1", wells: null, config: { type: "tip_rack", name: "tiprack_1", model_name: "tip_rack", rows: 8, columns: 12, pickup_z: 43, drop_z: 34, tip_length: 59.3, calibration: { a1: { x: 100, y: 50 }, a2: { x: 109, y: 50 } }, x_offset: 9, y_offset: 9 } }] } });
+    await user.clear(screen.getByLabelText(/^Component ID/));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   it("opens custom creation without adding a placeholder and cancels cleanly", async () => {
     const user = userEvent.setup();
     const props = renderDeck({ gantry: gantryFixture() });
@@ -181,18 +236,58 @@ describe("DeckEditor", () => {
 
   it.each([
     { gantry: null },
-    { gantry: gantryFixture(), deck: null },
     { gantry: gantryFixture(), isRunning: true },
   ])("disables custom creation without prerequisites or during a run: %j", (overrides) => {
     renderDeck(overrides);
     expect(screen.getByRole("button", { name: "New Labware" })).toBeDisabled();
   });
 
+  it.each([null, { filename: "unsaved", labware: [] }])("creates and saves labware from an unnamed empty deck: %j", async (deck) => {
+    const user = userEvent.setup();
+    const props = renderDeck({ configs: [], selectedFile: null, deck, baseline: null, gantry: gantryFixture(), position: { x: 100, y: 50, z: 20, work_x: 100, work_y: 50, work_z: 20, connected: true, status: "Idle", calibration_active: false } });
+    let x = 100;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ work_x: x, work_y: 50, work_z: 20, connected: true, status: "Idle" }), { status: 200 })));
+    expect(screen.getByRole("button", { name: "New Labware" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Calibrate labware" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "New Labware" }));
+    const dialog = within(screen.getByRole("dialog"));
+    for (const [label, value] of [["Labware name", "First plate"], ["Rows", "4"], ["Columns", "5"], ["Well spacing X (mm)", "12.5"], ["Well spacing Y (mm)", "14"]]) {
+      await user.type(dialog.getByLabelText(label), value);
+    }
+    await user.click(dialog.getByRole("button", { name: "Continue" }));
+    await user.click(dialog.getByRole("button", { name: "Record A1" }));
+    x = 112.5;
+    await user.click(dialog.getByRole("button", { name: "Record A2" }));
+    await user.click(dialog.getByRole("button", { name: "Continue" }));
+    expect(dialog.getByText(/save the deck with a filename/)).toBeInTheDocument();
+    await user.click(dialog.getByRole("button", { name: "Add to deck" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Calibration A2 Z")).toHaveValue("20");
+    expect(props.onSave).not.toHaveBeenCalled();
+    expect(props.onLocalChange).toHaveBeenCalledWith(expect.objectContaining({ labware: [expect.objectContaining({ key: "first_plate" })] }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.type(screen.getByPlaceholderText("my_deck.yaml"), "new-deck");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalledWith("new-deck.yaml", { labware: { first_plate: expect.objectContaining({ rows: 4, columns: 5, calibration: { a1: { x: 100, y: 50, z: 20 }, a2: { x: 112.5, y: 50 } } }) } });
+    expect(props.onSelectFile).toHaveBeenCalledWith("new-deck.yaml");
+  });
+
+  it("can cancel creation on a blank deck without changing or saving it", async () => {
+    const user = userEvent.setup();
+    const props = renderDeck({ configs: [], selectedFile: null, deck: null, baseline: null, gantry: gantryFixture() });
+    await user.click(screen.getByRole("button", { name: "New Labware" }));
+    await user.type(screen.getByLabelText("Labware name"), "Cancelled");
+    await user.keyboard("{Escape}");
+    expect(props.onLocalChange).not.toHaveBeenCalled();
+    expect(props.onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   it("always renders the action bar and disables Save with a hint when there are no items", () => {
     renderDeck({ deck: { filename: "deck.yaml", labware: [] } });
 
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-    expect(screen.getByText(/Add.*labware|New Labware/i)).toBeInTheDocument();
+    expect(screen.getByText(/Add at least one labware item/i)).toBeInTheDocument();
   });
 
   it("shows a save-failed banner and clears it on the next edit or successful save", async () => {

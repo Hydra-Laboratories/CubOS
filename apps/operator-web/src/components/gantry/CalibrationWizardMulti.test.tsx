@@ -126,6 +126,16 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     expect(screen.queryByText(/homing_pull_off/i)).not.toBeInTheDocument();
   });
 
+  it("identifies the XY baseline as the physically leftmost instrument", () => {
+    installFetch();
+    renderWizard();
+    expect(screen.getByLabelText("Leftmost instrument")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Reference instrument")).not.toBeInTheDocument();
+    expect(screen.getByText(/physically leftmost contact instrument/)).toHaveTextContent(
+      /zero X\/Y offset.*lowest instrument separately to define Z/,
+    );
+  });
+
   it("lists Block height as its own step between XY origin and Z reference", () => {
     installFetch();
     renderWizard();

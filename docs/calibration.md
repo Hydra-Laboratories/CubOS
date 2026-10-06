@@ -216,7 +216,10 @@ connection and has no `--port` flag.
 
 1. Start `packages/core/src/cubos/tools/calibrate_gantry.py`.
 2. Confirm the multi-instrument flow in the preflight.
-3. Select the leftmost/reference instrument when prompted.
+3. Select the physically leftmost contact instrument when prompted (viewed
+   from the front of the gantry). In the Operator UI, this is the **Leftmost
+   instrument** picker. It defines zero X/Y offset; select the lowest tool
+   separately for the Z baseline. Both selections may be the same tool.
 4. Enter the calibration block height when prompted.
 5. Place the first calibration block on the leftmost board mark for the red
    reference instrument.

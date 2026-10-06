@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import getpass
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -42,6 +43,12 @@ class UpdateStatus(BaseModel):
     checked_at: float
     summary: list[str]
     error: str | None
+    # Populated only in tag mode (CUBOS_UPDATE_MODE=tag, the default); None in
+    # branch mode. current_tag is the nearest reachable release tag to HEAD
+    # (may be an exact match or a "-N-g<sha>" descriptor when HEAD has moved
+    # past the last release), latest_tag is the newest release tag on origin.
+    current_tag: str | None = None
+    latest_tag: str | None = None
 
 
 _cache: UpdateStatus | None = None
@@ -85,6 +92,82 @@ def _failure_status(exc: BaseException, *, current_sha: str = "") -> UpdateStatu
     )
 
 
+def _latest_release_tag(repo: Path, pattern: str) -> str | None:
+    """Return the newest fetched tag matching ``pattern``, or None if none exist.
+
+    Calver tags (``vYYYY.MM.DD``) sort correctly under plain lexicographic
+    ordering because the pattern pins every field to a fixed width.
+    """
+    regex = re.compile(pattern)
+    output = _git(repo, "tag", "--list")
+    matching = sorted(tag for tag in output.splitlines() if regex.match(tag))
+    return matching[-1] if matching else None
+
+
+def _current_release_descriptor(repo: Path) -> str | None:
+    """Best-effort ``git describe`` of HEAD against tags; None if unreachable."""
+    try:
+        return _git(repo, "describe", "--tags")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _check_for_update_by_tag(repo: Path, current_sha: str) -> UpdateStatus:
+    settings = get_settings()
+    _git(repo, "fetch", "--quiet", "--tags", "--force", "origin")
+    latest_tag = _latest_release_tag(repo, settings.update_tag_pattern)
+    current_tag = _current_release_descriptor(repo)
+
+    if latest_tag is None:
+        return UpdateStatus(
+            current_sha=current_sha,
+            latest_sha=current_sha,
+            commits_behind=0,
+            update_available=False,
+            checked_at=time.time(),
+            summary=[],
+            error=None,
+            current_tag=current_tag,
+            latest_tag=None,
+        )
+
+    latest_sha = _git(repo, "rev-list", "-n", "1", latest_tag)
+    commits_behind = int(_git(repo, "rev-list", "--count", f"HEAD..{latest_sha}"))
+    log_output = (
+        _git(repo, "log", "--oneline", f"HEAD..{latest_sha}") if commits_behind else ""
+    )
+
+    return UpdateStatus(
+        current_sha=current_sha,
+        latest_sha=latest_sha,
+        commits_behind=commits_behind,
+        update_available=commits_behind > 0,
+        checked_at=time.time(),
+        summary=log_output.splitlines()[:10],
+        error=None,
+        current_tag=current_tag,
+        latest_tag=latest_tag,
+    )
+
+
+def _check_for_update_by_branch(repo: Path, current_sha: str) -> UpdateStatus:
+    branch = get_settings().update_branch
+    _git(repo, "fetch", "--quiet", "origin", branch)
+    latest_sha = _git(repo, "rev-parse", f"origin/{branch}")
+    commits_behind = int(_git(repo, "rev-list", "--count", f"HEAD..origin/{branch}"))
+    log_output = _git(repo, "log", "--oneline", f"HEAD..origin/{branch}")
+
+    return UpdateStatus(
+        current_sha=current_sha,
+        latest_sha=latest_sha,
+        commits_behind=commits_behind,
+        update_available=commits_behind > 0,
+        checked_at=time.time(),
+        summary=log_output.splitlines()[:10],
+        error=None,
+    )
+
+
 def check_for_update(*, refresh: bool = False) -> UpdateStatus:
     """Return origin update status without propagating git failures."""
     global _cache
@@ -116,14 +199,13 @@ def check_for_update(*, refresh: bool = False) -> UpdateStatus:
         ):
             return _cache.model_copy(deep=True)
 
-        branch = get_settings().update_branch
+        resolve = (
+            _check_for_update_by_tag
+            if get_settings().update_mode == "tag"
+            else _check_for_update_by_branch
+        )
         try:
-            _git(repo, "fetch", "--quiet", "origin", branch)
-            latest_sha = _git(repo, "rev-parse", f"origin/{branch}")
-            commits_behind = int(
-                _git(repo, "rev-list", "--count", f"HEAD..origin/{branch}")
-            )
-            log_output = _git(repo, "log", "--oneline", f"HEAD..origin/{branch}")
+            status = resolve(repo, current_sha)
         except (
             subprocess.CalledProcessError,
             subprocess.TimeoutExpired,
@@ -132,15 +214,6 @@ def check_for_update(*, refresh: bool = False) -> UpdateStatus:
         ) as exc:
             return _failure_status(exc, current_sha=current_sha)
 
-        status = UpdateStatus(
-            current_sha=current_sha,
-            latest_sha=latest_sha,
-            commits_behind=commits_behind,
-            update_available=commits_behind > 0,
-            checked_at=time.time(),
-            summary=log_output.splitlines()[:10],
-            error=None,
-        )
         _cache = status
         return status.model_copy(deep=True)
 

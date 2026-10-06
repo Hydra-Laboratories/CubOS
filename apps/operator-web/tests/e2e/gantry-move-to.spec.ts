@@ -9,7 +9,7 @@ import type { Page } from "@playwright/test";
 async function loadConnectedGantry(page: Page): Promise<MockApiState> {
   const state = await installApiMocks(page, { connected: true });
   await page.goto("/");
-  await page.getByLabel("Import gantry config").selectOption("cub.yaml");
+  await page.getByLabel("Gantry config", { exact: true }).selectOption("cub.yaml");
   // The Move To section renders once a config is selected and the polled
   // position reports connected.
   await expect(page.getByRole("button", { name: "Go" })).toBeVisible();

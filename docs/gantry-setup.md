@@ -137,7 +137,7 @@ instruments:
   pipette:
     type: pipette
     vendor: sartorius
-    pipette_model: picus2_1ch_1000   # or picus2_1ch_10, picus2_1ch_120
+    pipette_model: picus2_1ch_1000   # or picus2_1ch_10, picus2_1ch_120, picus2_1ch_5000
     port: "/dev/ttyACM0"
     offline: true
     offset_x: 180.0
