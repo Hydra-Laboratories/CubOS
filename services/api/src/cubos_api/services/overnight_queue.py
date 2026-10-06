@@ -271,6 +271,94 @@ class OvernightQueueManager:
             ).start()
             return record.model_copy(deep=True)
 
+    def resume_underexposed(self, queue_id: str) -> OvernightQueueRecord:
+        with self._lock:
+            with self._claim_lock():
+                path = self._directory(queue_id) / "queue.json"
+                if not path.is_file():
+                    raise KeyError(queue_id)
+                record = OvernightQueueRecord.model_validate_json(path.read_text())
+                index = record.current_job_index
+                if (
+                    record.state != "failed"
+                    or record.stop_reason != "batch_objective_rejected"
+                    or record.cancel_requested
+                    or index is None
+                    or not 0 <= index < len(record.jobs)
+                    or queue_id in self._workers
+                ):
+                    raise RunConflictError("Queue is not eligible for underexposed recovery")
+                job = record.jobs[index]
+                if (
+                    job.state != "failed"
+                    or job.stop_reason != "batch_objective_rejected"
+                    or not job.campaign_id
+                    or any(item.state != "completed" for item in record.jobs[:index])
+                    or any(item.state != "pending" or item.campaign_id is not None
+                           for item in record.jobs[index + 1:])
+                ):
+                    raise RunConflictError("Queue job history is not eligible for recovery")
+                for candidate in self.base.glob("*/queue.json"):
+                    other = OvernightQueueRecord.model_validate_json(candidate.read_text())
+                    if other.queue_id != queue_id and other.state == "running":
+                        raise RunConflictError("Another overnight queue is active")
+                for item in record.jobs:
+                    directory = self._directory(queue_id) / f"job-{item.index + 1}"
+                    for category in ("gantry", "deck", "protocol"):
+                        content = (directory / f"{category}.yaml").read_text(encoding="utf-8")
+                        expected = (directory / f"{category}.sha256").read_text().strip()
+                        if hashlib.sha256(content.encode("utf-8")).hexdigest() != expected:
+                            raise ValueError(f"Frozen {category} snapshot changed")
+                        filename = f"overnight_{queue_id}_{item.index + 1}_{category}.yaml"
+                        materialized = self.settings.configs_dir / category / filename
+                        if materialized.exists() and materialized.read_text(encoding="utf-8") != content:
+                            raise ValueError(f"Immutable {category} snapshot changed")
+                campaign = self.campaigns.resume_underexposed(job.campaign_id)
+                record.skip_underexposed = True
+                record.state = "running"
+                record.completed_at = None
+                record.stop_reason = None
+                record.error = None
+                job.state = "active"
+                job.completed_at = None
+                job.stop_reason = None
+                job.error = None
+                try:
+                    self._event(record, "queue_resumed_underexposed",
+                                "Operator resumed the existing campaign, skipping unscored underexposed samples.",
+                                job_index=index, campaign_id=campaign.campaign_id)
+                    self._save(record)
+                    self._records[queue_id] = record
+                    self._workers.add(queue_id)
+                    threading.Thread(target=self._loop, args=(queue_id,), daemon=True,
+                                     name=f"cubos-overnight-{queue_id}").start()
+                except Exception as exc:
+                    self._workers.discard(queue_id)
+                    cancellation_error = None
+                    try:
+                        self.campaigns.control(campaign.campaign_id, "cancel")
+                    except Exception as cancel_exc:
+                        cancellation_error = f"{type(cancel_exc).__name__}: {cancel_exc}"
+                    record.state = "blocked" if cancellation_error else "failed"
+                    record.stop_reason = (
+                        "active_campaign_cancel_unconfirmed" if cancellation_error else "queue_error"
+                    )
+                    record.error = f"{type(exc).__name__}: {exc}"
+                    if cancellation_error:
+                        record.error += f"; campaign cancellation unconfirmed: {cancellation_error}"
+                    record.completed_at = time.time()
+                    job.state = record.state
+                    job.stop_reason = record.stop_reason
+                    job.error = record.error
+                    job.completed_at = record.completed_at
+                    self._records[queue_id] = record
+                    try:
+                        self._save(record)
+                    except Exception:
+                        log.exception("Cannot persist failed queue recovery %s", queue_id)
+                    raise ValueError(record.error) from exc
+                return record.model_copy(deep=True)
+
     def cancel(self, queue_id: str) -> OvernightQueueRecord:
         active_campaign_id = None
         with self._lock:
@@ -446,6 +534,7 @@ class OvernightQueueManager:
             )
         return spec.model_copy(update={
             "name": job.name,
+            "skip_underexposed": record.skip_underexposed,
             "optimizer": spec.optimizer.model_copy(update={
                 "seed": job.optimizer_seed,
                 "initial_trials": 3,
@@ -488,36 +577,34 @@ class OvernightQueueManager:
         try:
             for job in record.jobs:
                 with self._lock:
-                    if record.cancel_requested:
-                        self._stop(record, "cancelled", "operator_cancelled")
-                        return
-                    record.current_job_index = job.index
-                    job.state = "starting"
-                    job.started_at = time.time()
-                    self._event(
-                        record, "job_starting", f"Preparing {job.name} from fresh state.",
-                        job_index=job.index,
-                    )
-                    self._save(record)
-                with self._lock:
-                    spec = self._build_spec(record, job)
+                    if job.state == "completed":
+                        continue
                     if record.cancel_requested:
                         job.state = "cancelled"
                         job.stop_reason = "operator_cancelled"
                         job.completed_at = time.time()
                         self._stop(record, "cancelled", "operator_cancelled")
                         return
-                    # Keep the queue claim and campaign creation in one critical
-                    # section so a concurrent cancel cannot slip between them.
-                    campaign = self.campaigns.start(spec)
-                    active_campaign_id = campaign.campaign_id
-                    job.campaign_id = campaign.campaign_id
-                    job.state = "active"
-                    self._event(
-                        record, "job_started", f"Started {job.name}.",
-                        job_index=job.index, campaign_id=campaign.campaign_id,
-                    )
-                    self._save(record)
+                    if job.state == "active" and job.campaign_id:
+                        campaign = self.campaigns.get(job.campaign_id)
+                        active_campaign_id = job.campaign_id
+                    else:
+                        if job.state != "pending" or job.campaign_id is not None:
+                            raise RunConflictError("Queue cannot replay a previously started job")
+                        record.current_job_index = job.index
+                        job.state = "starting"
+                        job.started_at = time.time()
+                        self._event(record, "job_starting", f"Preparing {job.name} from fresh state.",
+                                    job_index=job.index)
+                        self._save(record)
+                        spec = self._build_spec(record, job)
+                        campaign = self.campaigns.start(spec)
+                        active_campaign_id = campaign.campaign_id
+                        job.campaign_id = campaign.campaign_id
+                        job.state = "active"
+                        self._event(record, "job_started", f"Started {job.name}.",
+                                    job_index=job.index, campaign_id=campaign.campaign_id)
+                        self._save(record)
                 while True:
                     campaign = self.campaigns.get(campaign.campaign_id)
                     if campaign.state in CAMPAIGN_TERMINAL or campaign.state == "awaiting_refill":
@@ -530,6 +617,8 @@ class OvernightQueueManager:
                         trial for trial in campaign.trials
                         if trial.objective_status == "accepted"
                     ])
+                    job.trials_attempted = len(campaign.trials)
+                    job.unscored_count = sum(trial.objective is None for trial in campaign.trials)
                     job.stop_reason = campaign.stop_reason
                     job.error = campaign.error
                     job.completed_at = time.time()
@@ -609,7 +698,8 @@ class OvernightQueueManager:
                     ),
                 )
         finally:
-            self._workers.discard(queue_id)
+            with self._lock:
+                self._workers.discard(queue_id)
 
 
 _manager = None

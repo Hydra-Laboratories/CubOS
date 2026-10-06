@@ -104,6 +104,8 @@ class OvernightQueueJob(CampaignModel):
     best_objective: float | None = None
     best_parameters: dict[str, float] | None = None
     trials_completed: int = 0
+    trials_attempted: int = 0
+    unscored_count: int = 0
     stop_reason: str | None = None
     error: str | None = None
 
@@ -132,6 +134,7 @@ class OvernightQueueRecord(CampaignModel):
     stop_reason: str | None = None
     error: str | None = None
     cancel_requested: bool = False
+    skip_underexposed: bool = False
     resource_summary: OvernightResourceSummary
     jobs: list[OvernightQueueJob]
     events: list[OvernightQueueEvent] = Field(default_factory=list)

@@ -421,3 +421,128 @@ def test_queue_inventory_subtracts_configured_dead_volume(tmp_path, monkeypatch)
     monkeypatch.setattr("cubos_api.services.overnight_queue.load_deck_from_yaml", lambda _path: Deck())
     with pytest.raises(ValueError, match="after 51 uL dead volume"):
         OvernightQueueManager._check_queue_inventory(manager, setups)
+
+
+def _failed_exposure_queue(tmp_path):
+    campaigns = _Campaigns(["completed", "failed", "completed", "completed", "completed"])
+    manager = _manager(tmp_path, campaigns)
+    queue = manager.prepare(_request())
+    manager.start(queue.queue_id)
+    _wait(manager, queue.queue_id, {"failed"})
+    deadline = time.monotonic() + 2
+    while queue.queue_id in manager._workers and time.monotonic() < deadline:
+        time.sleep(.001)
+    record = manager._records[queue.queue_id]
+    record.stop_reason = record.jobs[1].stop_reason = "batch_objective_rejected"
+    record.jobs[0].trials_completed = 8
+    record.jobs[1].trials_completed = 5
+    failed = campaigns.records[record.jobs[1].campaign_id]
+    failed.stop_reason = "batch_objective_rejected"
+    failed.trials = [SimpleNamespace(objective=1.5, objective_status="accepted", parameters={}) for _ in range(5)] + [SimpleNamespace(objective=None, objective_status="rejected", parameters={})]
+    manager._save(record)
+    campaigns.resumed = []
+    def resume(campaign_id):
+        campaigns.resumed.append(campaign_id)
+        failed.state = "completed"
+        failed.stop_reason = "trial_budget"
+        return failed
+    campaigns.resume_underexposed = resume
+    return manager, campaigns, queue.queue_id
+
+
+def test_resume_keeps_completed_job_and_existing_campaign(tmp_path):
+    manager, campaigns, queue_id = _failed_exposure_queue(tmp_path)
+    original = manager.get(queue_id).jobs[0]
+    manager.resume_underexposed(queue_id)
+    final = _wait(manager, queue_id, {"completed", "failed"})
+    assert final.state == "completed"
+    assert final.jobs[0] == original
+    assert campaigns.resumed == ["campaign-2"]
+    assert final.jobs[1].campaign_id == "campaign-2"
+    assert len(campaigns.started) == 5
+    assert all(spec.skip_underexposed for spec in campaigns.started[2:])
+    assert final.jobs[1].trials_completed == 5
+    assert final.jobs[1].trials_attempted == 6
+    assert final.jobs[1].unscored_count == 1
+    with pytest.raises(RunConflictError):
+        manager.resume_underexposed(queue_id)
+
+
+@pytest.mark.parametrize("guard", ["physical", "snapshot", "other_queue", "history", "restart"])
+def test_resume_guards_leave_failed_queue_unchanged(tmp_path, guard):
+    manager, campaigns, queue_id = _failed_exposure_queue(tmp_path)
+    if guard == "physical":
+        def reject(_campaign_id):
+            raise RunConflictError("Native run failed")
+        campaigns.resume_underexposed = reject
+    elif guard == "snapshot":
+        (manager.base / queue_id / "job-2" / "deck.yaml").write_text("changed")
+    elif guard == "other_queue":
+        other = manager.prepare(_request())
+        record = manager._records[other.queue_id]
+        record.state = "running"
+        manager._save(record)
+    elif guard == "history":
+        record = manager._records[queue_id]
+        record.jobs[0].state = "pending"
+        manager._save(record)
+    else:
+        record = manager._records[queue_id]
+        record.state = "interrupted"
+        record.stop_reason = "server_restart"
+        manager._save(record)
+    before = (manager.base / queue_id / "queue.json").read_text()
+    with pytest.raises((RunConflictError, ValueError)):
+        manager.resume_underexposed(queue_id)
+    assert (manager.base / queue_id / "queue.json").read_text() == before
+    assert campaigns.resumed == []
+    assert len(campaigns.started) == 2
+
+
+def test_resume_cancel_and_duplicate_do_not_start_later_jobs(tmp_path):
+    manager, campaigns, queue_id = _failed_exposure_queue(tmp_path)
+    def resume(campaign_id):
+        campaigns.resumed.append(campaign_id)
+        campaign = campaigns.records[campaign_id]
+        campaign.state = "running"
+        return campaign
+    campaigns.resume_underexposed = resume
+    manager.resume_underexposed(queue_id)
+    with pytest.raises(RunConflictError):
+        manager.resume_underexposed(queue_id)
+    manager.cancel(queue_id)
+    final = _wait(manager, queue_id, {"cancelled"})
+    assert campaigns.cancelled == [("campaign-2", "cancel")]
+    assert len(campaigns.started) == 2
+    assert final.jobs[0].state == "completed"
+    assert all(job.state == "cancelled" for job in final.jobs[1:])
+
+
+@pytest.mark.parametrize("cancel_fails", [False, True])
+def test_resume_persistence_failure_cancels_existing_campaign(tmp_path, cancel_fails):
+    manager, campaigns, queue_id = _failed_exposure_queue(tmp_path)
+    save = manager._save
+    failed_once = False
+    def fail_once(record):
+        nonlocal failed_once
+        if record.state == "running" and not failed_once:
+            failed_once = True
+            raise OSError("queue persistence unavailable")
+        save(record)
+    manager._save = fail_once
+    if cancel_fails:
+        def reject_cancel(campaign_id, action):
+            campaigns.cancelled.append((campaign_id, action))
+            raise OSError("cancel unavailable")
+        campaigns.control = reject_cancel
+    with pytest.raises(ValueError, match="queue persistence unavailable"):
+        manager.resume_underexposed(queue_id)
+    result = manager.get(queue_id)
+    assert result.state == ("blocked" if cancel_fails else "failed")
+    assert campaigns.cancelled == [("campaign-2", "cancel")]
+    assert campaigns.resumed == ["campaign-2"]
+    assert len(campaigns.started) == 2
+    assert result.jobs[1].campaign_id == "campaign-2"
+    assert result.jobs[0].state == "completed"
+    assert all(job.state == "pending" for job in result.jobs[2:])
+    assert queue_id not in manager._workers

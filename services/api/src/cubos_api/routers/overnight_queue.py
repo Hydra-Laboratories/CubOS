@@ -62,3 +62,15 @@ def cancel_overnight_queue(queue_id: str):
         raise HTTPException(404, "Overnight queue not found") from exc
     except RunConflictError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/{queue_id}/resume-underexposed", response_model=OvernightQueueRecord, status_code=202)
+def resume_underexposed_queue(queue_id: str):
+    try:
+        return get_overnight_queue_manager().resume_underexposed(queue_id)
+    except KeyError as exc:
+        raise HTTPException(404, "Overnight queue not found") from exc
+    except RunConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(400, f"{type(exc).__name__}: {exc}") from exc
