@@ -7,6 +7,8 @@ from typing import Annotated, Dict, List, Literal, Mapping, Optional, Type, Unio
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .labware.tip_rack import SideExit
+
 from .labware.container_role import KNOWN_CONTAINER_ROLES
 from .labware.labware import WellAttributeValue
 
@@ -365,6 +367,7 @@ class TipRackYamlEntry(_BaseHolderYamlEntry):
     pickup_z: float
     drop_z: Optional[float] = None
     tip_length: float = Field(..., gt=0)
+    side_exit: SideExit | None = None
     calibration: _YamlCalibrationPoints
     x_offset: float = Field(..., gt=0)
     y_offset: float = Field(..., gt=0)

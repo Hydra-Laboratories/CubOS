@@ -205,6 +205,13 @@ export function buildCalibratedConfig({
     max_travel_z: maxTravel.z,
   };
 
+  if (!isMulti && instruments.length === 1) {
+    const name = instruments[0];
+    if (next.instruments[name]?.type === "pipette") {
+      next.instruments[name].depth = -requireFinite(tipLengths?.[name] ?? 0, `${name} tip length`);
+    }
+  }
+
   if (isMulti) {
     const reference = instrumentPositions[referenceInstrument];
     const lowest = instrumentPositions[lowestInstrument];

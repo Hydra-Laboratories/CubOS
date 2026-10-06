@@ -1455,6 +1455,43 @@ def _validate_pipette_command(
                 "pick_up_tip cannot run because the pipette already has an "
                 "attached pipette tip. Drop the current tip first.",
             ))
+        try:
+            rack, tip_id = resolve_tip_rack_slot(deck, args.get("position"))
+        except TipRackResolutionError:
+            rack, tip_id = None, None
+        if rack is not None and rack.side_exit is not None and tip_id in rack.tips:
+            metadata_violations, extension = _validate_tip_pickup_metadata(
+                step_index=step_index, position=args.get("position"), deck=deck,
+            )
+            violations.extend(metadata_violations)
+            path = rack.pickup_path(tip_id)
+            previous = current_poses.get("pipette")
+            for phase, target, depth in path:
+                violations.extend(_validate_gantry_waypoint(
+                    step_index=step_index, command_name=command_name,
+                    gantry=gantry, label=f"side-exit {phase}", instrument="pipette",
+                    instrumented_gantry=instrumented_gantry,
+                    x=target[0], y=target[1], z=target[2], tip_extension=depth,
+                ))
+                if phase == "approach":
+                    violations.extend(_validate_known_transit(
+                        step_index=step_index, command_name=command_name,
+                        gantry=gantry, label="side-exit approach", instrument="pipette",
+                        current=previous, target=target, travel_z=target[2],
+                    ))
+                elif previous is not None:
+                    if phase == "lift":
+                        previous = (previous[0], previous[1], previous[2] - rack.tip_length)
+                    violations.extend(_validate_machine_structure_segment(
+                        step_index=step_index, command_name=command_name,
+                        gantry=gantry, label=f"side-exit {phase}", instrument="pipette",
+                        start=previous, end=target,
+                    ))
+                previous = target
+            if extension is not None:
+                tip_state = tip_state.attach(extension)
+                current_poses["pipette"] = path[-1][1]
+            return violations, tip_state
         engage_violations, bare_pose = _validate_pipette_engage(
             step_index=step_index,
             command_name=command_name,
@@ -2005,7 +2042,22 @@ def validate_protocol_semantics(
     violations: list[ProtocolSemanticViolation] = []
     current_poses: dict[str, Point3D] = {}
     pipette_tip_state = PipetteTipState()
+    consumed_side_tips: dict[str, set[str]] = {}
     for step in protocol.steps:
+        if step.command_name == "pick_up_tip":
+            position = step.args.get("position")
+            try:
+                rack, tip_id = resolve_tip_rack_slot(deck, position)
+            except TipRackResolutionError:
+                rack, tip_id = None, None
+            if rack is not None and rack.side_exit is not None and tip_id in rack.tips:
+                rack_key = position.rsplit(".", 1)[0]
+                consumed = consumed_side_tips.setdefault(rack_key, set())
+                blockers = rack.exit_blockers(tip_id, consumed)
+                if blockers or tip_id in consumed:
+                    violations.append(_violation(step.index, step.command_name,
+                        f"Side-exit slot {position} is consumed or its exit lane is blocked by {blockers}."))
+                consumed.add(tip_id)
         if step.command_name == "home":
             violations.extend(_validate_home_waypoints(
                 step_index=step.index,

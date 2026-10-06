@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Dict
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .holder import HolderLabware
 from .labware import Coordinate3D, Labware
@@ -12,6 +12,14 @@ if TYPE_CHECKING:
 
 
 DEFAULT_TIP_LENGTH_MM = 59.3
+
+
+class SideExit(BaseModel):
+    """Lift from engagement, then leave an open rack along deck-frame X."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    lift_mm: float = Field(..., ge=30, description="Vertical lift before X withdrawal (mm).")
+    exit_x: float = Field(..., description="Absolute tool X beyond the open rack edge, including clearance.")
 
 
 class TipRackResolutionError(ValueError):
@@ -113,6 +121,36 @@ class TipRack(HolderLabware):
             "Auto-initializes to all-True from the tips keys if left empty."
         ),
     )
+    side_exit: SideExit | None = None
+
+    def exit_blockers(self, tip_id: str, consumed: set[str] | None = None) -> list[str]:
+        """Loaded tips in the same X lane must be removed from the opening inward."""
+        if self.side_exit is None:
+            return []
+        p = self.get_tip_location(tip_id)
+        low, high = sorted((p.x, self.side_exit.exit_x))
+        return [key for key, q in self.tips.items()
+                if key != tip_id and self.is_tip_present(key)
+                and key not in (consumed or set())
+                and abs(q.y - p.y) < 1e-6 and low < q.x < high]
+
+    def pickup_path(self, tip_id: str) -> list[tuple[str, tuple[float, float, float], float]]:
+        """Return approach, engagement, lift and exit in active tool coordinates.
+
+        The extension changes at engagement. Subtracting tip_length from the
+        two withdrawal Z targets keeps the carriage lift equal to lift_mm.
+        """
+        if self.side_exit is None:
+            return []
+        p = self.get_tip_location(tip_id)
+        lift = self.side_exit.lift_mm
+        z = p.z + lift
+        return [
+            ("approach", (p.x, p.y, z), 0.0),
+            ("engage", (p.x, p.y, p.z), 0.0),
+            ("lift", (p.x, p.y, z - self.tip_length), self.tip_length),
+            ("exit", (self.side_exit.exit_x, p.y, z - self.tip_length), self.tip_length),
+        ]
 
     @model_validator(mode="before")
     @classmethod
@@ -188,6 +226,10 @@ class TipRack(HolderLabware):
             raise ValueError(
                 f"tip_present contains keys not in tips: {sorted(extra_keys)}"
             )
+        if self.side_exit is not None:
+            xs = [p.x for p in self.tips.values()]
+            if min(xs) <= self.side_exit.exit_x <= max(xs):
+                raise ValueError("side_exit.exit_x must be beyond all rack tip positions.")
         return self
 
     def get_location(self, location_id: str | None = None) -> Coordinate3D:
@@ -228,6 +270,6 @@ class TipRack(HolderLabware):
     def next_available_tip(self) -> str | None:
         """Return the first tip ID that is still loaded, or ``None`` if empty."""
         for tip_id in self.tips:
-            if self.tip_present.get(tip_id, False):
+            if self.tip_present.get(tip_id, False) and not self.exit_blockers(tip_id):
                 return tip_id
         return None

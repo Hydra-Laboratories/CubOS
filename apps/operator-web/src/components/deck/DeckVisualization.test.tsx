@@ -282,11 +282,7 @@ describe("DeckVisualization", () => {
     expect(screen.getByText("350")).toBeInTheDocument();
   });
 
-  // Regression: bed mode used to translate the deck by -gantryY, moving it
-  // up-screen. The head marker is pinned at deck-frame Y=0 (bottom of the
-  // frame), so when WPos.y=50 the deck must shift down-screen (+sy) to put
-  // deck point y=50 under the fixed marker — the sign was inverted.
-  it("shifts the deck down-screen as gantry Y increases in bed mode", () => {
+  it("keeps bed-mode labware in the fixed deck coordinate frame", () => {
     const { container } = render(
       <DeckVisualization
         deck={{ filename: "empty.yaml", labware: [] }}
@@ -308,16 +304,8 @@ describe("DeckVisualization", () => {
       />,
     );
 
-    expect(screen.getByText("bed moves Y")).toBeInTheDocument();
-    const deckGroup = container.querySelector("g[transform]");
-    expect(deckGroup).not.toBeNull();
-    const match = /translate\(0,\s*(-?[\d.]+)\)/.exec(deckGroup!.getAttribute("transform")!);
-    expect(match).not.toBeNull();
-    const translateY = Number(match![1]);
-    // Visual bounds pad [0,300]x[0,200] to [-10,310]x[-10,210]; the 420px-high
-    // SVG letterboxes to scale = (420 - 40) / 220 px/mm.
-    const expectedScale = (420 - 2 * 20) / 220;
-    expect(translateY).toBeCloseTo(50 * expectedScale, 3);
+    expect(screen.getByText("deck coordinates · bed moves Y")).toBeInTheDocument();
+    expect(container.querySelector("g[transform]")).toBeNull();
   });
 
   it("renders holder labware with current CubOS dimension keys without NaN attributes", () => {
@@ -397,5 +385,59 @@ describe("DeckVisualization", () => {
     expect(screen.getByText("Legacy Plate")).toBeInTheDocument();
     expect(screen.getByText("Legacy Vial")).toBeInTheDocument();
     expect(screen.getByTestId("deck-visualization").outerHTML).not.toContain("NaN");
+  });
+});
+
+
+describe("mounted tools in the moving-bed view", () => {
+  it.each(["head", "bed"] as const)("keeps the zero-offset pipette on HEAD in %s mode", (mode) => {
+    const instruments = {
+      pipette: { type: "pipette", vendor: "sartorius", offset_x: 0, offset_y: 0, depth: -70 },
+      camera: { type: "camera", vendor: "opencv", offset_x: 0, offset_y: -46.5, depth: -114.964 },
+    };
+    const makePosition = (y: number) => ({
+      connected: true, status: "Idle", calibration_active: false,
+      x: 159.396, y, z: 55.04, work_x: 159.396, work_y: y, work_z: 55.04,
+    });
+    const props = { deck: null, instruments, yAxisMotion: mode };
+    const { rerender } = render(<DeckVisualization {...props} gantryPosition={makePosition(74.194)} />);
+    let cameraSeparation: number | undefined;
+    for (const y of [74.194, 20]) {
+      rerender(<DeckVisualization {...props} gantryPosition={makePosition(y)} />);
+      const head = screen.getByText("HEAD").parentElement!.querySelector('circle[r="4"]')!;
+      const pipette = screen.getByText("pipette").parentElement!.querySelector("rect")!;
+      expect(pipette.querySelector("title")).toHaveTextContent(`pipette (pipette) at (159.4, ${y.toFixed(1)})`);
+      const camera = screen.getByText("camera").parentElement!.querySelector("rect")!;
+      const projectedCenter = (rect: Element) => {
+        const transform = rect.closest("g[transform]")?.getAttribute("transform") ?? "";
+        const translateY = Number(transform.match(/translate\(0, ([^)]+)\)/)?.[1] ?? 0);
+        return { x: Number(rect.getAttribute("x")) + 7, y: Number(rect.getAttribute("y")) + 7 + translateY };
+      };
+      const tip = projectedCenter(pipette);
+      expect(tip.x).toBeCloseTo(Number(head.getAttribute("cx")), 5);
+      expect(tip.y).toBeCloseTo(Number(head.getAttribute("cy")), 5);
+      const separation = projectedCenter(camera).y - tip.y;
+      expect(separation).toBeGreaterThan(0);
+      if (cameraSeparation !== undefined) expect(separation).toBeCloseTo(cameraSeparation, 5);
+      cameraSeparation = separation;
+    }
+  });
+});
+
+
+describe("deck-coordinate readout", () => {
+  it.each(["head", "bed"] as const)("plots actual XY against fixed axes for %s motion", (mode) => {
+    render(<DeckVisualization
+      deck={null}
+      instruments={null}
+      machineXRange={[0, 100]}
+      machineYRange={[0, 100]}
+      yAxisMotion={mode}
+      gantryPosition={{ connected: true, status: "Idle", calibration_active: false,
+        x: 50, y: 50, z: 40, work_x: 50, work_y: 50, work_z: 40 }}
+    />);
+    const head = screen.getByText("HEAD").parentElement!.querySelector('circle[r="4"]')!;
+    expect(Number(head.getAttribute("cx"))).toBeCloseTo(300);
+    expect(Number(head.getAttribute("cy"))).toBeCloseTo(210);
   });
 });

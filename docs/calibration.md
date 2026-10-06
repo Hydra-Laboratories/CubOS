@@ -90,6 +90,20 @@ Both flows still need a physical XY/Z reference point to size the volume;
 only which corner receives value `0` changes. GRBL soft-limit travel settings
 (`max_travel_x/y/z`) are span-based and unaffected by the policy.
 
+## Machines with extended Z travel
+
+Keep `gantry_type: cub` for a small CUB with an extended Z axis, and set the machine's actual travel explicitly. For the 56 mm extension:
+
+```yaml
+gantry_type: cub
+cnc:
+  factory_z_travel_mm: 56
+```
+
+This per-machine value is preserved when calibration saves a new gantry YAML. It is separate from `grbl_settings.max_travel_z`, which reflects the controller's current configured span and is programmed from measured usable travel plus homing pull-off during calibration. Do not copy an old controller span into the mechanical travel field. Keep machine configs outside the repository so software updates preserve the override.
+
+When calibrating a pipette with a tip attached, home-to-contact travel uses the raw carriage positions. The tip length is stored in the bare-nozzle depth offset; it does not increase the distance the carriage traveled. A 70 mm tip can therefore be calibrated on a machine with 56 mm Z travel, provided the actual home-to-contact move fits that travel. Enter the measured tip extension in the wizard.
+
 ## Run Calibration
 
 To calibrate in place, run:

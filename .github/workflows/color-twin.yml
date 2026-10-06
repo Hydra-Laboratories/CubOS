@@ -1,0 +1,41 @@
+name: Color twin simulation
+
+on:
+  pull_request:
+    paths:
+      - 'apps/color-twin/**'
+      - 'packages/core/**'
+      - '.github/workflows/color-twin.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/color-twin/**'
+      - 'packages/core/**'
+      - '.github/workflows/color-twin.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: apps/color-twin/package-lock.json
+      - name: Install simulation dependencies
+        run: python -m pip install -e 'packages/core[dev]' fastapi uvicorn httpx
+      - name: Test native simulation
+        env:
+          PYTHONPATH: apps/color-twin
+        run: python -m pytest apps/color-twin/tests -q
+      - name: Build simulation frontend
+        run: |
+          npm ci --prefix apps/color-twin
+          npm run build --prefix apps/color-twin

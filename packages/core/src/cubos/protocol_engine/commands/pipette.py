@@ -432,6 +432,11 @@ def pick_up_tip(
     tracked = _tracked_fluid_state(context)
     operation_key = None
     if tracked:
+        if rack.side_exit is not None and tip_id is None:
+            raise ProtocolExecutionError(
+                "Durably tracked side-exit pickup requires an explicit tip slot "
+                "selected from the rack opening inward."
+            )
         operation_key = context.fluid_operation_key("pick_up_tip")
         try:
             should_execute, resolved_tip_id, extension_mm = (
@@ -473,14 +478,36 @@ def pick_up_tip(
             )
 
     try:
-        _engage(context, position, command_label="pick_up_tip")
+        path = rack.pickup_path(tip_id)
+        if path:
+            blockers = rack.exit_blockers(tip_id)
+            if blockers:
+                raise ProtocolExecutionError(f"Side-exit lane blocked by loaded tips {blockers}; pick from the opening inward.")
+            if pipette.attached_tip_extension:
+                raise ProtocolExecutionError("Side-exit pickup requires a bare pipette.")
+            if context.gantry_config is None:
+                raise ProtocolExecutionError("Side-exit pickup requires gantry_config for bounds preflight.")
+            for phase, (x, y, z), extension in path:
+                target = (x - pipette.offset_x, y - pipette.offset_y, z + pipette.depth + extension)
+                if not context.gantry_config.working_volume.contains(*target):
+                    raise ProtocolExecutionError(f"Side-exit {phase} target {target} exceeds gantry bounds.")
+            approach = path[0][1]
+            context.gantry.move("pipette", approach, travel_z=approach[2])
+            context.gantry.move("pipette", path[1][1])
+        else:
+            _engage(context, position, command_label="pick_up_tip")
         pipette.pick_up_tip(speed)
+        pipette.set_attached_tip_extension(rack.tip_length)
+        rack.mark_tip_used(tip_id)
+        for phase, target, _ in path[2:]:
+            context.logger.info("Side-exit tip %s: %s to %s", position, phase, target)
+            context.gantry.move(
+                "pipette", target, travel_z=target[2] if phase == "exit" else None,
+            )
     except BaseException as exc:
         if operation_key is not None:
             _mark_tip_uncertain(context, operation_key, exc)
         raise
-    pipette.set_attached_tip_extension(rack.tip_length)
-    rack.mark_tip_used(tip_id)
     if operation_key is not None:
         try:
             context.data_store.complete_pick_up_tip(operation_key)

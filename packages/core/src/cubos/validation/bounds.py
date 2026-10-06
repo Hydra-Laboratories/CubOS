@@ -488,6 +488,17 @@ def _append_pipette_targets(
             tip_extension=tip_extension,
         )
     elif command_name == "pick_up_tip":
+        position = step_args.get("position")
+        try:
+            rack, tip_id = resolve_tip_rack_slot(deck, position)
+        except TipRackResolutionError:
+            rack, tip_id = None, None
+        if rack is not None and rack.side_exit is not None and tip_id in rack.tips:
+            for phase, (x, y, z), extension in rack.pickup_path(tip_id):
+                _append_target(targets, target=position, suffix=phase,
+                               instrument="pipette", x=x, y=y, z=z,
+                               tip_extension=extension)
+            return rack.tip_length
         _append_position_engage(
             targets,
             deck=deck,
