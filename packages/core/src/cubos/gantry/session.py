@@ -326,6 +326,17 @@ class GantrySession:
         finally:
             self._lock.release()
 
+    def coordinate_frame(self) -> dict[str, Any]:
+        """Read a fresh frame exclusively; a busy protocol must not be interleaved."""
+        if not self._lock.acquire(blocking=False):
+            raise GantrySessionError("Gantry operation is busy")
+        try:
+            if self._gantry is None:
+                raise GantryNotConnectedError("Gantry is not connected")
+            return self._gantry.coordinate_frame()
+        finally:
+            self._lock.release()
+
     def position(self) -> GantryPositionSnapshot:
         if self._gantry is None:
             return GantryPositionSnapshot(connected=False, status="Not connected")

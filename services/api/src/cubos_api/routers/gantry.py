@@ -365,6 +365,22 @@ def get_instrument_method_params() -> Dict[str, Dict[str, List[Dict[str, Any]]]]
     }
 
 
+@router.get("/coordinate-frame")
+def get_coordinate_frame() -> dict:
+    """Read controller-reported coordinates without motion or settings writes."""
+    with _run_state_lock:
+        if _run_state["active"]:
+            raise HTTPException(409, "Gantry is busy running a protocol")
+        try:
+            return _require_session().coordinate_frame()
+        except HTTPException:
+            raise
+        except GantrySessionError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except Exception as exc:
+            raise _session_http_exception(exc, default_action="Coordinate-frame query") from exc
+
+
 @router.get("/position")
 def get_position() -> GantryPosition:
     session = current_session()

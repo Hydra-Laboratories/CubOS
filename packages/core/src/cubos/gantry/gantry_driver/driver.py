@@ -824,6 +824,32 @@ class Mill:
         """Check if the serial connection is open."""
         return bool(self.ser_mill and self.ser_mill.is_open)
 
+    def coordinate_frame(self) -> dict:
+        """Read one fresh status frame without using cached offsets or deriving positions."""
+        self._require_open_serial()
+        self.ser_mill.reset_input_buffer()
+        raw = self.query_raw_status()
+        observed_at = time.time()
+        if not raw.startswith("<") or not raw.endswith(">"):
+            raise MillConnectionError("No fresh GRBL status frame received")
+        fields = raw[1:-1].split("|")
+        report = {
+            "raw_status": raw, "status": fields[0], "observed_at": observed_at,
+            "source": "fresh_grbl_status_query", "fresh": True,
+            "machine_position": None, "work_position": None, "work_coordinate_offset": None,
+        }
+        names = {"MPos": "machine_position", "WPos": "work_position", "WCO": "work_coordinate_offset"}
+        for field in fields[1:]:
+            name, separator, value = field.partition(":")
+            if separator and name in names:
+                try:
+                    coordinates = tuple(float(axis) for axis in value.split(","))
+                except ValueError:
+                    continue
+                if len(coordinates) == 3 and all(math.isfinite(axis) for axis in coordinates):
+                    report[names[name]] = dict(zip(("x", "y", "z"), coordinates))
+        return report
+
     def query_raw_status(self) -> str:
         """Send GRBL '?' and return the raw status string (e.g. '<Idle|WPos:...>').
 

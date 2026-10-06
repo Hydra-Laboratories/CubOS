@@ -599,6 +599,13 @@ class Gantry:
                 return raw_settings.get(field_name)
         return None
 
+    def coordinate_frame(self) -> dict:
+        """Return fresh controller-reported machine/work/offset coordinates."""
+        if self._offline:
+            raise MillConnectionError("Coordinate-frame diagnostics require a physical controller")
+        assert self._mill is not None
+        return self._mill.coordinate_frame()
+
     def query_raw_status(self) -> str:
         """Return one raw GRBL status string for diagnostics/recovery."""
         if self._offline:
