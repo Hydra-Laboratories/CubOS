@@ -287,7 +287,7 @@ def test_two_mock_runs_persist_tip_state_and_never_repick_a_consumed_tip(
     every tip as present in memory.
     """
     db_path = tmp_path / "fluid-state-tip-repick.db"
-    from cubos.protocol_engine.errors import ProtocolExecutionError
+    from cubos.validation.errors import ProtocolSemanticValidationError
 
     first_store = DataStore(db_path)
     try:
@@ -357,7 +357,9 @@ def test_two_mock_runs_persist_tip_state_and_never_repick_a_consumed_tip(
 
     third_store = DataStore(db_path)
     try:
-        with pytest.raises(ProtocolExecutionError, match="not available"):
+        fluid_before = third_store.get_fluid_snapshot(state_id)
+        tips_before = third_store.get_tip_snapshot(state_id)
+        with pytest.raises(ProtocolSemanticValidationError, match="not available"):
             run_on_hardware(
                 FIXTURES / "gantry.yaml",
                 FIXTURES / "deck.yaml",
@@ -366,6 +368,8 @@ def test_two_mock_runs_persist_tip_state_and_never_repick_a_consumed_tip(
                 data_store=third_store,
                 fluid_state_id=state_id,
             )
+        assert third_store.get_fluid_snapshot(state_id) == fluid_before
+        assert third_store.get_tip_snapshot(state_id) == tips_before
     finally:
         third_store.close()
 

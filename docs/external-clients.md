@@ -36,3 +36,5 @@ A learning application can download a target capture, check its digest and save 
 ## Operator validation before physical use
 
 No hardware was operated during this extraction. On an isolated offline station, verify reservation conflicts, validation and evidence downloads with mock runs. Before physical use, an operator should confirm the calibrated setup and consumables, reserve the station, validate and submit one reviewed protocol, inspect the returned measurements and image digests, and exercise cancellation and reservation release. Reconcile uncertain inventory before continuing. Finally confirm that a CubOS or application restart does not replay a run or remove the reservation.
+
+Interrupted liquid-handling protocols must not be replayed from a consumed pickup target. Setup validation rejects that replay before execution, preserving the completed liquid journal and attached-tip state. Inspect and reconcile the physical state, then prepare a reviewed continuation protocol. Coordinated XY travel follows the configured work-position frame; engagement and retraction remain Z-only at the resolved target.
