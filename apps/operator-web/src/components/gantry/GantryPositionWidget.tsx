@@ -3,6 +3,7 @@ import { gantryApi } from "../../api/client";
 import type { GantryConfig, GantryPosition, GantryResponse, WorkingVolume } from "../../types";
 import * as theme from "../../theme";
 import CalibrationWizard from "./CalibrationWizard";
+import CalibrationModeChooser from "./CalibrationModeChooser";
 import InstrumentOffsetCalibrationModal from "./InstrumentOffsetCalibrationModal";
 import { createJogPacer, jogPaceMs } from "./jogPacing";
 import { useConfirm } from "../common/useConfirm";
@@ -40,7 +41,8 @@ export default function GantryPositionWidget({
   const [homeBusy, setHomeBusy] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
   const [offsetCalibrationOpen, setOffsetCalibrationOpen] = useState(false);
-  const anyCalibrationOpen = calibrationOpen || offsetCalibrationOpen;
+  const [calibrationModeOpen, setCalibrationModeOpen] = useState(false);
+  const anyCalibrationOpen = calibrationModeOpen || calibrationOpen || offsetCalibrationOpen;
   const [stepXY, setStepXY] = useState("0.5");
   const [stepZ, setStepZ] = useState("0.5");
   const [moveX, setMoveX] = useState("");
@@ -468,6 +470,12 @@ export default function GantryPositionWidget({
   const advancedDisabled = !connected || advancedBusy || isRunning;
   const canCalibrate = !!gantry;
   const canOpenCalibration = canCalibrate && !isRunning;
+  const offsetsDisabledReason = isRunning ? "Wait for the protocol to finish."
+    : !connected ? "Connect the gantry before calibrating offsets."
+    : position?.calibration_active ? "Finish or restore full calibration before calibrating offsets."
+    : status !== "Idle" || homeBusy || jogBusy ? "Wait for the gantry to be idle."
+    : !onSaveInstrumentOffsets ? "Offset saving is unavailable."
+    : null;
 
   const jogBtnProps = (x: number, y: number, z: number) => ({
     onMouseDown: () => !jogDisabled && startJog(x, y, z),
@@ -738,19 +746,17 @@ export default function GantryPositionWidget({
           {homeBusy ? "Homing…" : "Home"}
         </button>
         <button
-          onClick={() => setCalibrationOpen(true)}
+          onClick={() => setCalibrationModeOpen(true)}
           disabled={!canOpenCalibration}
           style={{
             ...calibrateBtnStyle,
             opacity: canOpenCalibration ? 1 : 0.45,
             cursor: canOpenCalibration ? "pointer" : "not-allowed",
           }}
-          title={canOpenCalibration ? "Open gantry calibration" : isRunning ? "Protocol running" : "Load a gantry config first"}
+          title={canOpenCalibration ? "Choose calibration mode" : isRunning ? "Protocol running" : "Load a gantry config first"}
         >
           Calibrate
         </button>
-        <button onClick={() => setOffsetCalibrationOpen(true)} disabled={!onSaveInstrumentOffsets || !canOpenCalibration || !connected || calibrationInterrupted || homeBusy || jogBusy}
-          style={calibrateBtnStyle}>Calibrate instrument offsets</button>
       </div>
 
       {workingVolume && (
@@ -892,6 +898,13 @@ export default function GantryPositionWidget({
         Keyboard: Arrow keys = XY, X/Z keys = Z up/down
       </div>
       {confirmDialog}
+      {calibrationModeOpen && <CalibrationModeChooser
+        onClose={() => setCalibrationModeOpen(false)}
+        onFull={() => { setCalibrationModeOpen(false); setCalibrationOpen(true); }}
+        onOffsets={() => { setCalibrationModeOpen(false); setOffsetCalibrationOpen(true); }}
+        fullDisabled={isRunning}
+        offsetsDisabledReason={offsetsDisabledReason}
+      />}
       <InstrumentOffsetCalibrationModal
         open={offsetCalibrationOpen}
         onClose={() => setOffsetCalibrationOpen(false)}

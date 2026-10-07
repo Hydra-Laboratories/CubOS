@@ -92,7 +92,8 @@ only which corner receives value `0` changes. GRBL soft-limit travel settings
 
 ## Pipette calibration with a tip attached
 
-In the Operator UI, select **Calibrating with a tip attached** when recording
+In the Operator UI, choose **Calibrate → Full calibration**, then select
+**Calibrating with a tip attached** when recording
 a pipette contact and enter the measured extension below the bare nozzle.
 For a leftmost pipette, set this option once in **Prepare** so you can align
 with the block using a tip. **Set XY Origin** shows a reminder of the saved
@@ -111,7 +112,7 @@ the block.
 
 ## Calibrate instrument offsets only
 
-Use **Calibrate instrument offsets** in Gantry Control after the gantry origin
+Use **Calibrate → Calibrate offsets only** in Gantry Control after the gantry origin
 and travel limits have been calibrated. This measures relative instrument
 mounting offsets without homing, changing the coordinate origin, or changing
 controller limits. It preserves the selected reference tool's existing mount

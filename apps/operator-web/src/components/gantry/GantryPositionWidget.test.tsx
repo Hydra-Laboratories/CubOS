@@ -1024,11 +1024,53 @@ describe("GantryPositionWidget manual move safety", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
     expect(screen.getByRole("dialog", { name: "Gantry calibration" })).toBeInTheDocument();
 
     fireEvent.keyDown(window, { key: "ArrowRight" });
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("opens the chooser without hardware calls and blocks background keyboard jogging", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GantryPositionWidget position={position()} workingVolume={workingVolume}
+      gantryFile="cubos.yaml" gantry={{ filename: "cubos.yaml", config: gantryConfig() }}
+      onSaveCalibrated={async () => undefined} onSaveInstrumentOffsets={async () => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    expect(screen.getByRole("dialog", { name: "Choose calibration mode" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Gantry calibration" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Calibrate instrument offsets" })).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Calibrate" })).toHaveFocus();
+  });
+
+  it.each([
+    [{ connected: false }, "Connect the gantry before calibrating offsets."],
+    [{ calibration_active: true }, "Finish or restore full calibration before calibrating offsets."],
+    [{ status: "Alarm" }, "Wait for the gantry to be idle."],
+  ])("keeps full calibration available but blocks offsets for unavailable gantry state %j", async (state, reason) => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GantryPositionWidget position={position(state)} workingVolume={workingVolume}
+      gantryFile="cubos.yaml" gantry={{ filename: "cubos.yaml", config: gantryConfig() }}
+      onSaveCalibrated={async () => undefined} onSaveInstrumentOffsets={async () => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    expect(screen.getByRole("button", { name: "Full calibration" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Calibrate offsets only" })).toBeDisabled();
+    expect(screen.getByText(reason)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    if ("connected" in state && state.connected === false) {
+      await user.click(screen.getByRole("button", { name: "Full calibration" }));
+      expect(screen.getByRole("dialog", { name: "Gantry calibration" })).toBeInTheDocument();
+      expect(screen.queryByRole("dialog", { name: "Choose calibration mode" })).not.toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
   });
 
   it("opens offsets-only calibration without controller changes or background keyboard jogs", async () => {
@@ -1038,7 +1080,9 @@ describe("GantryPositionWidget manual move safety", () => {
     render(<GantryPositionWidget position={position()} workingVolume={workingVolume}
       gantryFile="cubos.yaml" gantry={{ filename: "cubos.yaml", config: gantryConfig() }}
       onSaveCalibrated={async () => undefined} onSaveInstrumentOffsets={async () => undefined} />);
-    await user.click(screen.getByRole("button", { name: "Calibrate instrument offsets" }));
+    await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Calibrate offsets only" }));
+    expect(screen.queryByRole("dialog", { name: "Choose calibration mode" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Instrument offset calibration" })).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "ArrowRight" });
     expect(fetchMock).not.toHaveBeenCalled();

@@ -731,7 +731,8 @@ describe("CubOS editor interactions", () => {
     await importConfig(user, "Gantry config", "cubos.yaml");
     await connectGantry(user);
     fetchMock.mockClear();
-    await user.click(screen.getByRole("button", { name: "Calibrate instrument offsets" }));
+    await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Calibrate offsets only" }));
     await user.click(screen.getByRole("checkbox", { name: /existing offsets and depth are calibrated/ }));
     await user.click(screen.getByRole("button", { name: "Record pipette_1 at fixed mark" }));
     await screen.findByText(/pipette_1: recorded/);
@@ -754,6 +755,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
 
     expect(screen.getByRole("dialog", { name: "Gantry calibration" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /XY origin/ })).not.toBeInTheDocument();
@@ -826,6 +828,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("button", { name: "Home gantry" }));
 
@@ -845,6 +848,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("button", { name: "Home gantry" }));
 
@@ -866,6 +870,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
 
     const outputYaml = screen.getByLabelText("Output YAML");
     await user.clear(outputYaml);
