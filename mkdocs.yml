@@ -7,8 +7,8 @@ nav:
   - Home: index.md
   - Set Up and Use CubOS:
     - Getting Started: getting-started.md
-    - Use the Operator UI:
-      - Overview: operator-ui.md
+    - Use CubOS Operator:
+      - Start Here: operator-ui.md
       - Gantry, Connect and Move: operator-ui/gantry.md
       - Calibrate the Gantry: operator-ui/calibrate-gantry.md
       - Deck and Labware: operator-ui/deck-and-labware.md

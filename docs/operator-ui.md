@@ -1,144 +1,60 @@
-# Use the Operator UI
+# Use CubOS Operator
 
-The Operator UI is CubOS's browser app. It lets you connect to the gantry,
-move it with on-screen buttons, calibrate the machine and its labware, build
-and run protocols, and download results — all without touching a terminal or
-editing YAML by hand.
+CubOS Operator lets you set up labware, move the gantry (the moving machine
+head), run a protocol (a saved list of steps), and download measurements.
+Use it in the installed CubOS app or a web browser.
 
-Everything in this guide happens in a normal web browser. If you can fill in
-a web form, you can drive CubOS.
+## Open CubOS
 
-This page covers starting the app and finding your way around it. The
-step-by-step tasks each have their own page:
-
-| Task | Page |
+| Your setup | What to do |
 |---|---|
-| Load a machine config, connect, home, and jog | [Gantry: Connect and Move](operator-ui/gantry.md) |
-| Calibrate the gantry's origin and instruments | [Calibrate the Gantry](operator-ui/calibrate-gantry.md) |
-| Define labware on the deck and calibrate its positions | [Deck and Labware](operator-ui/deck-and-labware.md) |
-| Build, validate, and run a protocol | [Protocols](operator-ui/protocols.md) |
-| Download measurements and inspect liquid state | [Results and State](operator-ui/results-and-state.md) |
+| Windows with CubOS installed | Open **CubOS** from the desktop or Start menu. Closing the app stops its local server. |
+| Preinstalled lab computer or appliance | Open the address your administrator supplied. On the CubOS computer, the default is `http://127.0.0.1:8742`. |
+| Installing from source | Follow [Getting Started](getting-started.md#installation), then start `python -m cubos_api` with the virtual environment active. Keep that terminal open. |
+| Raspberry Pi or remote computer | Ask your administrator for access, or follow [Connect to a Raspberry Pi](#connect-to-a-raspberry-pi). |
 
-Every screenshot in these pages is annotated with numbered markers. The list
-under each picture explains what each marker points at.
+## Your First Run
 
-## Start the Operator UI
+Follow these pages in order. For a machine already set up, use your lab's
+saved files and calibration.
 
-If you are using a preinstalled CubOS appliance, the Operator UI is already
-running — open a browser on the lab computer and go to the address your
-administrator gave you (by default it is `http://127.0.0.1:8742` on the
-machine itself).
+| Step | What you do |
+|---|---|
+| 1. [Gantry](operator-ui/gantry.md) | Open the machine's settings file, connect, and home. |
+| 2. [Calibrate the Gantry](operator-ui/calibrate-gantry.md) | Set the machine's reference position when first installed or after a mechanical change. |
+| 3. [Deck and Labware](operator-ui/deck-and-labware.md) | Describe the plates, vials, and racks on the deck and record their positions. |
+| 4. [Protocols](operator-ui/protocols.md) | Open or build the steps, save, validate, and run. |
+| 5. [Results and State](operator-ui/results-and-state.md) | Download measurements and check recorded liquid, tip, and cap state. |
 
-To start it yourself on the computer connected to the gantry:
+A **config** is a settings file. CubOS uses three: **Gantry** for the machine
+and instruments, **Deck** for labware, and **Protocol** for the steps to run.
+You can edit them using the forms; editing file text is optional.
 
-!!! note "Prerequisite"
-    The UI server is a separate package from the CubOS core. If you haven't
-    yet, install it into the same virtual environment (from the repository
-    root, with the venv activated):
-
-    ```bash
-    python -m pip install -e services/api
-    ```
-
-    Otherwise `python -m cubos_api` fails with `No module named cubos_api`.
-    It requires Python 3.11+.
-
-!!! note "Prerequisite: build the web app once"
-    The browser interface is compiled from `apps/operator-web/`. If the
-    server starts but logs `compiled web assets were not found` and the
-    browser shows **404 Not Found**, install
-    [Node.js 20 LTS or newer](https://nodejs.org) and build it (from the
-    repository root):
-
-    ```bash
-    cd apps/operator-web
-    npm ci
-    npm run build
-    cd ../..
-    ```
-
-    Then start `python -m cubos_api` again — it only picks up the compiled
-    assets at startup. See
-    [Build the Operator UI](getting-started.md#build-the-operator-ui-browser-app)
-    for details.
-
-With the virtual environment active — in every new terminal, re-run the
-[activation command](getting-started.md#installation) for your platform
-(e.g. `source .venv/bin/activate`) — start the server from the repository
-root:
-
-```bash
-python -m cubos_api
-```
-
-Your browser opens automatically at `http://127.0.0.1:8742` after a moment.
-Leave the terminal window running; closing it stops the app.
-
-### Running on a Raspberry Pi? Forward the port over SSH
-
-When CubOS runs on a Raspberry Pi (or any other machine without a monitor),
-the Operator UI is only reachable *on that machine* — for safety, the app
-only accepts local connections out of the box. The easiest way to use it
-from your own laptop is an SSH tunnel: one command that securely forwards
-the Pi's port 8742 to your laptop.
-
-In a terminal on your laptop (macOS/Linux Terminal, or PowerShell on
-Windows 10+), run:
-
-```bash
-ssh -L 8742:127.0.0.1:8742 <user>@<pi-address>
-```
-
-Replace `<user>@<pi-address>` with your Pi's login — for example
-`ssh -L 8742:127.0.0.1:8742 cub@cub.local` — and enter the Pi's password
-when asked.
-
-Then open `http://127.0.0.1:8742` in the browser **on your laptop**. The UI
-behaves exactly as if you were sitting at the Pi, jog buttons and all.
-
-Two things to remember:
-
-- **Keep the SSH window open.** Closing it closes the tunnel, and the
-  browser tab will stop responding — the gantry itself is unaffected.
-- If the app isn't already running on the Pi, start it inside that same
-  SSH session first — activate the venv, then `python -m cubos_api` (it
-  stays local-only; the tunnel is what makes it reachable from your
-  laptop).
-
-!!! note
-    Prefer the tunnel over exposing the app on the network. It needs no
-    configuration changes on the Pi, and only someone who can log in over
-    SSH can reach the controls.
+Screenshots use numbered callouts explained directly below each image.
+Example filenames and instruments will differ from your lab's setup.
 
 ## A Tour of the Screen
 
 ![The Operator UI with a gantry and deck loaded, annotated](images/operator-ui/overview.webp)
 
-1. **View switcher.** Switches the left panel between **Workflow** (the
-   editors), **Visualize** (a full-size deck map), **State** (liquid,
-   tip, and cap tracking), and **Results** (finished campaigns). A **Run**
-   view appears here while a protocol is running or once one has run.
-2. **Editor tabs.** Inside the Workflow view, **Gantry**, **Deck**, and
-   **Protocol** each edit one YAML file. The loaded filename shows under the
-   tab name; an amber dot means that tab has unsaved edits. **Protocol** is
-   disabled until both a gantry and a deck file are loaded.
-3. **Config picker.** Each tab starts with a dropdown listing the files of
-   that kind in the config directory, plus **New** and **Delete** buttons.
-4. **Deck Visualization.** A top-down map of the deck. Labware appears as
-   you define it, instruments are drawn at the head, and a crosshair labeled
-   **HEAD** tracks the live gantry position. It is always visible.
-5. **Gantry Control.** Connection status, jog pad, coordinate readout,
-   **Move To**, and the **Calibrate** button. Also always visible.
-6. **Config Directory.** The folder the UI reads and saves gantry, deck, and
-   protocol files in. Click **Browse** to point it at a different folder —
-   for example a USB stick or a shared drive with your lab's configs.
-7. **Theme toggle.** Switches between light and dark mode.
-8. **Last Campaign.** Fills in with the campaign number created by the most
-   recent protocol run. Look it up in the **Results** view.
+1. **View switcher.** **Workflow** edits settings, **Visualize** enlarges
+   the deck map, **State** shows liquid/tips/caps, and **Results** shows
+   measurements. **Run** appears once a run exists.
+2. **Editor tabs.** **Gantry**, **Deck**, and **Protocol** edit the three
+   settings files. An amber dot marks unsaved edits. Protocol needs a saved gantry and deck.
+3. **Config picker.** Opens a saved file; **New** starts a draft and
+   **Delete** removes the selected file after confirmation.
+4. **Deck Visualization.** Map of saved or edited labware positions. The
+   **HEAD** crosshair follows the gantry position.
+5. **Gantry Control.** Connect, home, jog, move to coordinates, and calibrate.
+6. **Config Directory.** Where CubOS reads and saves files. **Browse** chooses
+   another folder. On a remote setup, this is a folder on the CubOS computer,
+   not your laptop; enter its path if the folder chooser cannot open.
+7. **Theme toggle.** Switches light/dark mode.
+8. **Last Campaign.** The most recent successful run's campaign number;
+   find its measurements in Results.
 
-The layout is the same in every view: the left panel changes, the two right
-panels stay put. That way the deck map and the live position are always in
-sight while you edit or run.
+The deck map and movement controls stay on the right as you switch views.
 
 ## Save Before You Run
 
@@ -150,19 +66,33 @@ to start until you save or discard them, and **Validate** does the same.
 
 ## If Something Goes Wrong
 
-- **The Connect button says "Select config first"** — pick a gantry file in
-  the Gantry tab.
-- **Connecting fails** — check the USB cable, power, and that no other
-  G-code program (Candle, UGS) has the port open.
-- **Red ALARM banner** — the controller locked itself, usually after a
-  limit switch hit or E-stop. Click **Unlock ($X)**, then jog away from the
-  edge and re-home.
-- **Jog buttons are grayed out** — a protocol is running (manual control is
-  locked until it ends), or the gantry is not connected.
-- **Validate reports a bounds violation** — a target plus the instrument's
-  offset and depth lands outside the working volume. Check the coordinates
-  in the deck or the named position, then see
-  [Troubleshooting & Recovery](troubleshooting.md).
-- **The deck picture doesn't match the bench** — re-check your labware
-  calibration points, then see
-  [Troubleshooting & Recovery](troubleshooting.md).
+| Problem | First check |
+|---|---|
+| **Select config first** | Open a gantry file. |
+| Connection fails | Check power, USB, and that another gantry app is not using the port. |
+| **ALARM**, **HOLD**, or blocked movement | Follow [Gantry recovery](operator-ui/gantry.md#if-movement-is-blocked). |
+| Validation fails | Read the reported step and target; check its saved settings and heights. |
+| Map differs from the bench | Check labware positions and recalibrate items that moved. |
+
+See [Troubleshooting & Recovery](troubleshooting.md) for detailed steps.
+
+## Update CubOS
+
+On appliances with updating enabled, an **Update available** banner appears
+when a newer release is found. Save your work and finish or cancel any run,
+then click **Update & restart** and confirm. Wait for the page to reload.
+If the update reports an error or takes longer than expected, ask your
+administrator to check it. See the [Pi update guide](https://github.com/Ursa-Laboratories/CubOS/blob/main/deploy/pi/README.md).
+
+## Connect to a Raspberry Pi
+
+If your administrator has set up SSH access, run this on your laptop,
+replacing the login and address:
+
+```bash
+ssh -L 8742:127.0.0.1:8742 <user>@<pi-address>
+```
+
+Open `http://127.0.0.1:8742` on your laptop. Keep the SSH window open and
+CubOS running on the Pi. Closing the tunnel removes browser access; it does
+not stop a protocol. Stay within reach of the machine's emergency stop.

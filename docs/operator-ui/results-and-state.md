@@ -1,6 +1,6 @@
 # Results and State
 
-Two views collect what a protocol run leaves behind: **Results** holds the
+A **campaign** groups a run's measurements. Two views collect what a protocol run leaves behind: **Results** holds the
 instrument measurements, grouped into campaigns; **State** holds the
 liquid-handling record. **Visualize** is a full-size copy of the deck map.
 
@@ -48,12 +48,23 @@ shows the resulting record.
    pipette, and each tip-rack slot's status: **available**, **consumed**,
    or uncertain.
 
-Further down, **Caps** lists cap state for capper-managed vials, and the
-footer reports any pending operations — steps that were interrupted
-mid-way. When an interrupted operation leaves the physical state uncertain,
-a **Resolution** form appears so an operator can record what they observed
-and reconcile the record. See
-[Fluid State Tracking](../fluid-state.md#interrupted-operations).
+Further down, **Caps** lists cap state for capper-managed vials. The record
+reflects commands and your observations; it is not a sensor reading of the
+actual contents.
+
+### Resolve an interrupted operation
+
+If **Pending operations** lists an uncertain step, inspect the machine
+before resuming that state:
+
+1. Click **Resolve** beside the operation.
+2. Choose **Applied** if the recorded action happened, or **Not applied**
+   if it did not. If you cannot tell, leave it unresolved and ask for help.
+3. Enter **Operator** and **Reason**, describing what you observed.
+4. Click **Submit resolution**.
+
+See [Interrupted operations](../fluid-state.md#interrupted-operations) for
+what each resolution records.
 
 ## Visualize the Deck
 
