@@ -141,6 +141,14 @@ All jogging and contact confirmation are operator-controlled. This feature
 has offline test coverage; physical validation is required before relying on
 newly measured offsets for protocols.
 
+## Save a calibrated copy
+
+After calibration saves a gantry file, the Gantry editor displays the saved
+mount offsets, depths, working volume, and controller settings. To keep a copy,
+enter a new **Save as filename** and press **Save**. The copy retains those
+values; changing its filename does not reset calibration or reconnect hardware.
+Unsaved editor changes remain intact when saved configuration data refreshes.
+
 ## Run Calibration
 
 To calibrate in place, run:

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -754,6 +754,7 @@ describe("CubOS editor interactions", () => {
     await waitForSettingsLoad();
 
     await importConfig(user, "Gantry config", "cubos.yaml");
+    fireEvent.change(await screen.findByLabelText("Serial port"), { target: { value: "/dev/calibrated" } });
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
     await user.click(screen.getByRole("button", { name: "Full calibration" }));
 
@@ -818,6 +819,15 @@ describe("CubOS editor interactions", () => {
     expect(state.gantries["cubos.yaml"]?.config.working_volume.z_max).toBe(80);
     expect(state.gantries["cubos.yaml"]?.config.grbl_settings?.max_travel_z).toBe(90);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Gantry calibration" })).not.toBeInTheDocument());
+    const calibrated = structuredClone(state.gantries["cubos.yaml"].config);
+    fetchMock.mockClear();
+    await user.type(screen.getByRole("textbox", { name: "Save as filename" }), "calibrated_copy");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(state.gantries["calibrated_copy.yaml"]).toBeDefined());
+    expect(state.gantries["calibrated_copy.yaml"].config).toEqual(calibrated);
+    expect(calibrated.serial_port).toBe("/dev/calibrated");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Gantry config" })).toHaveValue("calibrated_copy.yaml"));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
   it("shows an error when block height is empty and Continue is clicked", async () => {
