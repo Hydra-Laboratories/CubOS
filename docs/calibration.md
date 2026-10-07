@@ -94,8 +94,9 @@ only which corner receives value `0` changes. GRBL soft-limit travel settings
 
 In the Operator UI, select **Calibrating with a tip attached** when recording
 a pipette contact and enter the measured extension below the bare nozzle.
-For a leftmost pipette, this option is available in **Prepare** and **Set XY
-Origin**, so you can align with the block using a tip. Its choice and length
+For a leftmost pipette, set this option once in **Prepare** so you can align
+with the block using a tip. **Set XY Origin** shows a reminder of the saved
+choice without repeating the inputs. Its choice and length
 carry forward to that same pipette in **Set Z Reference** or **Record
 Instruments**. XY origin recording changes X/Y only.
 Home-to-contact travel uses the raw carriage positions. Tip length affects

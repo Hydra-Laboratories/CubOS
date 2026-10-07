@@ -155,7 +155,7 @@ export default function CalibrationWizard({
   // pipette touch, not just the non-reference instruments recorded above.
   const referenceInstrumentIsPipette = config?.instruments[selectedReference]?.type === "pipette";
   const referenceTipAttached = referenceInstrumentIsPipette && !!tipAttached[selectedReference];
-  const referenceTipLengthError = referenceTipAttached ? validateTipLength(tipLengths[selectedReference]) : null;
+  const referenceTipLengthError = isMulti && referenceTipAttached ? validateTipLength(tipLengths[selectedReference]) : null;
   const lowestInstrumentIsPipette = selectedLowest
     ? config?.instruments[selectedLowest]?.type === "pipette"
     : false;
@@ -1002,7 +1002,7 @@ export default function CalibrationWizard({
                 </div>
                 {referenceTipControls}
                 <div style={actionRowStyle}>
-                  <button onClick={goToHome} disabled={controlsLocked || !filename || instruments.length === 0} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !filename || instruments.length === 0)}>Continue</button>
+                  <button onClick={goToHome} disabled={controlsLocked || !filename || instruments.length === 0 || !!referenceTipLengthError} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !filename || instruments.length === 0 || !!referenceTipLengthError)}>Continue</button>
                 </div>
               </div>
             )}
@@ -1131,7 +1131,13 @@ export default function CalibrationWizard({
                     ? "Put the calibration block at the back-right corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."
                     : "Put the calibration block at the front-left corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."}
                 </p>
-                {referenceTipControls}
+                {referenceInstrumentIsPipette && (
+                  <div style={noteStyle}>
+                    {referenceTipAttached
+                      ? `Using ${selectedReference} with a ${tipLengths[selectedReference]} mm tip (set in Prepare).`
+                      : `Using ${selectedReference} bare nozzle (set in Prepare).`}
+                  </div>
+                )}
                 <JogPanel
                   xyStep={xyStep}
                   zStep={zStep}

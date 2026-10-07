@@ -546,8 +546,9 @@ describe("CalibrationWizard leftmost pipette tip controls", () => {
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(await screen.findByRole("button", { name: "Home gantry" }));
     expect(await screen.findByText("Set XY Origin")).toBeInTheDocument();
-    expect(screen.getByLabelText("Calibrating with a tip attached")).toBeChecked();
-    expect(screen.getByLabelText("Tip length (mm)")).toHaveValue("70");
+    expect(screen.getByText("Using pipette with a 70 mm tip (set in Prepare).")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Calibrating with a tip attached")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tip length (mm)")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Set XY origin and continue" }));
     await user.click(await screen.findByRole("button", { name: "Continue" }));
     expect(await screen.findByText("Set Z Reference")).toBeInTheDocument();
@@ -580,20 +581,21 @@ describe("CalibrationWizard leftmost pipette tip controls", () => {
     expect(screen.getByRole("button", { name: "Record pipette" })).toBeEnabled();
   });
 
-  it("blocks an invalid attached-tip length at XY origin without sending a coordinate write", async () => {
+  it("blocks an invalid attached-tip length in Prepare before any hardware action", async () => {
     const user = userEvent.setup();
     const fetchMock = installFetch();
     renderLeftmostWizard();
     await prepareLeftmostTip(user, "asmi");
-    await user.click(screen.getByRole("button", { name: "Continue" }));
-    await user.click(await screen.findByRole("button", { name: "Home gantry" }));
-    const length = await screen.findByLabelText("Tip length (mm)");
+    const length = screen.getByLabelText("Tip length (mm)");
     await user.clear(length);
     await user.type(length, "-1");
-    const setXY = screen.getByRole("button", { name: "Set XY origin and continue" });
-    expect(setXY).toBeDisabled();
-    await user.click(setXY);
-    const writes = fetchMock.mock.calls.filter(([input]) => new URL(String(input), "http://localhost").pathname === "/api/v1/gantry/work-coordinates");
-    expect(writes).toHaveLength(0);
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton).toBeDisabled();
+    await user.click(continueButton);
+    expect(screen.queryByRole("button", { name: "Home gantry" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.clear(length);
+    await user.type(length, "42");
+    expect(continueButton).toBeEnabled();
   });
 });
