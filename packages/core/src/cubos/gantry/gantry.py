@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,7 @@ from .coordinate_translator import (
     to_machine_coordinates,
     translate_status_string,
 )
+from .gantry_config import OriginPolicy
 from .grbl_settings import format_setting_value, normalize_expected_grbl_settings
 from .gantry_driver.driver import DEFAULT_FEED_RATE, Mill
 from .errors import (
@@ -23,6 +25,7 @@ from .errors import (
 )
 from .origin import (
     calculate_deck_origin_z_calibration,
+    calibrated_origin_frame,
     format_set_work_position_command,
 )
 
@@ -707,15 +710,18 @@ class Gantry:
         homing_pull_off: float | None = None,
         hard_limits: float | int | bool | None = None,
         tolerance_mm: float = 0.001,
+        origin_policy: str | None = None,
     ) -> Dict[str, Any]:
-        """Finalize single-instrument deck-origin calibration on the controller.
+        """Finalize the selected origin for single- or multi-instrument calibration.
 
-        The current physical pose must already have been assigned to deck-origin
-        X=0, Y=0, Z=block_height. This method measures the homed top pose,
-        programs GRBL travel spans, re-homes against the new span, then assigns
-        that top pose to the calibrated deck-frame maxima so G54 and soft limits
-        agree.
+        Provisional G54 must already define the XY reference and block height.
+        Measure positive spans there, program and verify limits, then home again.
+        Persist the selected frame at that known corner and verify WPos before
+        returning bounds that may be saved.
         """
+        origin_policy = OriginPolicy(
+            self.config.get("origin_policy", "deck_origin") if origin_policy is None else origin_policy
+        ).value
         z_calibration = calculate_deck_origin_z_calibration(
             home_z=home_z,
             block_touch_z=block_touch_z,
@@ -756,23 +762,25 @@ class Gantry:
                     z_calibration.max_travel_z + homing_pull_off_mm
                 ),
             }
-            self._offline_coords = {
-                "x": measured_volume["x"],
-                "y": measured_volume["y"],
-                "z": measured_volume["z"],
-            }
+            working_volume, target_position = calibrated_origin_frame(
+                origin_policy, measured_volume,
+                z_min=z_calibration.z_min, z_max=z_calibration.z_max,
+            )
+            self._offline_coords = target_position
             return {
                 "measured_volume": measured_volume,
                 "z_calibration": z_calibration.as_dict(),
                 "max_travel": max_travel,
                 "homing_pull_off_mm": homing_pull_off_mm,
                 "position": dict(self._offline_coords),
+                "origin_policy": origin_policy,
+                "working_volume": working_volume,
             }
 
         self.home()
         measured = self.get_coordinates()
         expected_z_max = z_calibration.z_max
-        if abs(float(measured["z"]) - expected_z_max) > tolerance_mm:
+        if not math.isfinite(float(measured["z"])) or abs(float(measured["z"]) - expected_z_max) > tolerance_mm:
             raise MillConnectionError(
                 "Homed Z after assigning the block origin did not match the "
                 "calculated calibrated Z maximum: "
@@ -807,6 +815,10 @@ class Gantry:
             ),
         }
 
+        working_volume, target_position = calibrated_origin_frame(
+            origin_policy, measured_volume,
+            z_min=z_calibration.z_min, z_max=z_calibration.z_max,
+        )
         self.configure_soft_limits_from_spans(
             max_travel_x=max_travel["x"],
             max_travel_y=max_travel["y"],
@@ -816,14 +828,26 @@ class Gantry:
             hard_limits=hard_limits,
             tolerance_mm=tolerance_mm,
         )
+        self.home()
         self.activate_work_coordinate_system("G54")
         self.clear_g92_offsets()
         self.set_work_coordinates(
-            x=measured_volume["x"],
-            y=measured_volume["y"],
-            z=z_calibration.z_max,
+            x=target_position["x"],
+            y=target_position["y"],
+            z=target_position["z"],
         )
         final_position = self.get_coordinates()
+        for axis, target in target_position.items():
+            actual = float(final_position[axis])
+            if (
+                not math.isfinite(actual)
+                or abs(actual - target) > tolerance_mm
+                or not working_volume[f"{axis}_min"] <= actual <= working_volume[f"{axis}_max"]
+            ):
+                raise MillConnectionError(
+                    f"Calibrated {origin_policy} WPos did not verify on {axis}: "
+                    f"got {actual:g}, expected {target:g}. Recalibrate before saving."
+                )
 
         return {
             "measured_volume": measured_volume,
@@ -831,6 +855,8 @@ class Gantry:
             "max_travel": max_travel,
             "homing_pull_off_mm": homing_pull_off_mm,
             "position": final_position,
+            "origin_policy": origin_policy,
+            "working_volume": working_volume,
         }
 
     def _extract_status(self) -> str:

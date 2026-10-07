@@ -308,6 +308,9 @@ function installFetchMock(state: ApiState, options: FetchMockOptions = {}) {
     }
     if (path === "/api/v1/gantry/calibration/finalize-origin" && method === "POST") {
       return jsonResponse({
+        origin_policy: "deck_origin",
+        safe_z:76,
+        working_volume: {x_min:0,x_max:300,y_min:0,y_max:200,z_min:0,z_max:80},
         measured_volume: { x: 300, y: 200, z: 80 },
         z_calibration: {
           block_height: body?.block_height ?? 35,
@@ -809,6 +812,7 @@ describe("CubOS editor interactions", () => {
           block_touch_z: 0,
           block_height: 36.25,
           factory_z_travel: 80,
+          origin_policy: "deck_origin",
         }),
       }),
     ));

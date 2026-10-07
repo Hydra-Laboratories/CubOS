@@ -16,6 +16,8 @@ import yaml
 
 from cubos.data import DataStore, create_campaign_for_protocol_run
 from cubos.gantry.gantry import Gantry
+from cubos.gantry.gantry_config import OriginPolicy
+from cubos.gantry.origin import translate_calibrated_safe_z
 from cubos.gantry.grbl_settings import normalize_expected_grbl_settings
 from cubos.gantry.limit_recovery import (
     LimitRecoveryResult,
@@ -53,6 +55,9 @@ class FinalizeOriginResult:
     max_travel: dict[str, float]
     position: dict[str, float]
     homing_pull_off_mm: Optional[float] = None
+    origin_policy: str = "deck_origin"
+    working_volume: dict[str, float] | None = None
+    safe_z: float | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +121,8 @@ class GantrySession:
         self._calibration_restore_soft_limits = False
         self._calibration_restore_hard_limits = False
         self._calibration_jog_bypass_working_volume = False
+        self._calibration_frame_unverified = False
+        self._calibration_pending_config: dict[str, Any] | None = None
         self._move_error: str | None = None
         self._jog_cancel_generation = 0
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
@@ -139,6 +146,8 @@ class GantrySession:
             self._calibration_jog_bypass_working_volume
             or self._calibration_restore_soft_limits
             or self._calibration_restore_hard_limits
+            or self._calibration_frame_unverified
+            or self._calibration_pending_config is not None
         )
 
     @property
@@ -168,15 +177,13 @@ class GantrySession:
     ) -> GantryPositionSnapshot:
         """Connect a gantry and publish it only after the full handshake works."""
         with self._lock:
+            config = self._load_config_from_yaml(config_path) if config_path is not None else {}
+            if self._calibration_pending_config is not None and not self._matches_pending_calibration_locked(config):
+                raise CalibrationBlockedError("Save the finalized calibration and reconnect with that saved configuration.")
             if self._gantry is not None:
                 self._restore_calibration_soft_limits_if_needed_locked()
                 self._gantry.disconnect()
                 self._clear_connected_state_locked()
-            config = (
-                self._load_config_from_yaml(config_path)
-                if config_path is not None
-                else {}
-            )
             staged = self._gantry_factory(config=self._runtime_connect_config(config))
             port = str(config.get("serial_port") or "") or None
             try:
@@ -195,12 +202,16 @@ class GantrySession:
                 raise
 
             self._gantry = staged
-            self._calibration_warning = calibration_warning
+            self._calibration_warning = (
+                "Calibration origin did not verify. Restart full calibration before moving or running protocols."
+                if self._calibration_frame_unverified else calibration_warning
+            )
             self._calibration_restore_soft_limits = False
             self._calibration_restore_hard_limits = False
             self._calibration_jog_bypass_working_volume = False
             self._connected_gantry_config = copy.deepcopy(config)
             self._connected_gantry_filename = filename
+            self._calibration_pending_config = None
 
         return self.position()
 
@@ -249,6 +260,10 @@ class GantrySession:
         with self._lock:
             if self._gantry is None or self._connected_gantry_filename != filename:
                 return
+            if self._calibration_pending_config is not None:
+                if not self._matches_pending_calibration_locked(config):
+                    return
+                self._calibration_pending_config = None
             self._connected_gantry_config = copy.deepcopy(config)
             self._gantry.config = self._runtime_connect_config(config)
 
@@ -501,6 +516,9 @@ class GantrySession:
                 gantry.set_soft_limits_enabled(False)
                 self._calibration_restore_soft_limits = True
             self._calibration_jog_bypass_working_volume = True
+            self._calibration_frame_unverified = False
+            self._calibration_pending_config = None
+            self._calibration_warning = self._calibration_mismatch_warning(gantry, self._connected_gantry_config or {})
         return self.position()
 
     def calibration_home_and_center(self) -> CalibrationCenterResult:
@@ -528,14 +546,19 @@ class GantrySession:
         block_height: float,
         factory_z_travel: float,
         tolerance_mm: float = 0.25,
+        origin_policy: str | None = None,
     ) -> FinalizeOriginResult:
         with self._locked_gantry() as gantry:
+            self._require_verified_calibration_frame_locked()
+            previous_policy = OriginPolicy((self._connected_gantry_config or {}).get("origin_policy", "deck_origin")).value
+            selected_policy = OriginPolicy(previous_policy if origin_policy is None else origin_policy).value
             try:
                 result = gantry.finalize_deck_origin_calibration(
                     home_z=home_z,
                     block_touch_z=block_touch_z,
                     block_height=block_height,
                     total_z_range=factory_z_travel,
+                    origin_policy=selected_policy,
                     status_report=0,
                     homing_pull_off=self._connected_grbl_setting_locked(
                         "homing_pull_off"
@@ -578,10 +601,20 @@ class GantrySession:
                     if homing_pull_off_mm is not None:
                         grbl_settings["homing_pull_off"] = homing_pull_off_mm
                     self._connected_gantry_config["grbl_settings"] = grbl_settings
+                    self._connected_gantry_config["working_volume"] = dict(result["working_volume"])
+                    self._connected_gantry_config["origin_policy"] = result["origin_policy"]
+                    cnc = dict(self._connected_gantry_config.get("cnc") or {})
+                    cnc["calibration_block_height_mm"] = result["z_calibration"]["block_height"]
+                    safe_z = translate_calibrated_safe_z(cnc.get("safe_z"), previous_policy, selected_policy, measured_volume["z"], result["working_volume"])
+                    cnc["safe_z"] = safe_z
+                    self._connected_gantry_config["cnc"] = cnc
+                    gantry.config = self._runtime_connect_config(self._connected_gantry_config)
                     self._calibration_warning = self._calibration_mismatch_warning(
                         gantry,
                         self._connected_gantry_config,
                     )
+                self._calibration_frame_unverified = False
+                self._calibration_pending_config = copy.deepcopy(self._connected_gantry_config)
                 self._last_position = GantryPositionSnapshot(
                     x=position["x"],
                     y=position["y"],
@@ -598,6 +631,8 @@ class GantrySession:
                     gantry
                 )
                 self._calibration_jog_bypass_working_volume = False
+                self._calibration_frame_unverified = True
+                self._calibration_warning = "Calibration origin did not verify. Restart full calibration before moving or running protocols."
                 raise
 
         return FinalizeOriginResult(
@@ -606,6 +641,9 @@ class GantrySession:
             max_travel=max_travel,
             position=position,
             homing_pull_off_mm=homing_pull_off_mm,
+            origin_policy=result["origin_policy"],
+            working_volume=dict(result["working_volume"]),
+            safe_z=safe_z,
         )
 
     def recover_calibration_limit(
@@ -647,6 +685,7 @@ class GantrySession:
         data_store = None
         with self._lock:
             gantry = self._require_connected()
+            self._require_verified_calibration_frame_locked()
             # A GRBL-settings mismatch (self._calibration_warning) is advisory,
             # not blocking: commissioning machines legitimately differ from the
             # selected gantry YAML, and the operator owns that decision. The
@@ -715,7 +754,8 @@ class GantrySession:
     def _clear_connected_state_locked(self) -> None:
         self._gantry = None
         self._last_position = None
-        self._calibration_warning = None
+        if not self._calibration_frame_unverified:
+            self._calibration_warning = None
         self._connected_gantry_config = None
         self._connected_gantry_filename = None
         self._calibration_restore_soft_limits = False
@@ -826,6 +866,24 @@ class GantrySession:
         except (KeyError, TypeError, ValueError):
             return None
 
+    def _matches_pending_calibration_locked(self, config: dict[str, Any]) -> bool:
+        expected = self._calibration_pending_config
+        if expected is None:
+            return True
+        return (
+            config.get("origin_policy", "deck_origin") == expected.get("origin_policy", "deck_origin")
+            and config.get("working_volume") == expected.get("working_volume")
+            and (config.get("cnc") or {}).get("safe_z") == (expected.get("cnc") or {}).get("safe_z")
+            and all((config.get("grbl_settings") or {}).get(key) == (expected.get("grbl_settings") or {}).get(key)
+                    for key in ("max_travel_x", "max_travel_y", "max_travel_z", "homing_pull_off"))
+        )
+
+    def _require_verified_calibration_frame_locked(self) -> None:
+        if self._calibration_pending_config is not None:
+            raise CalibrationBlockedError("Save the finalized calibration before moving or running protocols.")
+        if self._calibration_frame_unverified:
+            raise CalibrationBlockedError("Calibration origin did not verify. Restart full calibration before moving or running protocols.")
+
     def _validate_manual_move_target_locked(
         self,
         *,
@@ -833,6 +891,7 @@ class GantrySession:
         y: float,
         z: float,
     ) -> None:
+        self._require_verified_calibration_frame_locked()
         for axis, value in (("X", x), ("Y", y), ("Z", z)):
             if not math.isfinite(float(value)):
                 raise ValueError(f"Manual move {axis} target must be finite.")
@@ -859,6 +918,7 @@ class GantrySession:
             )
 
     def _validate_jog_target_locked(self, *, x: float, y: float, z: float) -> None:
+        self._require_verified_calibration_frame_locked()
         for axis, value in (("X", x), ("Y", y), ("Z", z)):
             if not math.isfinite(float(value)):
                 raise ValueError(f"Jog {axis} delta must be finite.")

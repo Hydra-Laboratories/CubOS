@@ -294,6 +294,9 @@ export interface ZCalibrationSummary {
 }
 
 export interface FinalizeOriginResponse {
+  safe_z: number;
+  origin_policy: "deck_origin" | "home_origin";
+  working_volume: WorkingVolume;
   measured_volume: Coordinate3D;
   z_calibration: ZCalibrationSummary;
   max_travel: Coordinate3D;

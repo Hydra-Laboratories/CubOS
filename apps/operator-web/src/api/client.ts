@@ -167,6 +167,7 @@ export const gantryApi = {
       method: "POST",
     }),
   finalizeCalibrationOrigin: (body: {
+    origin_policy?: "deck_origin" | "home_origin";
     home_z: number;
     block_touch_z: number;
     block_height: number;

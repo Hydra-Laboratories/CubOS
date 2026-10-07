@@ -242,8 +242,8 @@ describe("CalibrationWizard multi-instrument block height step", () => {
       if (url.pathname === "/api/v1/gantry/jog-blocking" && init?.method === "POST") {
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:76, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:0,z_max:88}, position:{x:400,y:300,z:88}, measured_volume:{x:400,y:300,z:88}, z_calibration:{block_height:35,z_min:0,z_max:88}, max_travel:{x:401,y:301,z:89}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -317,8 +317,8 @@ describe("CalibrationWizard multi-instrument block height step", () => {
       if (url.pathname === "/api/v1/gantry/jog-blocking" && init?.method === "POST") {
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 67.431, work_x: 400, work_y: 300, work_z: 67.431 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:56, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:11.431,z_max:67.431}, position:{x:400,y:300,z:67.431}, measured_volume:{x:400,y:300,z:67.431}, z_calibration:{block_height:35,z_min:11.431,z_max:67.431}, max_travel:{x:401,y:301,z:57.0}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -437,8 +437,8 @@ describe("CalibrationWizard multi-instrument block height step", () => {
         }
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:76, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:0,z_max:88}, position:{x:400,y:300,z:88}, measured_volume:{x:400,y:300,z:88}, z_calibration:{block_height:35,z_min:0,z_max:88}, max_travel:{x:401,y:301,z:89}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });

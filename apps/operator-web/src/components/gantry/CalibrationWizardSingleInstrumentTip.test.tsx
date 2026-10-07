@@ -66,6 +66,10 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
       if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
         finalizeCalls.push(JSON.parse(String(init.body)));
         return jsonResponse({
+          origin_policy: "deck_origin",
+          safe_z:56,
+          working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:11.431,z_max:67.431},
+          position: {x:400,y:300,z:67.431},
           measured_volume: { x: 400, y: 300, z: 67.431 },
           max_travel: { x: 400, y: 300, z: 57 },
           z_calibration: { block_height: 35, z_min: 11.431, z_max: 67.431 },

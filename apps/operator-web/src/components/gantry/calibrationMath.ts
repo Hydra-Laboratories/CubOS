@@ -1,4 +1,4 @@
-import type { GantryConfig } from "../../types";
+import type { FinalizeOriginResponse, GantryConfig, WorkingVolume } from "../../types";
 
 type CapturedPosition = {
   x: number;
@@ -278,4 +278,51 @@ function requireFinite(value: number, label: string): number {
     throw new Error(`${label} is not a valid number (${value}); captured position data may be incomplete.`);
   }
   return value;
+}
+
+
+export function validateFinalizedOrigin(config: GantryConfig, result: FinalizeOriginResponse): WorkingVolume {
+  const policy = config.origin_policy ?? "deck_origin";
+  if (result.origin_policy !== policy) {
+    throw new Error("The controller did not verify the selected coordinate origin. Update CubOS before saving.");
+  }
+  const measured = result.measured_volume;
+  const calibration = result.z_calibration;
+  const limits = result.max_travel;
+  const volume = result.working_volume;
+  const position = result.position;
+  if (!measured || !calibration || !limits || !volume || !position) {
+    throw new Error("Verified calibration bounds and controller position are required before saving.");
+  }
+  const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+  if (![measured.x, measured.y, measured.z, calibration.z_min, calibration.z_max,
+    calibration.block_height, limits.x, limits.y, limits.z, position.x, position.y, position.z,
+    ...Object.values(volume)].every(finite) || measured.x <= 0 || measured.y <= 0 ||
+    calibration.z_min < 0 || calibration.z_max <= calibration.z_min ||
+    calibration.block_height <= 0 || limits.x <= 0 || limits.y <= 0 || limits.z <= 0 ||
+    Math.abs(measured.z - calibration.z_max) > 0.25) {
+    throw new Error("The controller returned invalid calibration measurements.");
+  }
+  const expected: WorkingVolume = policy === "home_origin"
+    ? { x_min: -measured.x, x_max: 0, y_min: -measured.y, y_max: 0,
+      z_min: calibration.z_min - calibration.z_max, z_max: 0 }
+    : { x_min: 0, x_max: measured.x, y_min: 0, y_max: measured.y,
+      z_min: calibration.z_min, z_max: calibration.z_max };
+  for (const key of Object.keys(expected) as (keyof WorkingVolume)[]) {
+    if (!finite(volume[key]) || Math.abs(volume[key] - expected[key]) > 0.25) {
+      throw new Error("Verified controller bounds do not match the selected coordinate origin.");
+    }
+  }
+  for (const axis of ["x", "y", "z"] as const) {
+    const maximum = volume[`${axis}_max`];
+    const minimum = volume[`${axis}_min`];
+    if (maximum <= minimum || position[axis] < minimum || position[axis] > maximum ||
+      Math.abs(position[axis] - maximum) > 0.25) {
+      throw new Error("The controller position does not verify the calibrated home corner.");
+    }
+  }
+  if (!finite(result.safe_z) || result.safe_z < volume.z_min || result.safe_z > volume.z_max) {
+    throw new Error("Verified safe travel height must be within the calibrated working volume.");
+  }
+  return structuredClone(volume);
 }
