@@ -94,7 +94,7 @@ export function calculateSingleInstrumentZCalibration({
     throw new Error("Block touch Z must be below the homed Z position.");
   }
   if (travelFromHomeToBlock > roundMm(factoryZTravel + 0.001)) {
-    throw new Error("Home-to-block travel exceeds the configured factory Z travel.");
+    throw new Error(`Home-to-block travel exceeds the configured factory Z travel (${travelFromHomeToBlock} mm measured; ${roundMm(factoryZTravel)} mm configured). Verify the mechanical travel and that both positions use the same coordinate frame.`);
   }
   const remainingBelowBlock = roundMm(factoryZTravel - travelFromHomeToBlock);
   const canReachDeckBottom = remainingBelowBlock + 0.001 >= blockHeight;
@@ -204,6 +204,13 @@ export function buildCalibratedConfig({
     max_travel_y: maxTravel.y,
     max_travel_z: maxTravel.z,
   };
+
+  if (!isMulti && instruments.length === 1) {
+    const name = instruments[0];
+    if (next.instruments[name]?.type === "pipette") {
+      next.instruments[name].depth = -requireFinite(tipLengths?.[name] ?? 0, `${name} tip length`);
+    }
+  }
 
   if (isMulti) {
     const reference = instrumentPositions[referenceInstrument];

@@ -1031,6 +1031,19 @@ describe("GantryPositionWidget manual move safety", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("opens offsets-only calibration without controller changes or background keyboard jogs", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    render(<GantryPositionWidget position={position()} workingVolume={workingVolume}
+      gantryFile="cubos.yaml" gantry={{ filename: "cubos.yaml", config: gantryConfig() }}
+      onSaveCalibrated={async () => undefined} onSaveInstrumentOffsets={async () => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Calibrate instrument offsets" }));
+    expect(screen.getByRole("dialog", { name: "Instrument offset calibration" })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "ArrowRight" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("renders jog command errors inline", async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {
       if (requestPath(input) === "/api/v1/gantry/jog") {

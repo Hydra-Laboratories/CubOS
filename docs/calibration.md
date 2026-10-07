@@ -90,6 +90,51 @@ Both flows still need a physical XY/Z reference point to size the volume;
 only which corner receives value `0` changes. GRBL soft-limit travel settings
 (`max_travel_x/y/z`) are span-based and unaffected by the policy.
 
+## Pipette calibration with a tip attached
+
+In the Operator UI, select **Calibrating with a tip attached** when recording
+a pipette contact and enter the measured extension below the bare nozzle.
+Home-to-contact travel uses the raw carriage positions. Tip length affects
+the saved bare-nozzle depth, not mechanical Z travel. For example, a 46 mm
+carriage move with a 50 mm tip remains 46 mm of travel, so it fits an 80 mm
+Z axis. Do not increase factory travel to compensate for tip length.
+
+When the reference pipette touches the block with a tip, its saved bare-nozzle
+depth can be negative. Runtime adds the attached tip extension back when
+positioning the tip. The calibration reference remains the point that touched
+the block.
+
+## Calibrate instrument offsets only
+
+Use **Calibrate instrument offsets** in Gantry Control after the gantry origin
+and travel limits have been calibrated. This measures relative instrument
+mounting offsets without homing, changing the coordinate origin, or changing
+controller limits. It preserves the selected reference tool's existing mount
+calibration, so that reference must already be calibrated.
+
+1. Select a calibrated contact instrument as the reference.
+2. Place a fixed mark or block where each instrument can reach it. Keep it in
+   the same place throughout the measurements.
+3. If a pipette has a tip attached, enable the tip option and enter the measured
+   extension below the bare nozzle before recording that tool.
+4. Manually jog the reference tool to the mark and record its position. Jog
+   each other contact tool to that same mark and record it.
+5. For a camera, center its view on the mark and enter its reference-point
+   distance above the mark. Co-mounted lighting follows the camera.
+6. Review the calculated offsets and save a new gantry config. Saving does not
+   reconnect or initialize hardware. Finish positioning the tools, then explicitly
+   select and reconnect with the saved config before using its offsets. Tool type,
+   driver settings, origin policy, working volume, safe Z and GRBL settings
+   remain as configured.
+7. With clear space and the operator at the machine, verify the pipette tip
+   and camera each align with the same mark. Verify pipette bare-nozzle depth
+   is unchanged when repeating the calibration with and without a measured
+   tip. Then calibrate labware using that saved gantry config.
+
+All jogging and contact confirmation are operator-controlled. This feature
+has offline test coverage; physical validation is required before relying on
+newly measured offsets for protocols.
+
 ## Run Calibration
 
 To calibrate in place, run:

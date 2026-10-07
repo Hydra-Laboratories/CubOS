@@ -542,9 +542,7 @@ export default function CalibrationWizard({
     let pending = pendingSingleOrigin.current;
     if (!pending) {
       const height = parseBlockHeight(blockHeight);
-      const touchTipLength = soleTipAttached ? parseTipLength(tipLengths[soleInstrument] ?? "") : 0;
-      const rawTouch = requirePosition(await gantryApi.getPosition());
-      const blockTouch = { ...rawTouch, z: rawTouch.z - touchTipLength };
+      const blockTouch = requirePosition(await gantryApi.getPosition());
       // Set WPos before restoring soft limits: if setWorkCoordinates fails,
       // soft limits stay disabled so the operator can still jog freely and
       // retry. Once this succeeds, retries must not re-capture in the shifted
@@ -574,9 +572,8 @@ export default function CalibrationWizard({
     if (!pending) {
       const height = parseBlockHeight(blockHeight);
       const factoryZTravel = getFactoryZTravel(config);
-      const touchTipLength = isMulti && lowestTipAttached ? parseTipLength(tipLengths[selectedLowest] ?? "") : 0;
-      const rawTouch = requirePosition(await gantryApi.getPosition());
-      const blockTouch = { ...rawTouch, z: rawTouch.z - touchTipLength };
+      // Travel uses carriage readbacks; tip extension belongs in tool depth.
+      const blockTouch = requirePosition(await gantryApi.getPosition());
       const homeZ = isMulti
         ? requireCaptured(xyBounds, "Homed XY bounds")
         : requireCaptured(calibrationHome, "Home position");
@@ -683,6 +680,7 @@ export default function CalibrationWizard({
         referenceInstrument: selectedReference,
         lowestInstrument: selectedLowest,
         cameraBlockDistances: parsedCameraBlockDistances(cameraBlockDistances, nonContactInstruments),
+        tipLengths: parsedTipLengths(tipLengths, tipAttached),
       }));
       onClose();
       return;
@@ -896,6 +894,7 @@ export default function CalibrationWizard({
                 limit switches and backs off on its own.
               </div>
             )}
+            <div style={noteStyle}>Configured Z travel: {config?.cnc.factory_z_travel_mm ?? "unset"} mm</div>
             {error && <div style={errorStyle}>{error}</div>}
             {operation && <div style={busyStyle}>{operation}… Please wait.</div>}
             {statusNote && <div style={noteStyle}>{statusNote}</div>}
@@ -1010,8 +1009,8 @@ export default function CalibrationWizard({
                 {soleInstrumentIsPipette && (
                   <p style={{ ...instructionStyle, margin: "8px 0 0" }}>
                     If this pipette can't reach the block bare, attach a tip and touch the block with the tip
-                    instead. Enter the tip length below and it's subtracted so the calibrated Z frame still
-                    reflects the bare-nozzle position.
+                    instead. Enter the tip length below to save the bare-nozzle offset. Z travel is
+                    measured from the carriage positions.
                   </p>
                 )}
                 {soleInstrumentIsPipette && (
@@ -1143,8 +1142,8 @@ export default function CalibrationWizard({
                 {lowestInstrumentIsPipette && (
                   <p style={{ ...instructionStyle, margin: "8px 0 0" }}>
                     If this pipette can't reach the block bare, attach a tip and touch the block with the tip
-                    instead. Enter the tip length below and it's subtracted so the calibrated Z frame still
-                    reflects the bare-nozzle position.
+                    instead. Enter the tip length below to save the bare-nozzle offset. Z travel is
+                    measured from the carriage positions.
                   </p>
                 )}
                 {lowestInstrumentIsPipette && (

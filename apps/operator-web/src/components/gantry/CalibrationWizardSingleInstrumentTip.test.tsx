@@ -11,14 +11,14 @@ function jsonResponse(body: unknown): Response {
 function singlePipetteConfig(): GantryConfig {
   return {
     serial_port: "/dev/ttyUSB0",
-    gantry_type: "cub_xl",
+    gantry_type: "cub",
     cnc: {
-      factory_z_travel_mm: 110,
+      factory_z_travel_mm: 56,
       calibration_block_height_mm: 35,
       y_axis_motion: "head",
-      safe_z: 110,
+      safe_z: 56,
     },
-    working_volume: { x_min: 0, x_max: 400, y_min: 0, y_max: 300, z_min: 0, z_max: 110 },
+    working_volume: { x_min: 0, x_max: 400, y_min: 0, y_max: 300, z_min: 0, z_max: 56 },
     grbl_settings: {},
     instruments: {
       pipette: { type: "pipette", vendor: "opentrons", offset_x: 0, offset_y: 0, depth: 0 },
@@ -43,7 +43,7 @@ function position(): GantryPosition {
 describe("CalibrationWizard single-instrument tip compensation", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("shows a tip-attached option when the sole instrument is a pipette, and subtracts it from the block touch sent to the backend", async () => {
+  it("keeps raw carriage contact for a 56 mm machine and saves its 70 mm tip as nozzle depth", async () => {
     const user = userEvent.setup();
     const finalizeCalls: Array<Record<string, unknown>> = [];
     const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
@@ -51,11 +51,11 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
         typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url,
         "http://localhost",
       );
+      if (url.pathname === "/api/v1/gantry/calibration/prepare-origin") {
+        return jsonResponse({ ...position(), z: 0, work_z: 0 });
+      }
       if (url.pathname === "/api/v1/gantry/position") {
-        // The pipette needs a 12mm tip to reach the block; the raw touch
-        // (with tip attached) sits 12mm higher (closer to home) than a
-        // bare-nozzle touch would.
-        return jsonResponse({ ...position(), z: 63, work_z: 63 });
+        return jsonResponse({ ...position(), z: -32.431, work_z: -32.431 });
       }
       if (url.pathname === "/api/v1/gantry/work-coordinates" && init?.method === "POST") {
         return jsonResponse({ ...position(), x: 0, y: 0, z: 35, work_x: 0, work_y: 0, work_z: 35 });
@@ -66,9 +66,9 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
       if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
         finalizeCalls.push(JSON.parse(String(init.body)));
         return jsonResponse({
-          measured_volume: { x: 400, y: 300, z: 110 },
-          max_travel: { x: 400, y: 300, z: 110 },
-          z_calibration: { block_height: 35, z_min: 0, z_max: 110 },
+          measured_volume: { x: 400, y: 300, z: 67.431 },
+          max_travel: { x: 400, y: 300, z: 57 },
+          z_calibration: { block_height: 35, z_min: 11.431, z_max: 67.431 },
           homing_pull_off_mm: 1,
         });
       }
@@ -91,6 +91,7 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
       />,
     );
 
+    expect(screen.getByText("Configured Z travel: 56 mm")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue" })); // Prepare -> Home
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> Reference height
     await user.click(await screen.findByRole("button", { name: "Continue" })); // -> Set Origin
@@ -103,7 +104,7 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
     expect(setOriginButton).toBeDisabled();
 
     const tipLength = screen.getByLabelText("Tip length (mm)");
-    await user.type(tipLength, "12");
+    await user.type(tipLength, "70");
     expect(setOriginButton).toBeEnabled();
     await user.click(setOriginButton);
 
@@ -112,9 +113,9 @@ describe("CalibrationWizard single-instrument tip compensation", () => {
 
     await waitFor(() => expect(onSaveCalibrated).toHaveBeenCalled());
     expect(finalizeCalls).toHaveLength(1);
-    // Raw touch (63) minus the 12mm tip = 51: without the subtraction the
-    // backend would calibrate the Z frame as if the bare nozzle reached
-    // 12mm further down than it actually can.
-    expect(finalizeCalls[0].block_touch_z).toBe(51);
+    expect(finalizeCalls[0].block_touch_z).toBe(-32.431);
+    expect(finalizeCalls[0].factory_z_travel).toBe(56);
+    expect(onSaveCalibrated.mock.calls[0][1].instruments.pipette.depth).toBe(-70);
+    expect(onSaveCalibrated.mock.calls[0][1].cnc.factory_z_travel_mm).toBe(56);
   });
 });

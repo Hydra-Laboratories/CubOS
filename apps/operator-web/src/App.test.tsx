@@ -286,6 +286,9 @@ function installFetchMock(state: ApiState, options: FetchMockOptions = {}) {
       gantryConnected = false;
       return jsonResponse(gantryPosition());
     }
+    if (path === "/api/v1/gantry/calibration/instrument-offsets" && method === "POST") {
+      return jsonResponse(body?.config);
+    }
     if (path === "/api/v1/gantry/calibration/prepare-origin" && method === "POST") {
       gantryConnected = true;
       return jsonResponse(gantryPosition(0, 0, 80));
@@ -717,6 +720,29 @@ describe("CubOS editor interactions", () => {
     });
     expect(newFileCalls.length).toBeGreaterThan(0);
     expect(newFileCalls[0][1]?.method).toBe("PUT");
+  });
+
+  it("saves an offset-calibration copy without reconnecting or changing the selected connected config", async () => {
+    const user = userEvent.setup();
+    const state = createState();
+    const fetchMock = installFetchMock(state);
+    renderApp();
+    await waitForSettingsLoad();
+    await importConfig(user, "Gantry config", "cubos.yaml");
+    await connectGantry(user);
+    fetchMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "Calibrate instrument offsets" }));
+    await user.click(screen.getByRole("checkbox", { name: /existing offsets and depth are calibrated/ }));
+    await user.click(screen.getByRole("button", { name: "Record pipette_1 at fixed mark" }));
+    await screen.findByText(/pipette_1: recorded/);
+    await user.click(screen.getByRole("button", { name: "Review offsets" }));
+    await user.click(await screen.findByRole("button", { name: "Save instrument offsets" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Instrument offset calibration" })).not.toBeInTheDocument());
+    expect(state.gantries["cubos_offsets.yaml"]).toBeDefined();
+    expect(screen.getByRole("combobox", { name: "Gantry config" })).toHaveValue("cubos.yaml");
+    expect(screen.getByText(/The current connection is unchanged/)).toBeInTheDocument();
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([input]) => new URL(String(input), "http://localhost").pathname);
+    expect(writes).toEqual(["/api/v1/gantry/calibration/instrument-offsets"]);
   });
 
   it("opens the gantry calibration wizard from the control panel", async () => {

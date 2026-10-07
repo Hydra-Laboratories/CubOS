@@ -3,6 +3,7 @@ import { gantryApi } from "../../api/client";
 import type { GantryConfig, GantryPosition, GantryResponse, WorkingVolume } from "../../types";
 import * as theme from "../../theme";
 import CalibrationWizard from "./CalibrationWizard";
+import InstrumentOffsetCalibrationModal from "./InstrumentOffsetCalibrationModal";
 import { createJogPacer, jogPaceMs } from "./jogPacing";
 import { useConfirm } from "../common/useConfirm";
 
@@ -13,6 +14,7 @@ interface Props {
   gantry: GantryResponse | null;
   isRunning?: boolean;
   onSaveCalibrated: (filename: string, config: GantryConfig) => Promise<void>;
+  onSaveInstrumentOffsets?: (filename: string, config: GantryConfig) => Promise<void>;
 }
 
 const MIN_STEP = 0.001;
@@ -30,12 +32,15 @@ export default function GantryPositionWidget({
   gantry,
   isRunning = false,
   onSaveCalibrated,
+  onSaveInstrumentOffsets,
 }: Props) {
   const [loading, setLoading] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [jogBusy, setJogBusy] = useState(false);
   const [homeBusy, setHomeBusy] = useState(false);
   const [calibrationOpen, setCalibrationOpen] = useState(false);
+  const [offsetCalibrationOpen, setOffsetCalibrationOpen] = useState(false);
+  const anyCalibrationOpen = calibrationOpen || offsetCalibrationOpen;
   const [stepXY, setStepXY] = useState("0.5");
   const [stepZ, setStepZ] = useState("0.5");
   const [moveX, setMoveX] = useState("");
@@ -69,7 +74,7 @@ export default function GantryPositionWidget({
   const isLimitAlarm = isAlarm && looksLikeLimitAlarm(status);
   const isHold = status.toLowerCase().startsWith("hold");
   const isMoving = status === "Run" || status === "Jog";
-  const calibrationInterrupted = connected && !calibrationOpen && (position?.calibration_active ?? false);
+  const calibrationInterrupted = connected && !anyCalibrationOpen && (position?.calibration_active ?? false);
 
   useEffect(() => {
     if (jogHeld.current || jogPumpActive.current) return;
@@ -192,10 +197,10 @@ export default function GantryPositionWidget({
   useEffect(() => () => stopJog(), [stopJog]);
 
   useEffect(() => {
-    if (calibrationOpen || isRunning) {
+    if (anyCalibrationOpen || isRunning) {
       stopJog();
     }
-  }, [calibrationOpen, isRunning, stopJog]);
+  }, [anyCalibrationOpen, isRunning, stopJog]);
 
   useEffect(() => {
     if (!connected) {
@@ -214,7 +219,7 @@ export default function GantryPositionWidget({
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!connected || calibrationOpen || isRunning || jogBusy || homeBusy) return;
+      if (!connected || anyCalibrationOpen || isRunning || jogBusy || homeBusy) return;
       if (isEditableTarget(e.target)) return;
       const key = e.key;
       if (held.has(key)) return; // already held
@@ -260,7 +265,7 @@ export default function GantryPositionWidget({
       window.removeEventListener("blur", releaseHeldJog);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [calibrationOpen, connected, homeBusy, isRunning, jogBusy, stepXY, stepZ, startJog, stopJog]);
+  }, [anyCalibrationOpen, connected, homeBusy, isRunning, jogBusy, stepXY, stepZ, startJog, stopJog]);
 
   const handleConnect = async () => {
     if (!gantryFile) return;
@@ -744,6 +749,8 @@ export default function GantryPositionWidget({
         >
           Calibrate
         </button>
+        <button onClick={() => setOffsetCalibrationOpen(true)} disabled={!onSaveInstrumentOffsets || !canOpenCalibration || !connected || calibrationInterrupted || homeBusy || jogBusy}
+          style={calibrateBtnStyle}>Calibrate instrument offsets</button>
       </div>
 
       {workingVolume && (
@@ -885,6 +892,19 @@ export default function GantryPositionWidget({
         Keyboard: Arrow keys = XY, X/Z keys = Z up/down
       </div>
       {confirmDialog}
+      <InstrumentOffsetCalibrationModal
+        open={offsetCalibrationOpen}
+        onClose={() => setOffsetCalibrationOpen(false)}
+        gantry={gantry}
+        position={position}
+        isRunning={isRunning}
+        onSaveCalibrated={async (filename, config) => {
+          if (!onSaveInstrumentOffsets) throw new Error("Offset saving is unavailable.");
+          await onSaveInstrumentOffsets(filename, config);
+          setSavedCalibrationMessage(`Saved ${filename}. The current connection is unchanged. Select the saved configuration and reconnect explicitly before using its offsets.`);
+          setLastCommandError(null);
+        }}
+      />
       <CalibrationWizard
         open={calibrationOpen}
         onClose={() => setCalibrationOpen(false)}

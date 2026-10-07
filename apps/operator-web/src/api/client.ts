@@ -143,6 +143,14 @@ export const gantryApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  previewInstrumentOffsets: (body: {
+    config: import("../types").GantryConfig;
+    reference_instrument: string;
+    captures: Record<string, { x: number; y: number; z: number; tip_length_mm: number; stand_off_mm?: number }>;
+  }) => request<import("../types").GantryConfig>("/gantry/calibration/instrument-offsets", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
   prepareCalibrationOrigin: () =>
     request<import("../types").GantryPosition>("/gantry/calibration/prepare-origin", {
       method: "POST",

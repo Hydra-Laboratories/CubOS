@@ -23,6 +23,7 @@ from cubos.gantry.session import (
 from cubos.gantry.gantry_driver.exceptions import MillConnectionError
 from cubos.gantry.limit_recovery import looks_like_limit_alarm
 from cubos.gantry.yaml_schema import GantryYamlSchema
+from cubos.gantry.offset_calibration import calibrate_instrument_offsets
 from cubos.instruments.pipette.models import PIPETTE_MODELS
 from cubos.instruments.registry import (
     config_fields,
@@ -76,6 +77,12 @@ class InstrumentFieldInfo(BaseModel):
     required: bool
     default: Any = None
     choices: Optional[List[Any]] = None
+
+
+class InstrumentOffsetsRequest(BaseModel):
+    config: Dict[str, Any]
+    reference_instrument: str
+    captures: Dict[str, Dict[str, Any]]
 
 
 class JogRequest(BaseModel):
@@ -466,6 +473,17 @@ def configure_soft_limits(req: ConfigureSoftLimitsRequest) -> dict:
             exc, default_action="Soft-limit configuration"
         ) from exc
     return {"status": "ok"}
+
+
+@router.post("/calibration/instrument-offsets")
+def preview_instrument_offsets(req: InstrumentOffsetsRequest) -> Dict[str, Any]:
+    try:
+        GantryYamlSchema.model_validate(req.config)
+        result = calibrate_instrument_offsets(req.config, req.reference_instrument, req.captures)
+        GantryYamlSchema.model_validate(result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/calibration/prepare-origin")

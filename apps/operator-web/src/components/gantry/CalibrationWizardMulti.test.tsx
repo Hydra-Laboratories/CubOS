@@ -294,7 +294,7 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     expect(savedConfig.instruments.pipette).toMatchObject({ depth: 18 });
   });
 
-  it("subtracts the lowest instrument's tip length from its block touch before computing Z bounds", async () => {
+  it("calibrates 56 mm carriage travel with a 70 mm tip without adding tip length to travel", async () => {
     const user = userEvent.setup();
     const onSaveCalibrated = vi.fn<(filename: string, config: GantryConfig) => Promise<void>>(async () => undefined);
     let positionReadCount = 0;
@@ -304,25 +304,21 @@ describe("CalibrationWizard multi-instrument block height step", () => {
         "http://localhost",
       );
       if (url.pathname === "/api/v1/gantry/calibration/home-and-center" && init?.method === "POST") {
-        return jsonResponse({ xy_bounds: { x: 400, y: 300, z: 80 }, position: { x: 200, y: 150, z: 80 } });
+        return jsonResponse({ xy_bounds: { x: 400, y: 300, z: 0 }, position: { x: 200, y: 150, z: 0 } });
       }
       if (url.pathname === "/api/v1/gantry/position") {
         positionReadCount++;
-        // 1st read: setZ's block-touch capture for the LOWEST instrument
-        // (pipette), WITH a tip attached — the carriage sits 15mm higher
-        // (closer to home) than a bare-nozzle touch would require.
-        // 2nd read: asmi's ordinary (non-tip) touch.
-        const z = positionReadCount === 1 ? 15 : 50;
+        const z = positionReadCount === 1 ? -32.431 : 50;
         return jsonResponse({ ...position(), z, work_z: z });
       }
       if (url.pathname === "/api/v1/gantry/work-coordinates" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 199, y: 149.5, z: 12.5, work_x: 199, work_y: 149.5, work_z: 12.5 });
+        return jsonResponse({ ...position(), x: 199, y: 149.5, z: 35, work_x: 199, work_y: 149.5, work_z: 35 });
       }
       if (url.pathname === "/api/v1/gantry/jog-blocking" && init?.method === "POST") {
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
       if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+        return jsonResponse({ ...position(), x: 400, y: 300, z: 67.431, work_x: 400, work_y: 300, work_z: 67.431 });
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -331,11 +327,16 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    const extendedCub = lowTravelMultiConfig();
+    extendedCub.gantry_type = "cub";
+    extendedCub.cnc.factory_z_travel_mm = 56;
+    extendedCub.cnc.safe_z = 56;
+    extendedCub.working_volume.z_max = 56;
     render(
       <CalibrationWizard
         open
         onClose={() => undefined}
-        gantry={{ filename: "multi.yaml", config: lowTravelMultiConfig() }}
+        gantry={{ filename: "multi.yaml", config: extendedCub }}
         position={position()}
         onSaveCalibrated={onSaveCalibrated}
       />,
@@ -351,7 +352,7 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     expect(setZButton).toBeDisabled();
 
     const tipLength = screen.getByLabelText("Tip length (mm)");
-    await user.type(tipLength, "15");
+    await user.type(tipLength, "70");
     expect(setZButton).toBeEnabled();
     await user.click(setZButton);
 
@@ -363,13 +364,11 @@ describe("CalibrationWizard multi-instrument block height step", () => {
 
     await waitFor(() => expect(onSaveCalibrated).toHaveBeenCalled());
     const savedConfig = onSaveCalibrated.mock.calls[0][1] as GantryConfig;
-    // Block height seeds from cnc.calibration_block_height_mm (35). Bare-
-    // nozzle block touch is 15 (raw) - 15 (tip) = 0, so there's no
-    // remaining downward travel below the block at this low factory Z
-    // travel (80mm) — z_min: 35 - 0 = 35. Without the tip subtraction the
-    // raw touch (15) would look like it has 15mm of remaining travel below
-    // the block, wrongly reporting a shallower floor (z_min: 20).
-    expect(savedConfig.working_volume.z_min).toBe(35);
+    expect(savedConfig.working_volume.z_min).toBe(11.431);
+    expect(savedConfig.working_volume.z_max).toBe(67.431);
+    expect(savedConfig.instruments.pipette.depth).toBe(-70);
+    expect(savedConfig.cnc.factory_z_travel_mm).toBe(56);
+    expect(savedConfig.grbl_settings?.max_travel_z).toBe(57);
   });
 
   it("skips lighting instruments and notes they follow the camera", async () => {
