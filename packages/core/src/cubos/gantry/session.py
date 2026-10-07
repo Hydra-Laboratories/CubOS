@@ -1091,7 +1091,11 @@ class _LockedGantry:
 
     def __enter__(self) -> Gantry:
         self._session._lock.acquire()
-        return self._session._require_connected()
+        try:
+            return self._session._require_connected()
+        except BaseException:
+            self._session._lock.release()
+            raise
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         self._session._lock.release()

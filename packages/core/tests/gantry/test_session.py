@@ -1033,3 +1033,34 @@ def test_run_protocol_health_failure_after_instruments_uses_session_error(
         )
 
     assert events == ["cubos.instruments.connect", "cubos.instruments.disconnect", "store.close"]
+
+
+@pytest.mark.parametrize("action", ["home", "unlock", "reset_and_unlock", "resume", "set_work_coordinates"])
+def test_disconnected_locked_action_releases_lock_and_allows_reconnect(tmp_path, action):
+    session = GantrySession(gantry_factory=FakeGantry, sleep=lambda _seconds: None)
+    with pytest.raises(GantryNotConnectedError):
+        getattr(session, action)()
+    acquired = session.operation_lock.acquire(blocking=False)
+    assert acquired, "A disconnected action must not retain the serial-operation lock."
+    session.operation_lock.release()
+    assert session.connect(_write_gantry(tmp_path), filename="gantry.yaml").connected
+    assert session.home().connected
+    assert ("home", None) in FakeGantry.instances[-1].calls
+
+
+@pytest.mark.parametrize("error", [RuntimeError("connection check failed"), KeyboardInterrupt()])
+def test_locked_entry_failure_preserves_exception_and_releases_lock(monkeypatch, tmp_path, error):
+    session = GantrySession(gantry_factory=FakeGantry, sleep=lambda _seconds: None)
+
+    def fail_connection_check():
+        raise error
+
+    with monkeypatch.context() as patch:
+        patch.setattr(session, "_require_connected", fail_connection_check)
+        with pytest.raises(type(error)) as raised:
+            session.home()
+        assert raised.value is error
+    acquired = session.operation_lock.acquire(blocking=False)
+    assert acquired, "An interrupted context entry must release the acquired lock."
+    session.operation_lock.release()
+    assert session.connect(_write_gantry(tmp_path), filename="gantry.yaml").connected
