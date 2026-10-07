@@ -153,6 +153,9 @@ export default function CalibrationWizard({
   // working-volume bounds (see calculateSingleInstrumentZCalibration) for
   // both flows, so it needs the same tip-attached compensation as any other
   // pipette touch, not just the non-reference instruments recorded above.
+  const referenceInstrumentIsPipette = config?.instruments[selectedReference]?.type === "pipette";
+  const referenceTipAttached = referenceInstrumentIsPipette && !!tipAttached[selectedReference];
+  const referenceTipLengthError = referenceTipAttached ? validateTipLength(tipLengths[selectedReference]) : null;
   const lowestInstrumentIsPipette = selectedLowest
     ? config?.instruments[selectedLowest]?.type === "pipette"
     : false;
@@ -514,6 +517,7 @@ export default function CalibrationWizard({
   const setXY = () => runAction(
     "Setting XY origin",
     async () => {
+    if (referenceTipLengthError) throw new Error(referenceTipLengthError);
     const result = await gantryApi.setWorkCoordinates({ x: 0, y: 0 });
     const captured = requirePosition(result);
     setXyOrigin(captured);
@@ -824,6 +828,46 @@ export default function CalibrationWizard({
 
   if (!open) return null;
 
+  const referenceTipControls = isMulti && referenceInstrumentIsPipette ? (
+    <div style={{ margin: "12px 0" }}>
+      <p style={instructionStyle}>
+        If the leftmost pipette cannot reach the block bare, attach a tip and align
+        its end with the mark. This step sets X/Y only. The tip length carries
+        forward to this pipette's Z reference or instrument-offset measurement.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input
+          type="checkbox"
+          aria-label="Calibrating with a tip attached"
+          checked={referenceTipAttached}
+          onChange={(event) => setTipAttached((prev) => ({
+            ...prev, [selectedReference]: event.target.checked,
+          }))}
+          disabled={controlsLocked}
+        />
+        <span style={labelStyle}>Calibrating with a tip attached</span>
+      </label>
+      {referenceTipAttached && (
+        <label style={{ ...fieldStyle, marginTop: 8 }}>
+          <span style={labelStyle}>Tip length (mm)</span>
+          <input
+            aria-label="Tip length (mm)"
+            value={tipLengths[selectedReference] ?? ""}
+            onChange={(event) => setTipLengths((prev) => ({
+              ...prev, [selectedReference]: event.target.value,
+            }))}
+            disabled={controlsLocked}
+            inputMode="decimal"
+            style={buttonStateStyle(inputStyle, controlsLocked)}
+          />
+          {referenceTipLengthError && (
+            <span style={{ color: theme.color.danger, fontSize: 12 }}>{referenceTipLengthError}</span>
+          )}
+        </label>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div
       ref={dialogRef}
@@ -956,6 +1000,7 @@ export default function CalibrationWizard({
                     </>
                   )}
                 </div>
+                {referenceTipControls}
                 <div style={actionRowStyle}>
                   <button onClick={goToHome} disabled={controlsLocked || !filename || instruments.length === 0} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !filename || instruments.length === 0)}>Continue</button>
                 </div>
@@ -1086,6 +1131,7 @@ export default function CalibrationWizard({
                     ? "Put the calibration block at the back-right corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."
                     : "Put the calibration block at the front-left corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."}
                 </p>
+                {referenceTipControls}
                 <JogPanel
                   xyStep={xyStep}
                   zStep={zStep}
@@ -1104,7 +1150,7 @@ export default function CalibrationWizard({
                   zBelowMin={zBelowMin}
                 />
                 <div style={actionRowStyle}>
-                  <button onClick={setXY} disabled={controlsLocked || !connected} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !connected)}>Set XY origin and continue</button>
+                  <button onClick={setXY} disabled={controlsLocked || !connected || !!referenceTipLengthError} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !connected || !!referenceTipLengthError)}>Set XY origin and continue</button>
                 </div>
               </div>
             )}
