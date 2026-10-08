@@ -1,28 +1,23 @@
 # Getting Started
 
-This guide gets CubOS installed and points you to the right setup path. First
-time users should follow the YAML workflow: one gantry file, one deck file, and
-one protocol file.
+**CubOS already installed?** Open it and follow [Use CubOS Operator](operator-ui.md).
+You do not need to install developer tools or edit YAML files to use the app.
 
-## Setup Path
+## Choose Your Setup Path
 
-1. Install CubOS.
-2. Prefer working in a browser over a terminal? Most of the steps below can
-   also be done point-and-click in the [Operator UI](operator-ui.md).
-3. If you are building your own machine, complete
-   [Gantry Bring-Up](admin/gantry-bring-up.md).
-4. Create your gantry YAML from the right seed config and define your
-   mounted instruments with [Set Up Gantry YAML](gantry-setup.md).
-5. Calibrate the gantry with [Calibrate Gantry](calibration.md).
-6. Place labware and define deck YAML with [Set Up Deck and Labware](deck.md).
-7. Validate and run a protocol with
-   [Run a Protocol with YAML](protocol-yaml.md).
-8. If something goes wrong along the way, see
-   [Troubleshooting & Recovery](troubleshooting.md).
+| Your setup | Start here |
+|---|---|
+| Windows installer supplied by your lab | Run the installer, then open **CubOS** from the desktop or Start menu. Python, Node.js, and Git are bundled or unnecessary on this computer. |
+| Preinstalled CubOS appliance | Use the address your administrator supplied and follow the [Operator guide](operator-ui.md). |
+| Installing from the source repository | Follow the installation steps below. Operator needs **Python 3.11+** and a compatible Node.js version to build the browser interface. |
+| Building your own machine | Complete [Gantry Bring-Up](admin/gantry-bring-up.md), then follow the [Operator setup sequence](operator-ui.md#your-first-run). |
+| Working from the terminal | Set up [gantry YAML](gantry-setup.md), [calibration](calibration.md), [deck YAML](deck.md), and [protocol YAML](protocol-yaml.md). |
+
+The remaining instructions are for **installing from source**.
 
 ## Prerequisites
 
-CubOS needs Python 3.10+ and Git installed first. **All shell commands
+Use Python 3.11+ and Git for CubOS Operator (the core package alone supports Python 3.10+). **All shell commands
 elsewhere in these docs assume a Unix-like shell.** On Windows, install
 [Git for Windows](https://git-scm.com/download/win) (it bundles **Git
 Bash**) and run every command in these docs from a Git Bash window — or
@@ -33,7 +28,7 @@ Windows, both are shown below.
 
 - Install [Git for Windows](https://git-scm.com/download/win). Use the Git
   Bash it installs for the commands in these docs.
-- Install [Python 3.10 or newer](https://www.python.org/downloads/windows/).
+- Install [Python 3.11 or newer](https://www.python.org/downloads/windows/).
   During setup, check "Add python.exe to PATH".
 - Verify, from Git Bash or PowerShell:
   ```bash
@@ -51,7 +46,7 @@ Windows, both are shown below.
 
 ### Linux
 
-- Install Python 3.10+ and Git with your distro's package manager, e.g. on
+- Install Python 3.11+ and Git with your distro's package manager, e.g. on
   Debian/Ubuntu:
   ```bash
   sudo apt install python3 python3-venv python3-pip git
@@ -129,7 +124,7 @@ The `cubos_api` server serves the Operator UI's compiled web assets from
 `apps/operator-web/dist/`. That folder is not checked into the repository —
 build it once with Node.js:
 
-1. Install [Node.js 20 LTS or newer](https://nodejs.org) (it includes
+1. Install [Node.js 22.12+ (or 20.19+)](https://nodejs.org) (it includes
    `npm`).
 2. From the repository root:
 

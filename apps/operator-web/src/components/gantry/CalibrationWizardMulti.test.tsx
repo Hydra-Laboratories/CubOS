@@ -242,8 +242,8 @@ describe("CalibrationWizard multi-instrument block height step", () => {
       if (url.pathname === "/api/v1/gantry/jog-blocking" && init?.method === "POST") {
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:76, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:0,z_max:88}, position:{x:400,y:300,z:88}, measured_volume:{x:400,y:300,z:88}, z_calibration:{block_height:35,z_min:0,z_max:88}, max_travel:{x:401,y:301,z:89}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -294,7 +294,7 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     expect(savedConfig.instruments.pipette).toMatchObject({ depth: 18 });
   });
 
-  it("subtracts the lowest instrument's tip length from its block touch before computing Z bounds", async () => {
+  it("calibrates 56 mm carriage travel with a 70 mm tip without adding tip length to travel", async () => {
     const user = userEvent.setup();
     const onSaveCalibrated = vi.fn<(filename: string, config: GantryConfig) => Promise<void>>(async () => undefined);
     let positionReadCount = 0;
@@ -304,25 +304,21 @@ describe("CalibrationWizard multi-instrument block height step", () => {
         "http://localhost",
       );
       if (url.pathname === "/api/v1/gantry/calibration/home-and-center" && init?.method === "POST") {
-        return jsonResponse({ xy_bounds: { x: 400, y: 300, z: 80 }, position: { x: 200, y: 150, z: 80 } });
+        return jsonResponse({ xy_bounds: { x: 400, y: 300, z: 0 }, position: { x: 200, y: 150, z: 0 } });
       }
       if (url.pathname === "/api/v1/gantry/position") {
         positionReadCount++;
-        // 1st read: setZ's block-touch capture for the LOWEST instrument
-        // (pipette), WITH a tip attached — the carriage sits 15mm higher
-        // (closer to home) than a bare-nozzle touch would require.
-        // 2nd read: asmi's ordinary (non-tip) touch.
-        const z = positionReadCount === 1 ? 15 : 50;
+        const z = positionReadCount === 1 ? -32.431 : 50;
         return jsonResponse({ ...position(), z, work_z: z });
       }
       if (url.pathname === "/api/v1/gantry/work-coordinates" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 199, y: 149.5, z: 12.5, work_x: 199, work_y: 149.5, work_z: 12.5 });
+        return jsonResponse({ ...position(), x: 199, y: 149.5, z: 35, work_x: 199, work_y: 149.5, work_z: 35 });
       }
       if (url.pathname === "/api/v1/gantry/jog-blocking" && init?.method === "POST") {
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:56, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:11.431,z_max:67.431}, position:{x:400,y:300,z:67.431}, measured_volume:{x:400,y:300,z:67.431}, z_calibration:{block_height:35,z_min:11.431,z_max:67.431}, max_travel:{x:401,y:301,z:57.0}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -331,11 +327,16 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    const extendedCub = lowTravelMultiConfig();
+    extendedCub.gantry_type = "cub";
+    extendedCub.cnc.factory_z_travel_mm = 56;
+    extendedCub.cnc.safe_z = 56;
+    extendedCub.working_volume.z_max = 56;
     render(
       <CalibrationWizard
         open
         onClose={() => undefined}
-        gantry={{ filename: "multi.yaml", config: lowTravelMultiConfig() }}
+        gantry={{ filename: "multi.yaml", config: extendedCub }}
         position={position()}
         onSaveCalibrated={onSaveCalibrated}
       />,
@@ -351,7 +352,7 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     expect(setZButton).toBeDisabled();
 
     const tipLength = screen.getByLabelText("Tip length (mm)");
-    await user.type(tipLength, "15");
+    await user.type(tipLength, "70");
     expect(setZButton).toBeEnabled();
     await user.click(setZButton);
 
@@ -363,13 +364,11 @@ describe("CalibrationWizard multi-instrument block height step", () => {
 
     await waitFor(() => expect(onSaveCalibrated).toHaveBeenCalled());
     const savedConfig = onSaveCalibrated.mock.calls[0][1] as GantryConfig;
-    // Block height seeds from cnc.calibration_block_height_mm (35). Bare-
-    // nozzle block touch is 15 (raw) - 15 (tip) = 0, so there's no
-    // remaining downward travel below the block at this low factory Z
-    // travel (80mm) — z_min: 35 - 0 = 35. Without the tip subtraction the
-    // raw touch (15) would look like it has 15mm of remaining travel below
-    // the block, wrongly reporting a shallower floor (z_min: 20).
-    expect(savedConfig.working_volume.z_min).toBe(35);
+    expect(savedConfig.working_volume.z_min).toBe(11.431);
+    expect(savedConfig.working_volume.z_max).toBe(67.431);
+    expect(savedConfig.instruments.pipette.depth).toBe(-70);
+    expect(savedConfig.cnc.factory_z_travel_mm).toBe(56);
+    expect(savedConfig.grbl_settings?.max_travel_z).toBe(57);
   });
 
   it("skips lighting instruments and notes they follow the camera", async () => {
@@ -438,8 +437,8 @@ describe("CalibrationWizard multi-instrument block height step", () => {
         }
         return jsonResponse({ ...position(), z: 50, work_z: 50 });
       }
-      if (url.pathname === "/api/v1/gantry/home" && init?.method === "POST") {
-        return jsonResponse({ ...position(), x: 400, y: 300, z: 88, work_x: 400, work_y: 300, work_z: 88 });
+      if (url.pathname === "/api/v1/gantry/calibration/finalize-origin" && init?.method === "POST") {
+        return jsonResponse({origin_policy: "deck_origin", safe_z:76, working_volume: {x_min:0,x_max:400,y_min:0,y_max:300,z_min:0,z_max:88}, position:{x:400,y:300,z:88}, measured_volume:{x:400,y:300,z:88}, z_calibration:{block_height:35,z_min:0,z_max:88}, max_travel:{x:401,y:301,z:89}});
       }
       if (url.pathname === "/api/v1/gantry/soft-limits" && init?.method === "POST") {
         return jsonResponse({ status: "ok" });
@@ -517,5 +516,86 @@ describe("CalibrationWizard multi-instrument block height step", () => {
     fireEvent.keyDown(dialog, { key: "Escape" });
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+});
+
+describe("CalibrationWizard leftmost pipette tip controls", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function renderLeftmostWizard() {
+    render(<CalibrationWizard open onClose={() => undefined}
+      gantry={{ filename: "leftmost-tip.yaml", config: multiConfig() }}
+      position={position()} onSaveCalibrated={async () => undefined} />);
+  }
+
+  async function prepareLeftmostTip(user: ReturnType<typeof userEvent.setup>, lowest: "asmi" | "pipette") {
+    await user.selectOptions(screen.getByLabelText("Leftmost instrument"), "pipette");
+    await user.selectOptions(screen.getByLabelText("Lowest instrument"), lowest);
+    const attached = screen.getByLabelText("Calibrating with a tip attached");
+    expect(attached).not.toBeChecked();
+    await user.click(attached);
+    await user.type(screen.getByLabelText("Tip length (mm)"), "70");
+  }
+
+  it("offers tip calibration in Prepare and retains it in XY and Z when pipette is also lowest", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetch();
+    renderLeftmostWizard();
+    expect(screen.queryByLabelText("Calibrating with a tip attached")).not.toBeInTheDocument();
+    await prepareLeftmostTip(user, "pipette");
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.click(await screen.findByRole("button", { name: "Home gantry" }));
+    expect(await screen.findByText("Set XY Origin")).toBeInTheDocument();
+    expect(screen.getByText("Using pipette with a 70 mm tip (set in Prepare).")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Calibrating with a tip attached")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Tip length (mm)")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set XY origin and continue" }));
+    await user.click(await screen.findByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Set Z Reference")).toBeInTheDocument();
+    expect(screen.getByLabelText("Calibrating with a tip attached")).toBeChecked();
+    expect(screen.getByLabelText("Tip length (mm)")).toHaveValue("70");
+    const xyWrites = fetchMock.mock.calls.filter(([input]) => new URL(String(input), "http://localhost").pathname === "/api/v1/gantry/work-coordinates");
+    expect(xyWrites).toHaveLength(1);
+    expect(JSON.parse(String(xyWrites[0][1]?.body))).toEqual({ x: 0, y: 0 });
+  });
+
+  it("keeps leftmost pipette tip state separate from a bare ASMI Z reference and restores it for instrument recording", async () => {
+    const user = userEvent.setup();
+    installFetch();
+    renderLeftmostWizard();
+    await prepareLeftmostTip(user, "asmi");
+    await advanceToBlockHeightStep(user);
+    await user.click(screen.getByRole("button", { name: "Continue" }));
+    expect(await screen.findByText("Set Z Reference")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Calibrating with a tip attached")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Set Z reference with asmi and continue" }));
+    expect(await screen.findByText("Record Instruments")).toBeInTheDocument();
+    expect(screen.getByLabelText("Calibrating with a tip attached")).toBeChecked();
+    const length = screen.getByLabelText("Tip length (mm)");
+    expect(length).toHaveValue("70");
+    await user.clear(length);
+    await user.type(length, "0");
+    expect(screen.getByRole("button", { name: "Record pipette" })).toBeDisabled();
+    await user.clear(length);
+    await user.type(length, "70");
+    expect(screen.getByRole("button", { name: "Record pipette" })).toBeEnabled();
+  });
+
+  it("blocks an invalid attached-tip length in Prepare before any hardware action", async () => {
+    const user = userEvent.setup();
+    const fetchMock = installFetch();
+    renderLeftmostWizard();
+    await prepareLeftmostTip(user, "asmi");
+    const length = screen.getByLabelText("Tip length (mm)");
+    await user.clear(length);
+    await user.type(length, "-1");
+    const continueButton = screen.getByRole("button", { name: "Continue" });
+    expect(continueButton).toBeDisabled();
+    await user.click(continueButton);
+    expect(screen.queryByRole("button", { name: "Home gantry" })).not.toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+    await user.clear(length);
+    await user.type(length, "42");
+    expect(continueButton).toBeEnabled();
   });
 });

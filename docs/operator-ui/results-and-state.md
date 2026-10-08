@@ -1,6 +1,6 @@
 # Results and State
 
-Two views collect what a protocol run leaves behind: **Results** holds the
+A **campaign** groups a run's measurements. Two views collect what a protocol run leaves behind: **Results** holds the
 instrument measurements, grouped into campaigns; **State** holds the
 liquid-handling record. **Visualize** is a full-size copy of the deck map.
 

@@ -528,7 +528,7 @@ class TestGantryFinalizeDeckOriginCalibration(unittest.TestCase):
             {"x": 396.0, "y": 260.5, "z": 101.0},
         )
         self.assertEqual(result["homing_pull_off_mm"], 10.0)
-        self.assertEqual(mock_mill.home.call_count, 1)
+        self.assertEqual(mock_mill.home.call_count, 2)
         mock_mill.execute_command.assert_any_call(
             "G10 L20 P1 X386 Y250.5 Z91"
         )

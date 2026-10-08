@@ -9,26 +9,18 @@ Open the **Workflow** view and the **Gantry** tab.
 
 ![The Gantry tab with a machine config loaded, annotated](../images/operator-ui/gantry-tab.webp)
 
-1. **Gantry config.** Pick your machine's file (for example `cub_seed.yaml`).
-   The editor fills in with that machine's settings.
-2. **New / Delete.** Start an empty gantry config, or delete the one that is
-   open. Delete is disabled while the gantry is connected.
-3. **Serial port.** Leave it blank to let CubOS scan for the gantry
-   automatically, or enter the port name if you know it — `/dev/ttyUSB0` on
-   Linux, `COM3` on Windows.
-4. **Instruments.** One card per mounted instrument with its type, vendor,
-   XY offset from the gantry head, and depth. Use the dropdown and **+ Add**
-   on the right of the heading to mount another one.
-5. **Hardware.** Each instrument can run as **Connected** or
-   **Simulated (offline)**. Simulated instruments skip hardware I/O and
-   return synthetic data, which is how you dry-run a protocol without the
-   instrument attached. The card shows a **SIMULATED** badge while it is
-   offline.
-6. **Working Volume.** The machine's travel limits. Every move is checked
-   against these before it is sent.
-7. **Save.** The filename box defaults to the open file; type a new name to
-   save a copy instead. Saving is what the gantry connection and protocol
-   runs actually read.
+1. **Gantry config.** Open your lab's calibrated machine file. Seed files
+   are starting templates and need setup and calibration.
+2. **New / Delete.** Create a draft or delete the open file. Delete is
+   unavailable while connected.
+3. **Serial port.** Leave blank to scan automatically, or enter your port
+   (`COM3` on Windows, `/dev/ttyUSB0` on Linux, for example).
+4. **Instruments.** Mounted tools and their settings. Use **+ Add** to add one.
+5. **Hardware.** **Connected** uses the instrument; **Simulated (offline)**
+   returns example data. **The gantry can still move with simulated instruments.**
+   Use **Validate** to check a setup without motion.
+6. **Working Volume.** Allowed travel range; it cannot detect misplaced labware or loose objects.
+7. **Save.** Writes the selected file. Enter another filename to save a copy.
 
 For what every field means, see [Set Up Gantry YAML](../gantry-setup.md).
 
@@ -68,45 +60,39 @@ readout shows real coordinates, and the status line reads **Idle**.
 
 ## Move the Gantry
 
-With the gantry connected and homed, **Gantry Control** gives you three ways
-to move it.
+With the gantry connected and homed, use the buttons, keyboard, or **Move To**.
+Raise the tool clear of labware before moving sideways.
 
 ![Gantry Control while connected, annotated](../images/operator-ui/gantry-control.webp){ width="560" }
 
-1. **XY jog pad.** Each click moves the head by the **XY mm** step. Hold a
-   button down to keep moving. Directions follow the CubOS deck convention:
-   **→** is +X (toward the operator's right), **↑** is +Y (away from you,
-   toward the back).
-2. **Z jog.** **Z+** raises the head, **Z−** lowers it, by the **Z mm** step.
-3. **Step sizes.** How far one click moves, in millimeters. 0.5 mm is the
-   default.
-4. **Position readout.** The current work position in millimeters, with the
-   machine coordinate in small type beside it. The line under the numbers is
-   the controller state: **Idle** in green means ready; **Jog** or **Run**
-   in blue means moving; a red **ALARM** banner means the controller has
-   locked itself.
-5. **Home.** Re-homes all axes.
-6. **Calibrate.** Opens the calibration wizard.
-7. **Move To.** Type exact X, Y, Z coordinates and click **Go**. The
-   allowed range for each axis is shown in gray inside the box, and the
-   **Vol** line above lists the working volume. Targets outside it are
-   refused with an explanation.
-8. **Connection.** The status dot and **Disconnect** button.
-9. **Advanced.** Reveals GRBL-level controls: read and change controller
-   settings, feed hold and resume, cancel a jog, reset and unlock, and
-   pull off a limit switch. Use these when the
-   [troubleshooting guide](../troubleshooting.md) tells you to.
+1. **XY jog pad.** Click for one step, or hold to repeat. **→** moves
+   right (+X); **↑** moves away from you (+Y).
+2. **Z jog.** **Z+** raises the head; **Z−** lowers it.
+3. **Step sizes.** Distance per step in millimeters. Start with 0.1–0.5 mm
+   near labware; increase for a clear long move, then reduce for the final approach.
+4. **Position readout.** Current work coordinates; smaller numbers are
+   machine coordinates. **Idle** means ready, **Jog/Run** means moving,
+   and **ALARM** means the controller is locked.
+5. **Home.** Re-homes all axes; clear the path first.
+6. **Calibrate.** Opens the [calibration wizard](calibrate-gantry.md).
+7. **Move To.** Enter X/Y/Z and click **Go**. Moves the **head**, not a
+   selected instrument tip. Do not copy a well position here when the tool
+   has an offset. Out-of-range targets are refused.
+8. **Connection.** Shows status and **Disconnect**.
+9. **Advanced.** Controller settings, hold/resume, jog cancel, reset, and
+   alarm controls. Use with the [recovery guide](../troubleshooting.md).
 
-**Keyboard.** Click anywhere outside a text box first, then use the arrow
-keys for X/Y and the `X` / `Z` keys for Z up / Z down. Same step sizes as
-the buttons.
+**Keyboard:** click outside a text field, then use arrows for X/Y, `X` for
+Z up, and `Z` for Z down. The same step sizes apply.
 
-!!! note
-    Start with small steps. 0.5 mm per click is a safe default when you are
-    close to labware; raise **XY mm** to 5–10 for long moves across the
-    deck, and switch back down before your final approach.
+## If Movement Is Blocked
 
-If a red **ALARM** banner appears (for example after hitting a limit
-switch), click **Unlock ($X)**, jog back toward the middle of the deck, and
-re-home. See [Troubleshooting & Recovery](../troubleshooting.md) for the
-full recovery procedure.
+| Message | What to do |
+|---|---|
+| **ALARM** after a limit-switch trip | Check the machine. If shown, **Pull off limit** backs away from the last jog direction. Otherwise **Unlock ($X)** clears the lock; use small jogs away from the switch, then re-home when the path is clear. |
+| **HOLD** | Motion is paused. Check the path before **Resume**; it can continue held motion. |
+| **CALIBRATION INTERRUPTED** | Click **Restore soft limits**. If restoration fails, reconnect before running a protocol. |
+| **Protocol running — manual control locked** | Wait for the run to finish, or cancel it in the header or Run view. |
+
+For an E-stop, collision, or an unexplained alarm, follow
+[Troubleshooting & Recovery](../troubleshooting.md) before resuming.

@@ -1,21 +1,16 @@
-# Home
+# CubOS
 
-CubOS is a Python control layer for CNC-based lab automation. It combines a
-GRBL gantry, mounted instruments, deck labware, YAML protocols, offline motion
-validation, and local SQLite data storage into one workflow.
+CubOS controls a lab gantry and its instruments. Use **CubOS Operator** to
+set up plates and vials, run a saved sequence of steps, and download results.
 
-CubOS is used to:
+[Open the Operator guide](operator-ui.md)
 
-- define machine, deck, and protocol state in versioned YAML files
-- calibrate the gantry into a front-left-bottom deck frame
-- validate reach, motion bounds, command semantics, and collision constraints
-- execute protocols against real hardware
-- persist experiment state and instrument measurements for later analysis
+![CubOS Operator: settings on the left, deck map and movement controls on the right](images/operator-ui/overview.webp)
 
-## Contents
-
-| Section | Use it for |
-| --- | --- |
-| [Set Up and Use CubOS](getting-started.md) | Install CubOS, calibrate hardware, set up labware, and run YAML protocols. |
-| [Contributing to CubOS](contributing.md) | Work on CubOS source, docs, tests, and implementation details. |
-| [API Reference](reference/index.md) | Inspect generated Python API docs. |
+| Start here | Use it for |
+|---|---|
+| [Use CubOS Operator](operator-ui.md) | Connect, calibrate, set up labware, run protocols, and download measurements. |
+| [Getting Started](getting-started.md) | Choose an installation and setup path. |
+| [Troubleshooting & Recovery](troubleshooting.md) | Resolve connection, movement, and setup problems. |
+| [Contributing](contributing.md) | Develop CubOS and build its documentation. |
+| [API Reference](reference/index.md) | Use CubOS from Python. |

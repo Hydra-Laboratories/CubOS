@@ -501,3 +501,85 @@ function renderProps() {
     onRefresh: vi.fn(),
   };
 }
+
+describe("GantryEditor external calibration updates", () => {
+  function fixtures() {
+    const original = gantryFixture();
+    const calibrated = gantryFixture({
+      origin_policy: "home_origin",
+      cnc: { factory_z_travel_mm: 80, safe_z: 0 },
+      working_volume: { x_min: -258, x_max: 0, y_min: -145, y_max: 0, z_min: -80, z_max: 0 },
+      grbl_settings: { soft_limits: true, homing_pull_off: 1, max_travel_x: 259, max_travel_y: 146, max_travel_z: 81 },
+      instruments: {
+        pipette_1: { ...original.config.instruments.pipette_1, depth: -42 },
+        camera: { type: "camera", vendor: "usb", offset_x: 2.5, offset_y: -28.75, depth: -75 },
+      },
+    });
+    const props = {
+      configs: ["cubos.yaml"], selectedFile: "cubos.yaml", onSelectFile: vi.fn(), onImportFile: vi.fn(),
+      gantry: original, baseline: original, instrumentTypes: INSTRUMENT_TYPES, instrumentSchemas: INSTRUMENT_SCHEMAS,
+      onSave: vi.fn(), onLocalChange: vi.fn(), onRefresh: vi.fn(),
+    };
+    return { original, calibrated, props };
+  }
+
+  it("saves every same-file calibration value when a clean editor receives an external update", async () => {
+    const user = userEvent.setup();
+    const { calibrated, props } = fixtures();
+    const { rerender } = render(<GantryEditor {...props} dirty={false} />);
+    rerender(<GantryEditor {...props} gantry={calibrated} baseline={calibrated} dirty={false} />);
+    await user.type(screen.getByLabelText("Save as filename"), "pipette_camera_config");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalledWith("pipette_camera_config.yaml", calibrated.config);
+    expect(props.onSelectFile).toHaveBeenCalledWith("pipette_camera_config.yaml");
+  });
+
+  it("refreshes a clean raw view from the external calibration payload", async () => {
+    const user = userEvent.setup();
+    const { calibrated, props } = fixtures();
+    const { rerender } = render(<GantryEditor {...props} dirty={false} />);
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    rerender(<GantryEditor {...props} gantry={calibrated} baseline={calibrated} dirty={false} />);
+    expect((screen.getByLabelText("Raw gantry YAML") as HTMLTextAreaElement).value).toContain("depth: -75");
+  });
+
+  it("preserves an unsaved structured draft through external query updates", async () => {
+    const user = userEvent.setup();
+    const { calibrated, props } = fixtures();
+    const { rerender } = render(<GantryEditor {...props} />);
+    const port = screen.getByLabelText(/Serial port/);
+    await user.clear(port); await user.type(port, "/dev/edited");
+    rerender(<GantryEditor {...props} gantry={calibrated} baseline={calibrated} />);
+    expect(screen.getByLabelText(/Serial port/)).toHaveValue("/dev/edited");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave.mock.calls[0][1].serial_port).toBe("/dev/edited");
+    expect(props.onSave.mock.calls[0][1].instruments.pipette_1.depth).toBe(0);
+  });
+
+  it("accepts the saved calibration when the controlled parent clears its previously dirty draft", async () => {
+    const user = userEvent.setup();
+    const { calibrated, props } = fixtures();
+    const { rerender } = render(<GantryEditor {...props} dirty={false} />);
+    const port = screen.getByLabelText(/Serial port/);
+    fireEvent.change(port, { target: { value: "/dev/edited" } });
+    const edited = props.onLocalChange.mock.calls.at(-1)![0];
+    rerender(<GantryEditor {...props} gantry={edited} dirty />);
+    const saved = { ...calibrated, config: { ...calibrated.config, serial_port: "/dev/edited" } };
+    rerender(<GantryEditor {...props} gantry={saved} baseline={saved} dirty={false} />);
+    await user.type(screen.getByLabelText("Save as filename"), "calibrated_copy");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(props.onSave).toHaveBeenCalledWith("calibrated_copy.yaml", saved.config);
+  });
+
+  it("preserves invalid raw YAML even when the parent reports clean during a refetch", async () => {
+    const user = userEvent.setup();
+    const { calibrated, props } = fixtures();
+    const { rerender } = render(<GantryEditor {...props} dirty={false} />);
+    await user.click(screen.getByRole("button", { name: "Edit raw YAML" }));
+    fireEvent.change(screen.getByLabelText("Raw gantry YAML"), { target: { value: "instruments: [unfinished" } });
+    rerender(<GantryEditor {...props} gantry={calibrated} baseline={calibrated} dirty={false} />);
+    expect(screen.getByLabelText("Raw gantry YAML")).toHaveValue("instruments: [unfinished");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Discard changes" })).toBeInTheDocument();
+  });
+});
