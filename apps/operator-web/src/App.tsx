@@ -140,6 +140,18 @@ export default function App() {
     resumeId: null,
     seeds: [],
   });
+
+  const startNewFluidState = () => {
+    setFluidStateChoice({ mode: "new", newLabel: "", resumeId: null, seeds: [] });
+    setActiveTab("Protocol");
+    setActiveView("Workflow");
+  };
+
+  const resumeFluidState = (fluidStateId: number) => {
+    setFluidStateChoice({ mode: "resume", newLabel: "", resumeId: fluidStateId, seeds: [] });
+    setActiveTab("Protocol");
+    setActiveView("Workflow");
+  };
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [requestConfirm, confirmDialog] = useConfirm();
 
@@ -996,7 +1008,12 @@ export default function App() {
           </div>
         </div>
       )}
-      {activeView === "State" && <StatePanel />}
+      {activeView === "State" && (
+        <StatePanel
+          onStartNewState={startNewFluidState}
+          onResumeState={resumeFluidState}
+        />
+      )}
       {activeView === "Results" && (
         <DataOutputPanel
           campaigns={experimentData.data ?? []}

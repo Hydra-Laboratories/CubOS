@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import type { CSSProperties } from "react";
 import * as theme from "../../theme";
 import {
@@ -6,15 +6,7 @@ import {
   useFluidState,
   useTipState,
   useCapState,
-  useReconciliation,
-  useResolveReconciliation,
 } from "../../hooks/useFluidState";
-import type { OperationView } from "../../types";
-
-const RESOLUTIONS: { value: string; label: string }[] = [
-  { value: "applied", label: "Applied — confirmed it happened as journaled" },
-  { value: "not_applied", label: "Not applied — confirmed it did not happen" },
-];
 
 function formatComposition(composition: Record<string, number>): string {
   const entries = Object.entries(composition);
@@ -26,14 +18,12 @@ function formatVolume(value: number): string {
   return value.toFixed(3);
 }
 
-interface ResolveFormState {
-  operation: OperationView;
-  resolution: string;
-  operator: string;
-  reason: string;
+interface Props {
+  onStartNewState: () => void;
+  onResumeState: (fluidStateId: number) => void;
 }
 
-export default function StatePanel() {
+export default function StatePanel({ onStartNewState, onResumeState }: Props) {
   const fluidStates = useFluidStates();
   // undefined = no explicit choice yet (fall back to the newest state once
   // the list loads); null = the operator explicitly picked "no state", which
@@ -46,41 +36,20 @@ export default function StatePanel() {
   const detail = useFluidState(selectedId);
   const tips = useTipState(selectedId);
   const caps = useCapState(selectedId);
-  const reconciliation = useReconciliation(selectedId);
-  const resolveMutation = useResolveReconciliation(selectedId);
+  const canResume = !detail.isLoading
+    && !detail.isError
+    && detail.data !== undefined
+    && detail.data.pending_operation_count === 0
+    && detail.data.reconciliation_required_count === 0;
+  const hasPendingOrUncertainOperations = detail.data !== undefined
+    && (detail.data.pending_operation_count > 0 || detail.data.reconciliation_required_count > 0);
 
-  const [resolveForm, setResolveForm] = useState<ResolveFormState | null>(null);
-  const [resolveError, setResolveError] = useState<string | null>(null);
-
-  const reconciliationItems = useMemo(
-    () => reconciliation.data?.items ?? [],
-    [reconciliation.data],
-  );
-
-  const openResolveForm = (operation: OperationView) => {
-    setResolveError(null);
-    setResolveForm({ operation, resolution: "applied", operator: "", reason: "" });
-  };
-
-  const submitResolve = async () => {
-    if (!resolveForm) return;
-    if (!resolveForm.operator.trim() || !resolveForm.reason.trim()) {
-      setResolveError("Operator and reason are both required.");
-      return;
-    }
-    setResolveError(null);
-    try {
-      await resolveMutation.mutateAsync({
-        domain: resolveForm.operation.domain,
-        operation_key: resolveForm.operation.operation_key,
-        resolution: resolveForm.resolution,
-        operator: resolveForm.operator.trim(),
-        reason: resolveForm.reason.trim(),
-      });
-      setResolveForm(null);
-      reconciliation.refetch();
-    } catch (err) {
-      setResolveError(err instanceof Error ? err.message : String(err));
+  const refresh = () => {
+    void fluidStates.refetch();
+    if (selectedId !== null) {
+      void detail.refetch();
+      void tips.refetch();
+      void caps.refetch();
     }
   };
 
@@ -89,9 +58,9 @@ export default function StatePanel() {
       <div style={headerStyle}>
         <div>
           <h3 style={theme.panelTitle}>Liquid-Handling State</h3>
-          <div style={subtitleStyle}>Containers, tips, caps, and pending operations</div>
+          <div style={subtitleStyle}>Saved liquids, tips, and caps</div>
         </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={headerActionsStyle}>
           <select
             aria-label="Fluid state"
             value={selectedId ?? ""}
@@ -105,8 +74,18 @@ export default function StatePanel() {
               </option>
             ))}
           </select>
-          <button onClick={() => fluidStates.refetch()} style={secondaryButtonStyle}>
+          <button onClick={refresh} style={secondaryButtonStyle}>
             Refresh
+          </button>
+          <button onClick={onStartNewState} style={primaryButtonStyle}>
+            Start new state
+          </button>
+          <button
+            disabled={selectedId === null || !canResume}
+            onClick={() => selectedId !== null && onResumeState(selectedId)}
+            style={secondaryButtonStyle}
+          >
+            Resume state
           </button>
         </div>
       </div>
@@ -119,87 +98,15 @@ export default function StatePanel() {
 
       {selectedId === null && !fluidStates.isLoading && (
         <div style={emptyStyle}>
-          No fluid state selected. Create one from Run Protocol, or select an existing state above.
+          No saved state selected. Choose one to inspect, or use Start new state to set up a fresh run.
         </div>
       )}
 
       {selectedId !== null && (
         <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 16 }}>
-          {reconciliationItems.length > 0 && (
+          {hasPendingOrUncertainOperations && (
             <div style={reconciliationBannerStyle} role="alert">
-              <strong>
-                {reconciliationItems.length} operation{reconciliationItems.length > 1 ? "s" : ""}{" "}
-                {reconciliationItems.length > 1 ? "require" : "requires"} reconciliation
-              </strong>
-              <div style={{ marginTop: 6, display: "flex", flexDirection: "column", gap: 6 }}>
-                {reconciliationItems.map((operation) => (
-                  <div key={`${operation.domain}:${operation.operation_key}`} style={reconciliationRowStyle}>
-                    <div>
-                      <span style={theme.pill}>{operation.domain}</span>{" "}
-                      <span style={theme.mono}>{operation.operation_key}</span>{" "}
-                      <span style={metaTextStyle}>{operation.operation_type}</span>
-                      {operation.detail && <div style={metaTextStyle}>{operation.detail}</div>}
-                    </div>
-                    <button
-                      style={primaryButtonStyle}
-                      onClick={() => openResolveForm(operation)}
-                    >
-                      Resolve
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {resolveForm && (
-            <div style={resolveFormStyle}>
-              <div style={theme.sectionLabel}>
-                Resolve {resolveForm.operation.domain} operation {resolveForm.operation.operation_key}
-              </div>
-              <label style={fieldRowStyle}>
-                <span style={theme.fieldLabel}>Resolution</span>
-                <select
-                  value={resolveForm.resolution}
-                  onChange={(event) => setResolveForm({ ...resolveForm, resolution: event.target.value })}
-                  style={selectStyle}
-                >
-                  {RESOLUTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-              </label>
-              <label style={fieldRowStyle}>
-                <span style={theme.fieldLabel}>Operator</span>
-                <input
-                  style={theme.input}
-                  value={resolveForm.operator}
-                  onChange={(event) => setResolveForm({ ...resolveForm, operator: event.target.value })}
-                  placeholder="Your name or initials"
-                />
-              </label>
-              <label style={fieldRowStyle}>
-                <span style={theme.fieldLabel}>Reason</span>
-                <textarea
-                  style={{ ...theme.input, minHeight: 60, resize: "vertical" }}
-                  value={resolveForm.reason}
-                  onChange={(event) => setResolveForm({ ...resolveForm, reason: event.target.value })}
-                  placeholder="What did you observe, and why does this resolution match reality?"
-                />
-              </label>
-              {resolveError && <div style={errorStyle}>{resolveError}</div>}
-              <div style={{ display: "flex", gap: 8 }}>
-                <button
-                  style={primaryButtonStyle}
-                  disabled={resolveMutation.isPending}
-                  onClick={() => void submitResolve()}
-                >
-                  {resolveMutation.isPending ? "Submitting…" : "Submit resolution"}
-                </button>
-                <button style={secondaryButtonStyle} onClick={() => setResolveForm(null)}>
-                  Cancel
-                </button>
-              </div>
+              This state cannot be resumed because it has pending or uncertain operations. Start a new state instead.
             </div>
           )}
 
@@ -315,12 +222,6 @@ export default function StatePanel() {
               </div>
             )}
           </div>
-
-          {detail.data && (
-            <div style={metaTextStyle}>
-              {detail.data.pending_operation_count} pending operation{detail.data.pending_operation_count === 1 ? "" : "s"} · deck fingerprint <span style={theme.mono}>{detail.data.deck_fingerprint.slice(0, 12)}…</span>
-            </div>
-          )}
         </div>
       )}
     </section>
@@ -333,12 +234,19 @@ const panelStyle: CSSProperties = {
 
 const headerStyle: CSSProperties = {
   display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
+  flexDirection: "column",
+  alignItems: "stretch",
   padding: "12px 14px",
   borderBottom: `1px solid ${theme.color.border}`,
   gap: 12,
   flexWrap: "wrap",
+};
+
+const headerActionsStyle: CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 8,
+  alignItems: "center",
 };
 
 const subtitleStyle: CSSProperties = {
@@ -381,29 +289,6 @@ const metaTextStyle: CSSProperties = {
 const reconciliationBannerStyle: CSSProperties = {
   ...theme.notice.warning,
   padding: 12,
-};
-
-const reconciliationRowStyle: CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  gap: 12,
-  padding: "6px 0",
-  borderTop: `1px solid ${theme.color.warningBorder}`,
-};
-
-const resolveFormStyle: CSSProperties = {
-  ...theme.card,
-  padding: 12,
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-};
-
-const fieldRowStyle: CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
 };
 
 const tableFrameStyle: CSSProperties = {

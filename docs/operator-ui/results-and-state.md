@@ -48,23 +48,12 @@ shows the resulting record.
    pipette, and each tip-rack slot's status: **available**, **consumed**,
    or uncertain.
 
-Further down, **Caps** lists cap state for capper-managed vials. The record
-reflects commands and your observations; it is not a sensor reading of the
-actual contents.
-
-### Resolve an interrupted operation
-
-If **Pending operations** lists an uncertain step, inspect the machine
-before resuming that state:
-
-1. Click **Resolve** beside the operation.
-2. Choose **Applied** if the recorded action happened, or **Not applied**
-   if it did not. If you cannot tell, leave it unresolved and ask for help.
-3. Enter **Operator** and **Reason**, describing what you observed.
-4. Click **Submit resolution**.
-
-See [Interrupted operations](../fluid-state.md#interrupted-operations) for
-what each resolution records.
+Further down, **Caps** lists cap state for capper-managed vials. The State
+view is read-only: use **Start new state** to return to the Protocol tab with
+a fresh state selected, or **Resume state** to continue the selected saved
+state. A state with pending or uncertain operations cannot be resumed; the
+view explains this and keeps **Resume state** disabled. Start a new state
+instead.
 
 ## Visualize the Deck
 

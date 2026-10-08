@@ -67,6 +67,10 @@ which tips have been used, and which vials are capped. Pick a mode under
 4. **Resume existing state.** Continue from a state saved by an earlier
    run, so volumes and consumed tips carry over.
 
+The **State** view provides shortcuts to these two choices. It opens the
+Protocol tab without starting a run. A state with pending or uncertain
+operations cannot be resumed; choose **Start new state** instead.
+
 **No state tracking** keeps no durable liquid or tip record. Used tips may
 be selected again on the next run; replace or refresh the physical rack
 before reusing a protocol in this mode. See
