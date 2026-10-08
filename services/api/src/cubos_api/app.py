@@ -21,6 +21,7 @@ from cubos_api.routers import (
     protocol,
     raw,
     runs,
+    station,
     settings,
     system,
 )
@@ -116,20 +117,49 @@ async def _origin_host_middleware(request: Request, call_next):
             if scheme.lower() != "bearer" or not hmac.compare_digest(supplied, expected):
                 return JSONResponse({"detail": "Invalid API token"}, status_code=401)
 
-    return await call_next(request)
+    from cubos_api.services.run_manager import get_run_manager, reservation_context, active_reservation_owner
+    supplied_reservation = request.headers.get("x-cubos-reservation")
+    if request.method in _STATE_CHANGING_METHODS:
+        owner = active_reservation_owner()
+        manager = get_run_manager() if owner else None
+        path = request.url.path
+        emergency = path in {
+            "/api/v1/gantry/feed-hold", "/api/v1/gantry/jog-cancel", "/api/v1/protocol/cancel",
+        }
+        monitor_action = path in {
+            "/api/v1/instruments/camera/monitor/start",
+            "/api/v1/instruments/camera/monitor/heartbeat",
+            "/api/v1/instruments/camera/monitor/stop",
+        }
+        native_cancel = path.startswith("/api/v1/runs/") and path.endswith("/cancel")
+        owner_checked_run = path in {"/api/v1/runs", "/api/v1/runs/validate"}
+        state_validation = path in {"/api/v1/station/state/validate", "/api/v1/station/reservation/operator-release"}
+        if owner and not (
+            emergency or monitor_action or native_cancel or owner_checked_run
+            or state_validation or manager.owns_reservation(supplied_reservation)
+        ):
+            return JSONResponse({"detail": "Station reserved by an external client; release its reservation before changing setup."}, status_code=409)
+    context_token = reservation_context.set(supplied_reservation)
+    try:
+        return await call_next(request)
+    finally:
+        reservation_context.reset(context_token)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    yield
-    # Shutdown: disconnect the gantry so the serial port is released cleanly
-    session = gantry.current_session()
-    if session is not None and session.connected:
-        logger.info("Shutting down — disconnecting gantry")
-        try:
-            session.disconnect()
-        except Exception as e:
-            logger.warning("Error disconnecting gantry on shutdown: %s", e)
+    try:
+        yield
+    finally:
+        # Shutdown: release cameras/manual devices even if no gantry session
+        # survives, then disconnect/reset the session itself.
+        session = gantry.current_session()
+        if session is not None and session.connected:
+            logger.info("Shutting down — disconnecting gantry")
+            try:
+                session.disconnect()
+            except Exception as e:
+                logger.warning("Error disconnecting gantry on shutdown: %s", e)
         instruments.reset_manual_instruments()
         gantry.reset_session()
 
@@ -146,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(system.router)
     app.include_router(runs.router)
+    app.include_router(station.router)
     app.include_router(fluid_states.router)
 
     if FRONTEND_DIST.is_dir():

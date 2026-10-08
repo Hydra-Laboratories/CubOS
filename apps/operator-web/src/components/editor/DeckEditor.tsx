@@ -46,6 +46,9 @@ function buildDeckResponse(
 ): DeckResponse {
   const previousByKey = new Map(previousDeck?.labware.map((item) => [item.key, item]));
   return {
+    ...(previousDeck?.motion_planning !== undefined
+      ? { motion_planning: structuredClone(previousDeck.motion_planning) }
+      : {}),
     filename,
     labware: Object.entries(labware).map(([key, config]) => ({
       ...previousByKey.get(key),
@@ -151,7 +154,12 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
     if (saveAsExists && normalized !== selectedFile && !(await confirmOverwrite(normalized))) return;
     setSaving(true);
     try {
-      await Promise.resolve(onSave(normalized, { labware }));
+      await Promise.resolve(onSave(normalized, {
+        labware,
+        ...(deck?.motion_planning != null
+          ? { motion_planning: structuredClone(deck.motion_planning) }
+          : {}),
+      }));
       onSelectFile(normalized);
       setSaveAs("");
       setSaveError(null);
@@ -262,7 +270,12 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
       ))}
 
       <RawYamlPanel
-        value={{ labware }}
+        value={{
+          ...(deck?.motion_planning !== undefined
+            ? { motion_planning: deck.motion_planning }
+            : {}),
+          labware,
+        }}
         onApply={(parsed) => {
           if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
             return "Top level must be a mapping with a `labware:` key.";
@@ -273,7 +286,13 @@ export default function DeckEditor({ configs, selectedFile, onSelectFile, onImpo
           }
           const next = lw as Record<string, LabwareConfig>;
           setLabware(next);
-          syncViz(next);
+          const response = buildDeckResponse(next, selectedFile ?? "unsaved", deck);
+          if (Object.prototype.hasOwnProperty.call(parsed, "motion_planning")) {
+            response.motion_planning = (parsed as { motion_planning?: unknown }).motion_planning as DeckResponse["motion_planning"];
+          } else {
+            delete response.motion_planning;
+          }
+          onLocalChange(response);
           return null;
         }}
       />

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -15,6 +16,7 @@ from cubos_api.models.runs import RunEvent, RunRecord
 INPUT_ARTIFACTS = ("gantry.yaml", "deck.yaml", "protocol.yaml")
 OUTPUT_ARTIFACTS = ("result.json", "error.txt", "events.jsonl", "run.json")
 ALLOWED_ARTIFACTS = frozenset((*INPUT_ARTIFACTS, *OUTPUT_ARTIFACTS))
+MEASUREMENT_ARTIFACT = re.compile(r"^measurement-\d+-(?:image_path|annotated_preview_path)\.(?:png|tif|tiff|jpg|jpeg|webp)$")
 
 
 def sha256_text(text: str) -> str:
@@ -41,6 +43,7 @@ class RunStore:
         # events.jsonl remains the source of truth.
         self._sequence_cache: dict[str, int] = {}
         self._sequence_lock = threading.Lock()
+        self._artifact_lock = threading.RLock()
 
     def run_dir(self, run_id: str) -> Path:
         return self.base_dir / run_id
@@ -109,6 +112,7 @@ class RunStore:
         message: str,
         kind: str = "lifecycle",
         data: dict[str, Any] | None = None,
+        timestamp: float | None = None,
     ) -> RunEvent:
         path = self.run_dir(run_id) / "events.jsonl"
         # Sequence assignment and the append share one lock: the step
@@ -117,7 +121,7 @@ class RunStore:
         with self._sequence_lock:
             event = RunEvent(
                 sequence=self._next_sequence(run_id),
-                timestamp=time.time(),
+                timestamp=time.time() if timestamp is None else timestamp,
                 state=state,
                 message=message,
                 kind=kind,
@@ -149,10 +153,64 @@ class RunStore:
             record.artifacts.append("error.txt")
 
     def artifact_path(self, run_id: str, name: str) -> Path | None:
-        if name not in ALLOWED_ARTIFACTS:
+        if (
+            name not in ALLOWED_ARTIFACTS
+            and MEASUREMENT_ARTIFACT.fullmatch(name) is None
+        ):
             return None
         path = self.run_dir(run_id) / name
         return path if path.is_file() else None
+
+    def collect_measurement_evidence(self, record: RunRecord, result: Any, *, allowed_root: Path) -> None:
+        """Preserve images from native measurements as addressable run evidence."""
+        roots = allowed_root.expanduser().resolve()
+        evidence = []
+        seen: dict[Path, tuple[str, str]] = {}
+        def collect(value: Any, result_path: str) -> None:
+            if isinstance(value, list):
+                for index, item in enumerate(value):
+                    collect(item, f"{result_path}.{index}" if result_path else str(index))
+            elif isinstance(value, dict):
+                for field in ("image_path", "annotated_preview_path"):
+                    source_text = value.get(field)
+                    if not isinstance(source_text, str) or not source_text:
+                        continue
+                    source = Path(source_text).expanduser().resolve()
+                    try:
+                        source.relative_to(roots)
+                    except ValueError as exc:
+                        raise ValueError("Measurement evidence is outside the configured image root") from exc
+                    if not source.is_file():
+                        raise FileNotFoundError(f"Measurement evidence is missing: {source.name}")
+                    if source not in seen:
+                        payload = source.read_bytes()
+                        digest = hashlib.sha256(payload).hexdigest()
+                        frame_metadata = value.get("frame_metadata")
+                        expected = frame_metadata.get("image_sha256") if isinstance(frame_metadata, dict) else None
+                        if field == "image_path" and expected is not None and expected != digest:
+                            raise ValueError("Measurement image no longer matches its capture digest")
+                        suffix = source.suffix.lower()
+                        if suffix not in {".png", ".tif", ".tiff", ".jpg", ".jpeg", ".webp"}:
+                            raise ValueError("Unsupported measurement image format")
+                        name = f"measurement-{len(seen)}-{field}{suffix}"
+                        destination = self.run_dir(record.run_id) / name
+                        if destination.exists():
+                            raise FileExistsError("Immutable measurement artifact already exists")
+                        temporary = destination.with_suffix(destination.suffix + ".tmp")
+                        temporary.write_bytes(payload)
+                        temporary.replace(destination)
+                        destination.chmod(0o444)
+                        seen[source] = (name, digest)
+                        record.artifacts.append(name)
+                    name, digest = seen[source]
+                    evidence.append({"result_path": result_path, "field": field, "artifact": name,
+                                     "sha256": digest, "source_path": source_text})
+                for key, item in value.items():
+                    if isinstance(item, (dict, list)):
+                        collect(item, f"{result_path}.{key}" if result_path else str(key))
+        with self._artifact_lock:
+            collect(result, "")
+            record.metadata["evidence_artifacts"] = evidence
 
     def incomplete_records(self) -> Iterable[RunRecord]:
         for path in self.base_dir.glob("*/run.json"):

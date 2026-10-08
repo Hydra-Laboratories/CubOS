@@ -1,0 +1,16 @@
+labware:
+  plate:
+    load_name: sbs_96_wellplate
+    name: cubxl_deck_example_plate
+    model_name: cubxl_deck_example_plate
+    calibration:
+      a1:
+        x: 120.0
+        y: 65.0
+        z: 30.0
+      a2:
+        x: 129.0
+        y: 65.0
+        z: 30.0
+    x_offset: 9.0
+    y_offset: 9.0

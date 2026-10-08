@@ -1,0 +1,11 @@
+# Capture the secret target in A1 before running the candidate campaign.
+# Copy the returned Lab triplet into reference_lab in the candidate protocol.
+protocol:
+  - move:
+      instrument: camera
+      position: plate.A1
+  - measure_color:
+      instrument: camera
+      position: plate.A1
+      label: color_target
+      roi_fraction: 0.5

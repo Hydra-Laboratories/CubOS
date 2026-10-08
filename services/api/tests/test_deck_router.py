@@ -172,6 +172,67 @@ labware:
     assert plate["y_offset"] == 9.0
 
 
+def test_get_and_put_deck_preserve_motion_metadata(monkeypatch, tmp_path: Path):
+    config_dir = tmp_path / "configs"
+    deck_dir = config_dir / "deck"
+    deck_dir.mkdir(parents=True)
+    metadata = {"clearance_mm": 2.0}
+    labware_motion = {
+        "box": {
+            "anchor": "A1",
+            "offset": {"x": -4.0, "y": -3.0, "z": 0.0},
+            "size": {"x": 20.0, "y": 30.0, "z": 10.0},
+        },
+        "occupied_tip_radius_mm": 4.5,
+        "access": {"transfer": {"strategy": "vertical"}},
+    }
+    deck_path = deck_dir / "routed.yaml"
+    deck_path.write_text(
+        """\
+motion_planning:
+  clearance_mm: 2.0
+labware:
+  plate:
+    type: well_plate
+    name: Routed Plate
+    model_name: sbs_96_wellplate
+    rows: 2
+    columns: 2
+    calibration:
+      a1: {x: 10.0, y: 20.0, z: 30.0}
+      a2: {x: 19.0, y: 20.0, z: 30.0}
+    x_offset: 9.0
+    y_offset: 9.0
+    motion:
+      box:
+        anchor: A1
+        offset: {x: -4.0, y: -3.0, z: 0.0}
+        size: {x: 20.0, y: 30.0, z: 10.0}
+      occupied_tip_radius_mm: 4.5
+      access:
+        transfer: {strategy: vertical}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(get_settings(), "config_dir", config_dir)
+    app = create_app()
+
+    response = api_request(app, "GET", "/api/v1/deck/routed.yaml")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["motion_planning"] == metadata
+    assert payload["labware"][0]["config"]["motion"] == labware_motion
+
+    saved = api_request(app, "PUT", "/api/v1/deck/routed.yaml", json={
+        "motion_planning": metadata,
+        "labware": {"plate": payload["labware"][0]["config"]},
+    })
+    assert saved.status_code == 200
+    assert saved.json()["motion_planning"] == metadata
+    assert saved.json()["labware"][0]["config"]["motion"] == labware_motion
+    assert "motion_planning" in deck_path.read_text(encoding="utf-8")
+
+
 def test_get_deck_uses_public_resolve_load_names(monkeypatch, tmp_path: Path):
     config_dir = tmp_path / "configs"
     deck_dir = config_dir / "deck"

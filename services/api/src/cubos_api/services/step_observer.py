@@ -12,6 +12,7 @@ architecture-boundary test enforces that direction.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 from cubos_api.models.runs import StepEventData
@@ -122,6 +123,33 @@ class RunStoreStepObserver:
             substep=substep,
             outcome="skipped",
             reason=reason,
+        )
+
+    def photo_pause_completed(
+        self,
+        *,
+        index: int,
+        command: str,
+        substep: Optional[str],
+        seconds: float,
+        capture_hold_seconds: float,
+        well: str,
+    ) -> None:
+        event_time = time.time()
+        self._store.append_event(
+            self._run_id,
+            state="running",
+            message=f"photo pose settled for {well}",
+            kind="photo_pause",
+            data={
+                "capture_still": True,
+                "wait_completed": True,
+                "settle_ms": round(seconds * 1000),
+                "stable_until_server_time": event_time + capture_hold_seconds,
+                "well": well,
+                "step_index": index,
+            },
+            timestamp=event_time,
         )
 
 

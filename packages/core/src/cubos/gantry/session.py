@@ -215,6 +215,31 @@ class GantrySession:
 
         return self.position()
 
+    def recover_critical_alarm(self, config_path: str | Path) -> GantryPositionSnapshot:
+        """Recover a disconnected controller without publishing a motion session."""
+        if not self._lock.acquire(blocking=False):
+            raise GantrySessionError("Gantry operation is busy")
+        try:
+            if self._gantry is not None:
+                raise GantrySessionError("Disconnect the owned gantry session before recovery")
+            config = self._load_config_from_yaml(config_path)
+            port = str(config.get("serial_port") or "")
+            if not port:
+                raise GantrySessionError("Critical-alarm recovery requires a configured serial port")
+            staged = self._gantry_factory(config=self._runtime_connect_config(config))
+            banner = staged.recover_critical_alarm(port)
+            self._last_position = None
+            return GantryPositionSnapshot(
+                connected=False,
+                status=f"{banner}: reset verified; disconnected. Alarm, homing and frame unverified",
+                calibration_warning=(
+                    "Soft reset clears modal and G92 state. EEPROM calibration is retained; "
+                    "verify WCO and position before separate unlock or motion."
+                ),
+            )
+        finally:
+            self._lock.release()
+
     def disconnect(self) -> GantryPositionSnapshot:
         if self._gantry is None:
             return GantryPositionSnapshot(connected=False, status="Disconnected")
@@ -266,6 +291,66 @@ class GantrySession:
                 self._calibration_pending_config = None
             self._connected_gantry_config = copy.deepcopy(config)
             self._gantry.config = self._runtime_connect_config(config)
+
+    def apply_camera_alignment_config(
+        self,
+        filename: str,
+        *,
+        expected_work_position: tuple[float, float, float],
+        config: dict[str, Any],
+        persist: Callable[[], None],
+    ) -> GantryPositionSnapshot:
+        """Persist and publish a camera-offset edit while manual motion is locked."""
+        if not self._lock.acquire(blocking=False):
+            raise GantrySessionError(
+                "The gantry is busy; camera alignment was not saved."
+            )
+        try:
+            if self._gantry is None:
+                raise GantryNotConnectedError("Gantry is not connected")
+            if self._connected_gantry_filename != filename:
+                raise GantrySessionError(
+                    f"Connected gantry config changed to "
+                    f"{self._connected_gantry_filename!r}; camera alignment was not saved."
+                )
+            if self.calibration_active:
+                raise CalibrationBlockedError(
+                    "Finish gantry calibration before saving camera alignment."
+                )
+            snapshot = self._read_position_locked()
+            observed = (snapshot.work_x, snapshot.work_y, snapshot.work_z)
+            if (
+                snapshot.status != "Idle"
+                and not snapshot.status.startswith("<Idle|")
+            ):
+                raise GantrySessionError(
+                    f"Camera alignment requires an Idle controller; observed "
+                    f"{snapshot.status!r}."
+                )
+            if any(value is None for value in observed) or tuple(
+                float(value) for value in observed
+            ) != expected_work_position:
+                raise GantrySessionError(
+                    "The gantry position changed after camera alignment preview; "
+                    "camera alignment was not saved."
+                )
+            persist()
+            self._connected_gantry_config = copy.deepcopy(config)
+            self._gantry.config = self._runtime_connect_config(config)
+            return snapshot
+        finally:
+            self._lock.release()
+
+    def coordinate_frame(self) -> dict[str, Any]:
+        """Read a fresh frame exclusively; a busy protocol must not be interleaved."""
+        if not self._lock.acquire(blocking=False):
+            raise GantrySessionError("Gantry operation is busy")
+        try:
+            if self._gantry is None:
+                raise GantryNotConnectedError("Gantry is not connected")
+            return self._gantry.coordinate_frame()
+        finally:
+            self._lock.release()
 
     def position(self) -> GantryPositionSnapshot:
         if self._gantry is None:
@@ -714,7 +799,19 @@ class GantrySession:
                     fluid_state_id=fluid_state_id,
                     step_observer=step_observer,
                 )
-                gantry.prepare_for_protocol_run()
+                planning_enabled = (
+                    getattr(getattr(context, "deck", None), "planning_enabled", False)
+                    is True
+                )
+                if planning_enabled:
+                    status = gantry.get_status()
+                    if status != "Idle" and not status.startswith("<Idle|"):
+                        raise GantrySessionHealthCheckError(
+                            "Planning-enabled execution requires an Idle controller; "
+                            f"observed {status!r}. No motion was attempted."
+                        )
+                else:
+                    gantry.prepare_for_protocol_run()
                 context.gantry.connect_instruments()
                 if not gantry.is_healthy():
                     raise GantrySessionHealthCheckError(

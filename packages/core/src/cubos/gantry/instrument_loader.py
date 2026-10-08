@@ -137,6 +137,7 @@ def build_instrumented_gantry(
     expected_grbl_settings: dict[str, float] | None = None,
     mock_mode: bool = False,
     safe_z: float | None = None,
+    motion_envelopes: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> InstrumentedGantry:
     """Build an InstrumentedGantry from parsed instrument config entries."""
     return InstrumentedGantry(
@@ -147,6 +148,7 @@ def build_instrumented_gantry(
         ),
         expected_grbl_settings=expected_grbl_settings,
         safe_z=safe_z,
+        motion_envelopes=motion_envelopes,
     )
 
 
@@ -164,12 +166,14 @@ def load_instrumented_gantry_from_config(
         )
     expected_grbl_settings = getattr(config, "expected_grbl_settings", None)
     safe_z = getattr(config, "resolved_safe_z", None)
+    motion_envelopes = getattr(config, "motion_envelopes", None)
     return build_instrumented_gantry(
         instrument_configs,
         gantry,
         expected_grbl_settings=expected_grbl_settings,
         mock_mode=mock_mode,
         safe_z=safe_z,
+        motion_envelopes=motion_envelopes,
     )
 
 

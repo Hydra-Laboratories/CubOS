@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Union
+from typing import Any, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -57,6 +57,10 @@ class Labware(BaseModel):
     geometry: BoundingBoxGeometry = Field(
         default_factory=BoundingBoxGeometry,
         description="Shared geometry metadata for this labware.",
+    )
+    motion: dict[str, Any] | None = Field(
+        default=None,
+        description="Opt-in resolved collision geometry and operation access policy.",
     )
 
     @staticmethod

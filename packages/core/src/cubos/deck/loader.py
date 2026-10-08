@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Type
+import math
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -92,6 +93,70 @@ def _point_to_coord(p: _YamlPoint3D, z_value: float | None = None) -> Coordinate
     return Coordinate3D(x=p.x, y=p.y, z=z)
 
 
+def _resolved_motion(entry: BaseModel) -> dict[str, Any] | None:
+    """Resolve an entry's local A1-frame box into deck-frame bounds."""
+    motion = getattr(entry, "motion", None)
+    if motion is None:
+        return None
+    box = motion.box
+    if box.anchor == "A1":
+        a1 = getattr(entry, "a1_point", None)
+        calibration = getattr(entry, "calibration", None)
+        if a1 is None or calibration is None or a1.z is None:
+            raise ValueError(
+                f"Labware {getattr(entry, 'name', '<unknown>')!r} uses motion "
+                "anchor A1 but does not provide complete calibration.a1/a2."
+            )
+        a2 = calibration.a2
+        dx = float(a2.x - a1.x)
+        dy = float(a2.y - a1.y)
+        magnitude = math.hypot(dx, dy)
+        if magnitude <= 0:
+            raise ValueError("motion box A1/A2 orientation cannot be zero-length.")
+        ux, uy = dx / magnitude, dy / magnitude
+        if not (
+            (abs(abs(ux) - 1.0) < 1e-9 and abs(uy) < 1e-9)
+            or (abs(abs(uy) - 1.0) < 1e-9 and abs(ux) < 1e-9)
+        ):
+            raise ValueError("motion box A1/A2 orientation must be axis-aligned for v1.")
+        vx, vy = -uy, ux
+    else:
+        a1 = getattr(entry, "location", None)
+        if a1 is None:
+            a1 = getattr(entry, "corner_1", None)
+        if a1 is None or a1.z is None:
+            raise ValueError(
+                f"Labware {getattr(entry, 'name', '<unknown>')!r} uses motion "
+                "anchor location but does not provide a complete XYZ location."
+            )
+        ux, uy, vx, vy = 1.0, 0.0, 0.0, 1.0
+    ox, oy, oz = box.offset.x, box.offset.y, box.offset.z
+    sx, sy, sz = box.size.x, box.size.y, box.size.z
+    corners_xy = [
+        (
+            a1.x + ux * local_x + vx * local_y,
+            a1.y + uy * local_x + vy * local_y,
+        )
+        for local_x in (ox, ox + sx)
+        for local_y in (oy, oy + sy)
+    ]
+    resolved = motion.model_dump()
+    resolved["resolved_box"] = {
+        "min": {
+            "x": min(x for x, _ in corners_xy),
+            "y": min(y for _, y in corners_xy),
+            "z": a1.z + oz,
+        },
+        "max": {
+            "x": max(x for x, _ in corners_xy),
+            "y": max(y for _, y in corners_xy),
+            "z": a1.z + oz + sz,
+        },
+    }
+    resolved["basis"] = {"x": {"x": ux, "y": uy}, "y": {"x": vx, "y": vy}}
+    return resolved
+
+
 def _resolve_user_z(
     explicit_z: float | None,
     *,
@@ -126,6 +191,8 @@ def _entry_kwargs_for_model(entry: BaseModel, model_class: Type[BaseModel]) -> D
     """
     allowed = set(model_class.model_fields.keys())
     raw = entry.model_dump(exclude_none=True)
+    if "motion" in allowed:
+        raw["motion"] = _resolved_motion(entry)
     return {k: v for k, v in raw.items() if k in allowed}
 
 
@@ -464,6 +531,7 @@ def _build_vial_grid(
         columns=entry.columns,
         vials=vials,
         aliases=dict(entry.aliases),
+        motion=_resolved_motion(entry),
     )
 
 
@@ -623,6 +691,7 @@ def _build_deck_from_raw(raw: dict[str, Any], *, factory_z_travel_mm: float | No
                 name=entry.name,
                 corner_1=Coordinate3D(x=entry.corner_1.x, y=entry.corner_1.y, z=entry.corner_1.z),
                 corner_2=Coordinate3D(x=entry.corner_2.x, y=entry.corner_2.y, z=entry.corner_2.z),
+                motion=_resolved_motion(entry),
             )
         elif isinstance(entry, WellPlateHolderYamlEntry):
             holder = _build_holder(
@@ -681,6 +750,10 @@ def _build_deck_from_raw(raw: dict[str, Any], *, factory_z_travel_mm: float | No
         labware,
         volume_labware=volume_labware,
         target_aliases=target_aliases,
+        motion_planning=(
+            schema.motion_planning.model_dump()
+            if schema.motion_planning is not None else None
+        ),
     )
 
 

@@ -1,0 +1,16 @@
+serial_port: /dev/ttyUSB0
+gantry_type: cub
+origin_policy: home_origin
+cnc:
+  factory_z_travel_mm: 80
+  safe_z: 0
+  y_axis_motion: bed
+  default_feed_rate_mm_min: 300
+working_volume:
+  x_min: -298
+  x_max: 0
+  y_min: -198
+  y_max: 0
+  z_min: -78
+  z_max: 0
+instruments: {}

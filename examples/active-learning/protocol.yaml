@@ -1,0 +1,6 @@
+protocol:
+  - measure:
+      instrument: film
+      position: sample
+      measurement_height: 0
+      method: measure

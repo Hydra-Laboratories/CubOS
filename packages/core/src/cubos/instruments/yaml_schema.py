@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 _RELOCATED_HEIGHT_FIELDS = {
@@ -19,6 +21,37 @@ _RELOCATED_HEIGHT_FIELDS = {
         "gantry YAML to the protocol step."
     ),
 }
+
+
+class MotionVector3Yaml(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    x: float
+    y: float
+    z: float
+
+
+class MotionBoxYaml(BaseModel):
+    """Tool box relative to the instrument's calibrated bare TCP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offset: MotionVector3Yaml
+    size: MotionVector3Yaml
+
+    @model_validator(mode="after")
+    def _validate_positive_size(self) -> "MotionBoxYaml":
+        if self.size.x <= 0 or self.size.y <= 0 or self.size.z <= 0:
+            raise ValueError("motion_envelope.box size x/y/z must all be positive.")
+        return self
+
+
+class ToolMotionEnvelopeYaml(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    box: MotionBoxYaml
+    additional_boxes: List[MotionBoxYaml] = Field(default_factory=list)
+    attached_tip_radius_mm: Optional[float] = Field(default=None, gt=0)
 
 
 class InstrumentYamlEntry(BaseModel):
@@ -50,6 +83,7 @@ class InstrumentYamlEntry(BaseModel):
     offset_x: float = 0.0
     offset_y: float = 0.0
     depth: float = 0.0
+    motion_envelope: Optional[ToolMotionEnvelopeYaml] = None
 
     @model_validator(mode="before")
     @classmethod

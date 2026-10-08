@@ -1,5 +1,6 @@
 """Tests for the FLIR and OpenCV camera vendors (offline + hardware paths)."""
 
+import hashlib
 import struct
 import sys
 from types import SimpleNamespace
@@ -12,10 +13,18 @@ from cubos.instruments.camera.exceptions import (
     CameraConnectionError,
 )
 from cubos.instruments.camera.interface import CameraInstrument
+from cubos.instruments.camera.frame_broker import reset_frame_brokers
 from cubos.instruments.camera.placeholder import write_placeholder_png
 from cubos.instruments.camera.vendors.flir import FlirCamera
 from cubos.instruments.camera.vendors.opencv import OpenCVCamera
 from cubos.instruments.registry import get_instrument_class
+
+
+@pytest.fixture(autouse=True)
+def _reset_opencv_frame_brokers():
+    reset_frame_brokers()
+    yield
+    reset_frame_brokers()
 
 
 def _assert_valid_png(path):
@@ -221,6 +230,12 @@ class FakeCv2:
     COLOR_RGB2BGR = 4
     CAP_PROP_FRAME_WIDTH = 3
     CAP_PROP_FRAME_HEIGHT = 4
+    CAP_PROP_FOURCC = 6
+    CAP_PROP_BRIGHTNESS = 10
+    CAP_PROP_EXPOSURE = 15
+    CAP_PROP_WB_TEMPERATURE = 45
+    CAP_PROP_AUTO_WB = 44
+    CAP_PROP_FOCUS = 28
 
     def __init__(self, capture_factory=None):
         self.written = {}
@@ -235,6 +250,13 @@ class FakeCv2:
         Path(path).write_bytes(b"fake-image")
         self.written[path] = image
         return True
+
+    def imencode(self, extension, image):
+        return True, bytearray(b"fake-jpeg")
+
+    @staticmethod
+    def VideoWriter_fourcc(*characters):
+        return 1196444237
 
     def VideoCapture(self, index):
         return self.capture_factory(index)
@@ -252,6 +274,10 @@ class FakeVideoCapture:
 
     def set(self, prop, value):
         self.props[prop] = value
+        return True
+
+    def get(self, prop):
+        return self.props.get(prop, 0.0)
 
     def read(self):
         if self.frame is None:
@@ -260,6 +286,33 @@ class FakeVideoCapture:
 
     def release(self):
         self.released = True
+
+
+class FakeAutoExposureCv2(FakeCv2):
+    CAP_PROP_AUTO_EXPOSURE = 21
+
+
+class RejectingVideoCapture(FakeVideoCapture):
+    def __init__(self, rejected, readback=None, **kwargs):
+        super().__init__(**kwargs)
+        self.rejected = rejected
+        self.readback = readback or {}
+        self.attempts = []
+
+    def set(self, prop, value):
+        self.attempts.append((prop, value))
+        if (prop, value) in self.rejected:
+            return False
+        return super().set(prop, value)
+
+    def get(self, prop):
+        if prop in self.readback:
+            return self.readback[prop]
+        return super().get(prop)
+
+
+class FakeArrayFrame:
+    shape = (600, 800, 3)
 
 
 class TestFlirHardwarePath:
@@ -572,14 +625,256 @@ class TestOpenCVHardwarePath:
         camera = OpenCVCamera(camera_id=2, offline=False)
         camera.connect()
         assert camera.health_check() is True
-        assert capture.props == {FakeCv2.CAP_PROP_FRAME_WIDTH: 1280,
-                                 FakeCv2.CAP_PROP_FRAME_HEIGHT: 720}
+        assert capture.props == {
+            FakeCv2.CAP_PROP_FRAME_WIDTH: 1280,
+            FakeCv2.CAP_PROP_FRAME_HEIGHT: 720,
+        }
         saved = camera.capture(save_path=str(tmp_path / "web.png"))
         assert (tmp_path / "web.png").read_bytes() == b"fake-image"
         assert saved == str(tmp_path / "web.png")
         camera.disconnect()
         assert capture.released is True
         assert camera.health_check() is False
+
+    def test_explicit_pixel_format_is_applied_before_resolution(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture()
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, pixel_format="MJPG", offline=False)
+
+        camera.connect()
+
+        assert capture.props[FakeCv2.CAP_PROP_FOURCC] == 1196444237
+        camera.disconnect()
+
+    @pytest.mark.parametrize("pixel_format", ["MJPEG", "ÅBC1"])
+    def test_invalid_pixel_format_is_rejected(self, pixel_format):
+        with pytest.raises(ValueError, match="four-character ASCII"):
+            OpenCVCamera(camera_id=0, pixel_format=pixel_format, offline=False)
+
+    def test_configured_unsupported_control_is_reported_without_probe(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(
+            camera_id=0,
+            unsupported_controls="focus",
+            offline=False,
+        )
+        camera.connect()
+
+        status = camera.control_status()
+
+        assert status["focus"] == {
+            "supported": False,
+            "value": None,
+            "error": "Configured as unsupported for this camera",
+        }
+        assert status["brightness"]["supported"] is None
+        camera.disconnect()
+
+    def test_unknown_unsupported_control_config_is_rejected(self):
+        with pytest.raises(ValueError, match="unknown names"):
+            OpenCVCamera(unsupported_controls="zoom", offline=False)
+
+    def test_instances_share_one_capture_and_last_disconnect_releases_it(
+        self, monkeypatch,
+    ):
+        captures = []
+
+        def factory(index):
+            capture = FakeVideoCapture(frame=FakeArrayFrame())
+            captures.append(capture)
+            return capture
+
+        monkeypatch.setitem(sys.modules, "cv2", FakeCv2(capture_factory=factory))
+        monitor = OpenCVCamera(camera_id=0, offline=False)
+        protocol = OpenCVCamera(camera_id=0, offline=False)
+
+        monitor.connect()
+        protocol.connect()
+        monitor.latest_frame(timeout_s=0.5)
+
+        assert len(captures) == 1
+        monitor.disconnect()
+        assert captures[0].released is False
+        protocol.disconnect()
+        assert captures[0].released is True
+
+    def test_auto_detect_reuses_the_only_active_opencv_device_without_probe(
+        self, monkeypatch,
+    ):
+        captures = []
+
+        def factory(index):
+            capture = FakeVideoCapture(frame=FakeArrayFrame())
+            captures.append((index, capture))
+            return capture
+
+        monkeypatch.setitem(sys.modules, "cv2", FakeCv2(capture_factory=factory))
+        explicit = OpenCVCamera(camera_id=0, offline=False)
+        automatic = OpenCVCamera(camera_id=-1, offline=False)
+
+        explicit.connect()
+        automatic.connect()
+
+        assert automatic.camera_id == 0
+        assert len(captures) == 1
+        automatic.disconnect()
+        explicit.disconnect()
+
+    def test_saved_frame_metadata_uses_actual_frame_shape_and_profile(
+        self, monkeypatch, tmp_path,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(
+            camera_id=0,
+            resolution_width=1280,
+            resolution_height=720,
+            pixel_format="MJPG",
+            offline=False,
+        )
+        camera.connect()
+
+        camera.capture(save_path=str(tmp_path / "frame.tiff"))
+        metadata = camera.last_frame_metadata()
+
+        assert metadata["width"] == 800
+        assert metadata["height"] == 600
+        assert metadata["received_at"] > 0
+        assert metadata["capture_profile"]["actual_resolution"] == {
+            "width": 800,
+            "height": 600,
+        }
+        assert metadata["capture_profile"]["actual_pixel_format"] == "MJPG"
+        assert metadata["image_sha256"] == hashlib.sha256(b"fake-image").hexdigest()
+        camera.disconnect()
+
+    def test_control_update_waits_for_frame_with_new_configuration(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+        before = camera.latest_frame(timeout_s=0.5)
+
+        status = camera.set_controls({"brightness": 12.0})
+        after = camera.latest_frame()
+
+        assert status["brightness"]["value"] == 12.0
+        assert after.frame_id > before.frame_id
+        assert after.configuration_revision > before.configuration_revision
+        assert camera.control_fingerprint()["controls"]["brightness"]["value"] == 12.0
+        camera.disconnect()
+
+    def test_auto_white_balance_is_enabled_without_manual_temperature_override(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        status = camera.set_controls({"auto_white_balance": True})
+
+        assert capture.props[FakeCv2.CAP_PROP_AUTO_WB] == 1.0
+        assert FakeCv2.CAP_PROP_WB_TEMPERATURE not in capture.props
+        assert status["auto_white_balance"] == {
+            "supported": True,
+            "value": 1.0,
+            "error": None,
+        }
+        camera.disconnect()
+
+    def test_auto_white_balance_rejects_manual_temperature_in_same_update(
+        self, monkeypatch,
+    ):
+        capture = FakeVideoCapture(frame=FakeArrayFrame())
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        with pytest.raises(CameraCaptureError, match="Cannot set white_balance"):
+            camera.set_controls(
+                {"auto_white_balance": True, "white_balance": 4600.0}
+            )
+
+        camera.disconnect()
+
+    def test_manual_exposure_falls_back_to_v4l2_menu_value(self, monkeypatch):
+        capture = RejectingVideoCapture(
+            rejected={(FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE, 0.25)},
+            frame=FakeArrayFrame(),
+        )
+        cv2 = FakeAutoExposureCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        status = camera.set_controls({"exposure": 1500.0})
+
+        assert status["exposure"] == {
+            "supported": True,
+            "value": 1500.0,
+            "error": None,
+        }
+        assert capture.props[FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE] == 1.0
+        assert capture.attempts[-3:] == [
+            (FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
+            (FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE, 1.0),
+            (FakeAutoExposureCv2.CAP_PROP_EXPOSURE, 1500.0),
+        ]
+        camera.disconnect()
+
+    def test_manual_exposure_rejected_by_every_candidate(self, monkeypatch):
+        capture = RejectingVideoCapture(
+            rejected={
+                (FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE, 0.25),
+                (FakeAutoExposureCv2.CAP_PROP_AUTO_EXPOSURE, 1.0),
+            },
+            frame=FakeArrayFrame(),
+        )
+        cv2 = FakeAutoExposureCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        status = camera.set_controls({"exposure": 1500.0})
+
+        assert status["exposure"]["supported"] is False
+        assert status["exposure"]["error"] == (
+            "Camera rejected manual mode for this control"
+        )
+        camera.disconnect()
+
+    def test_control_readback_mismatch_is_reported(self, monkeypatch):
+        capture = RejectingVideoCapture(
+            rejected=set(),
+            readback={FakeCv2.CAP_PROP_BRIGHTNESS: 8.0},
+            frame=FakeArrayFrame(),
+        )
+        cv2 = FakeCv2(capture_factory=lambda index: capture)
+        monkeypatch.setitem(sys.modules, "cv2", cv2)
+        camera = OpenCVCamera(camera_id=0, offline=False)
+        camera.connect()
+
+        status = camera.set_controls({"brightness": 12.0})
+
+        assert status["brightness"]["supported"] is False
+        assert status["brightness"]["error"] == (
+            "Camera reports 8 after requesting 12"
+        )
+        camera.disconnect()
 
     def test_auto_detect_scans_indexes(self, monkeypatch):
         captures = {0: FakeVideoCapture(opened=False), 1: FakeVideoCapture()}
@@ -610,5 +905,8 @@ class TestOpenCVHardwarePath:
         monkeypatch.setitem(sys.modules, "cv2", cv2)
         camera = OpenCVCamera(camera_id=0, offline=False)
         camera.connect()
-        with pytest.raises(CameraCaptureError, match="Failed to capture"):
-            camera.capture(save_path=str(tmp_path / "x.png"))
+        try:
+            with pytest.raises(CameraCaptureError, match="Failed to capture"):
+                camera.capture(save_path=str(tmp_path / "x.png"))
+        finally:
+            camera.disconnect()

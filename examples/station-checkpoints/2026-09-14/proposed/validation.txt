@@ -1,0 +1,56 @@
+------------------------------------------------------------
+Protocol Setup Validation
+------------------------------------------------------------
+
+[1/4] Loading gantry config...
+  OK: examples/station-checkpoints/2026-09-14/live-configs/gantry/picus1000_routing_review.yaml
+  Gantry type: cub
+  Working volume: X[0.0, 258.205]  Y[0.0, 144.645]  Z[10.5, 66.5]
+
+[2/4] Loading deck config...
+  OK: examples/station-checkpoints/2026-09-14/live-configs/deck/cub_deck.yaml
+  Labware (4):
+    plate: well_plate (96 wells)
+    stocks: VialGrid
+    tips: TipRack
+    waste: vial at (230.0, 129.0, 60.0)
+
+[3/4] Loading instruments...
+  OK: examples/station-checkpoints/2026-09-14/live-configs/gantry/picus1000_routing_review.yaml (offline/mock - hardware not contacted)
+  Instruments (2):
+    pipette: offset=(0.0, 0.0), depth=-70.0
+    camera: offset=(0.0, -46.5), depth=-114.964
+
+[4/4] Loading protocol...
+  OK: examples/station-checkpoints/2026-09-14/proposed/03_routing_side_exit_with_photos.yaml
+  Steps: 16
+    [0] pick_up_tip(position='tips.A1')
+    [1] transfer(source='stocks.A1', destination='plate.A1', volume_ul=100.0, source_height=-20.0)
+    [2] move(instrument='camera', position='plate.A1')
+    [3] capture(instrument='camera', label='A1_after_dispense_1', position='plate.A1')
+    [4] drop_tip(position='waste')
+    [5] pick_up_tip(position='tips.A2')
+    [6] transfer(source='stocks.A2', destination='plate.A1', volume_ul=100.0, source_height=-20.0)
+    [7] move(instrument='camera', position='plate.A1')
+    [8] capture(instrument='camera', label='A1_after_dispense_2', position='plate.A1')
+    [9] drop_tip(position='waste')
+    [10] pick_up_tip(position='tips.A3')
+    [11] transfer(source='stocks.A3', destination='plate.A1', volume_ul=100.0, source_height=-20.0)
+    [12] move(instrument='camera', position='plate.A1')
+    [13] capture(instrument='camera', label='A1_after_dispense_3', position='plate.A1')
+    [14] mix(position='plate.A1', volume_ul=60.0, cycles=3, height=-3.0)
+    [15] drop_tip(position='waste')
+
+Validating protocol motion bounds...
+  OK (35 protocol target(s) checked)
+
+Validating protocol semantics...
+  OK
+
+Validating collision-aware motion plans...
+  OK (34 immutable plan(s), nominal initial carriage pose=(258.205, 144.645, 66.5))
+
+------------------------------------------------------------
+RESULT: PASS - protocol motion targets within gantry bounds
+Protocol is ready to run.
+------------------------------------------------------------

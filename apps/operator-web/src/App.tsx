@@ -1,8 +1,9 @@
 import React, { useRef, useState, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import AppLayout from "./components/layout/AppLayout";
 import DeckVisualization from "./components/deck/DeckVisualization";
 import GantryPositionWidget from "./components/gantry/GantryPositionWidget";
+import CameraAlignmentPanel from "./components/gantry/CameraAlignmentPanel";
 import EditorTabs from "./components/editor/EditorTabs";
 import DeckEditor from "./components/editor/DeckEditor";
 import GantryEditor from "./components/editor/GantryEditor";
@@ -100,10 +101,11 @@ const WORKING_DECK_FILENAME = "cub_deck.yaml";
 
 type SavedMark = { filename: string; at: Date } | null;
 
-export default function App() {
+function OperatorApp() {
   const qc = useQueryClient();
   const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
+  const [stationOpen, setStationOpen] = useState(true);
   const [uiTheme, setUiTheme] = useState<"light" | "dark">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const [configDir, setConfigDir] = useState<string | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
@@ -118,6 +120,7 @@ export default function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isCancelingRun, setIsCancelingRun] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [configNotices, setConfigNotices] = useState<{ gantry: string | null; deck: string | null; protocol: string | null }>({
     gantry: null,
     deck: null,
@@ -146,7 +149,10 @@ export default function App() {
   // Load the local config directory on mount.
   const restoreWorkspace = (dir: string) => {
     const saved = loadWorkspaceState(dir);
-    if (saved.activeTab) setActiveTab(saved.activeTab);
+    if (saved.activeTab) {
+      setActiveTab(["Gantry", "Deck", "Protocol"].includes(saved.activeTab) ? saved.activeTab : "Gantry");
+      setStationOpen(true);
+    }
     setGantryFile(saved.gantryFile);
     setDeckFile(saved.deckFile);
     setProtocolFile(saved.protocolFile);
@@ -157,11 +163,12 @@ export default function App() {
   React.useEffect(() => {
     settingsApi.get()
       .then((s) => {
+        setConnectionError(null);
         const dir = configDirFromSettings(s);
         setConfigDir(dir);
         restoreWorkspace(dir);
       })
-      .catch((err) => console.error("Failed to load settings:", err));
+      .catch((err) => setConnectionError(`Settings could not be loaded: ${errorMessage(err)}`));
   }, []);
 
   const applyConfigDir = async (selectedPath: string): Promise<boolean> => {
@@ -251,10 +258,67 @@ export default function App() {
   const validateProtocolSetup = useValidateProtocolSetup();
   const runStatus = useRunStatus();
   const serverRunActive = runStatus.data?.active ?? false;
+  const station = useQuery({
+    queryKey: ["station-status"],
+    queryFn: async () => {
+      const response = await fetch("/api/v1/station/status");
+      if (!response.ok) throw new Error("Could not read station ownership");
+      return response.json() as Promise<{ reserved: boolean; owner: string | null; active_run_id: string | null }>;
+    },
+    refetchInterval: 2000,
+    retry: false,
+  });
   const protocolRunActive = isRunning || serverRunActive;
+  const releaseReservation = async () => {
+    const owner = station.data?.owner;
+    if (!owner || !(await requestConfirm({
+      title: "Release station reservation?",
+      message: `Confirm that ${owner} has stopped and inspect the physical inventory before releasing this reservation. The external client will need to reserve the station again.`,
+      confirmLabel: "Release reservation",
+      danger: true,
+    }))) return;
+    try {
+      const response = await fetch("/api/v1/station/reservation/operator-release", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner, confirmation: `release ${owner}` }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      await station.refetch();
+    } catch (error) {
+      setRunError(`Reservation release failed: ${errorMessage(error)}`);
+    }
+  };
   const gantryPosition = useGantryPosition(true);
   const experimentData = useExperimentData();
   const fluidStates = useFluidStates();
+  const configConnectionErrors = [
+    connectionError,
+    gantryConfigs.isError ? `Gantry configs: ${errorMessage(gantryConfigs.error)}` : null,
+    deckConfigs.isError ? `Deck configs: ${errorMessage(deckConfigs.error)}` : null,
+    protocolConfigs.isError ? `Protocol configs: ${errorMessage(protocolConfigs.error)}` : null,
+    fluidStates.isError ? `Fluid states: ${errorMessage(fluidStates.error)}` : null,
+  ].filter((message): message is string => message !== null);
+  const retryOperatorConnection = async () => {
+    setConnectionError(null);
+    try {
+      const settings = await settingsApi.get();
+      const dir = configDirFromSettings(settings);
+      if (configDir === null) {
+        setConfigDir(dir);
+        restoreWorkspace(dir);
+      }
+      await Promise.all([
+        gantryConfigs.refetch(),
+        deckConfigs.refetch(),
+        protocolConfigs.refetch(),
+        gantryPosition.refetch(),
+        fluidStates.refetch(),
+      ]);
+    } catch (error) {
+      setConnectionError(`CubOS could not be reached: ${errorMessage(error)}`);
+    }
+  };
 
   // Local working copies of each editor's edits, kept in App state so
   // they survive tab switches (each editor unmounts on tab-away, which
@@ -461,7 +525,12 @@ export default function App() {
       );
       await saveDeck.mutateAsync({
         filename: WORKING_DECK_FILENAME,
-        body: { labware },
+        body: {
+          labware,
+          ...(importedDeck.motion_planning != null
+            ? { motion_planning: structuredClone(importedDeck.motion_planning) }
+            : {}),
+        },
       });
       setDeckFile(WORKING_DECK_FILENAME);
       setDeckImportedFrom(filename);
@@ -706,6 +775,12 @@ export default function App() {
         ))}
       </div>
       <div style={{ flex: "1 1 auto" }} />
+      {station.data?.reserved && (
+        <div style={runStatusBannerStyle} role="status">
+          <span>Reserved by {station.data.owner}</span>
+          <button type="button" style={{ ...theme.btn.secondary, ...theme.btnSmall }} disabled={protocolRunActive || Boolean(station.data.active_run_id)} onClick={() => void releaseReservation()}>Release reservation</button>
+        </div>
+      )}
       {protocolRunActive && (
         <div className="cubos-pulse" style={runStatusBannerStyle} role="status">
           <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
@@ -783,9 +858,22 @@ export default function App() {
     >
       {activeView === "Workflow" && (
         <>
+          {configConnectionErrors.length > 0 && (
+            <div style={{ ...theme.notice.error, marginBottom: 14 }} role="alert">
+              <strong>Could not load this CubOS workspace.</strong>
+              <div>The config lists below may be empty because the API request failed, not because your files are missing.</div>
+              {configConnectionErrors.map((message) => <div key={message} style={{ ...theme.mono, marginTop: 5 }}>{message}</div>)}
+              <button type="button" style={{ ...theme.btn.secondary, ...theme.btnSmall, marginTop: 9 }} onClick={() => void retryOperatorConnection()}>
+                Retry connection
+              </button>
+            </div>
+          )}
           <EditorTabs
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={(tab) => {
+            setActiveTab(tab);
+            setStationOpen(true);
+          }}
           dirtyTabs={unsavedConfigs}
           disabledTabs={!deckQuery.data || !gantryQuery.data ? ["Protocol"] : []}
           disabledMessage={(() => {
@@ -854,6 +942,33 @@ export default function App() {
           )}
           {configNotices.gantry && (
             <ConfigNotice message={configNotices.gantry} onDismiss={() => setConfigNotices((n) => ({ ...n, gantry: null }))} />
+          )}
+          {displayGantry && displayDeck && gantryFile && deckFile ? (
+            <CameraAlignmentPanel
+              key={`${gantryFile}:${deckFile}`}
+              gantryFile={gantryFile}
+              deckFile={deckFile}
+              gantry={displayGantry}
+              deck={displayDeck}
+              position={gantryPosition.data ?? null}
+              disabledReason={protocolRunActive
+                ? "Camera alignment is unavailable while a run is active."
+                : gantryDirty || deckDirty
+                  ? "Save or discard Gantry and Deck edits before aligning the camera."
+                  : !gantryPosition.data?.connected
+                    ? "Connect the selected gantry before calculating offsets."
+                    : gantryPosition.data.status !== "Idle" && !gantryPosition.data.status.startsWith("<Idle|")
+                      ? `Wait for the controller to become Idle before aligning; current status is ${gantryPosition.data.status}.`
+                    : null}
+              onSaved={() => {
+                qc.invalidateQueries({ queryKey: ["gantry", gantryFile] });
+                void gantryQuery.refetch();
+              }}
+            />
+          ) : (
+            <div style={{ ...theme.notice.warning, marginBottom: 16 }}>
+              Load a Gantry and Deck config to use camera XY alignment.
+            </div>
           )}
           <GantryEditor
             key={gantryQuery.data ? `loaded:${gantryQuery.data.filename}` : `selected:${gantryFile ?? "none"}`}
@@ -1057,6 +1172,8 @@ export default function App() {
         left={left}
         topRight={topRight}
         bottomRight={bottomRight}
+        stationOpen={stationOpen}
+        onStationOpenChange={setStationOpen}
       />
       {browseDialog && (
         <ConfigDirDialog
@@ -1069,6 +1186,10 @@ export default function App() {
       {confirmDialog}
     </>
   );
+}
+
+export default function App() {
+  return <OperatorApp />;
 }
 
 function ConfigNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {

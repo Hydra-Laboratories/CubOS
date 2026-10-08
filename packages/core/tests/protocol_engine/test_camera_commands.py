@@ -12,7 +12,7 @@ from cubos.deck.labware.labware import Coordinate3D
 from cubos.instruments.camera.exceptions import CameraCaptureError
 from cubos.instruments.camera.vendors.flir import FlirCamera
 from cubos.instruments.lighting.vendors.pawduino import PawduinoLighting
-from cubos.protocol_engine.commands.camera import capture, image_well
+from cubos.protocol_engine.commands.camera import capture, image_well, measure_color
 from cubos.protocol_engine.errors import ProtocolExecutionError
 from cubos.protocol_engine.runtime import ProtocolContext
 
@@ -125,6 +125,215 @@ class TestCapture:
         with pytest.raises(ProtocolExecutionError, match="capture"):
             capture(_context({"cam": camera}), instrument="cam")
 
+    def test_measure_color_returns_lab_and_perceptual_score(
+        self, monkeypatch, tmp_path
+    ):
+        expected = {
+            "image_path": str(tmp_path / "image.tiff"),
+            "rgb": [120.0, 80.0, 40.0],
+            "lab": [38.0, 12.0, 28.0],
+            "reference_lab": [40.0, 10.0, 30.0],
+            "delta_e_00": 2.4,
+            "measurement_status": "accepted",
+            "comparison_status": "accepted",
+            "quality": {"accepted": True, "flags": []},
+        }
+        received = {}
+
+        def analyze(*args, **kwargs):
+            received.update(kwargs)
+            return expected.copy()
+
+        monkeypatch.setattr(
+            "cubos.protocol_engine.commands.camera.analyze_color_image",
+            analyze,
+        )
+        camera = _camera()
+        camera.control_fingerprint = lambda: {"fingerprint": "requested"}
+        camera.last_frame_metadata = lambda: {
+            "frame_id": 9,
+            "received_at": 1234.5,
+            "capture_profile": {"fingerprint": "actual"},
+        }
+        result = measure_color(
+            _context({"cam": camera}),
+            instrument="cam",
+            position="plate.A1",
+            reference_lab=(40.0, 10.0, 30.0),
+            reference_processing_profile_id="profile-1",
+            expected_center=(0.57, 0.53),
+            expected_center_source="operator_selected",
+        )
+        assert result == {
+            **expected,
+            "frame_metadata": {
+                "frame_id": 9,
+                "received_at": 1234.5,
+            },
+            "well_identity": {
+                "expected_well": "plate.A1",
+                "source": "protocol_position",
+                "verification_status": "not_verified_by_cv",
+            },
+        }
+        assert received["reference_processing_profile_id"] == "profile-1"
+        assert received["expected_center"] == (0.57, 0.53)
+        assert received["expected_center_source"] == "operator_selected"
+        assert received["acquisition_context"]["image_height"] is None
+        assert received["acquisition_context"]["requested_capture_profile"] == {
+            "fingerprint": "requested",
+        }
+        assert received["acquisition_context"]["actual_capture_profile"] == {
+            "fingerprint": "actual",
+        }
+
+    def test_measure_color_executes_planned_approach_capture_and_retract(
+        self, monkeypatch
+    ):
+        events = []
+        camera = _camera()
+        original_capture = camera.capture
+
+        def traced_capture(*args, **kwargs):
+            events.append("capture")
+            return original_capture(*args, **kwargs)
+
+        camera.capture = traced_capture
+        context = _context({"cam": camera})
+        context.deck.planning_enabled = True
+        context.active_step_index = 0
+        context.planned_motion_steps = {
+            0: SimpleNamespace(
+                command="measure_color",
+                plans=("approach", "retract"),
+                data={"instrument": "cam", "capture_after_plan": 0},
+            ),
+        }
+        context.routing_session = SimpleNamespace(
+            execute=lambda plan: events.append(plan),
+        )
+
+        def analyze(*args, **kwargs):
+            events.append("analyze")
+            return {
+                "measurement_status": "rejected",
+                "comparison_status": "not_requested",
+                "quality": {"accepted": False, "flags": ["underexposed"]},
+            }
+
+        monkeypatch.setattr(
+            "cubos.protocol_engine.commands.camera.analyze_color_image", analyze,
+        )
+        monkeypatch.setattr(
+            "cubos.protocol_engine.commands.camera._persist_image",
+            lambda *args: events.append("persist"),
+        )
+        result = measure_color(
+            context,
+            instrument="cam",
+            position="plate.A1",
+            image_height=20.0,
+        )
+
+        assert result["measurement_status"] == "rejected"
+        assert events == ["approach", "capture", "retract", "persist", "analyze"]
+
+    def test_measure_color_retracts_before_analysis_failure(self, monkeypatch):
+        events = []
+        context = _context({"cam": _camera()})
+        context.deck.planning_enabled = True
+        context.active_step_index = 0
+        context.planned_motion_steps = {
+            0: SimpleNamespace(
+                command="measure_color",
+                plans=("approach", "retract"),
+                data={"instrument": "cam", "capture_after_plan": 0},
+            ),
+        }
+        context.routing_session = SimpleNamespace(
+            execute=lambda plan: events.append(plan),
+        )
+        monkeypatch.setattr(
+            "cubos.protocol_engine.commands.camera.analyze_color_image",
+            lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bad frame")),
+        )
+
+        with pytest.raises(ProtocolExecutionError, match="bad frame"):
+            measure_color(
+                context,
+                instrument="cam",
+                position="plate.A1",
+                image_height=20.0,
+            )
+        assert events == ["approach", "retract"]
+
+    def test_measure_color_capture_failure_stops_without_retract(self):
+        events = []
+        camera = _camera()
+        camera.capture = lambda *args, **kwargs: (_ for _ in ()).throw(
+            CameraCaptureError("read failed")
+        )
+        context = _context({"cam": camera})
+        context.deck.planning_enabled = True
+        context.active_step_index = 0
+        context.planned_motion_steps = {
+            0: SimpleNamespace(
+                command="measure_color",
+                plans=("approach", "retract"),
+                data={"instrument": "cam", "capture_after_plan": 0},
+            ),
+        }
+        context.routing_session = SimpleNamespace(
+            execute=lambda plan: events.append(plan),
+        )
+
+        with pytest.raises(ProtocolExecutionError, match="read failed"):
+            measure_color(
+                context,
+                instrument="cam",
+                position="plate.A1",
+                image_height=20.0,
+            )
+        assert events == ["approach"]
+
+    def test_measure_color_profile_failure_happens_before_approach(self):
+        events = []
+        camera = _camera()
+        camera.control_fingerprint = lambda: (_ for _ in ()).throw(
+            RuntimeError("profile unavailable")
+        )
+        context = _context({"cam": camera})
+        context.deck.planning_enabled = True
+        context.active_step_index = 0
+        context.planned_motion_steps = {
+            0: SimpleNamespace(
+                command="measure_color",
+                plans=("approach", "retract"),
+                data={"instrument": "cam", "capture_after_plan": 0},
+            ),
+        }
+        context.routing_session = SimpleNamespace(
+            execute=lambda plan: events.append(plan),
+        )
+
+        with pytest.raises(ProtocolExecutionError, match="profile unavailable"):
+            measure_color(
+                context,
+                instrument="cam",
+                position="plate.A1",
+                image_height=20.0,
+            )
+        assert events == []
+
+    def test_measure_color_rejects_image_height_without_planning(self):
+        with pytest.raises(ProtocolExecutionError, match="planning-enabled"):
+            measure_color(
+                _context({"cam": _camera()}),
+                instrument="cam",
+                position="plate.A1",
+                image_height=20.0,
+            )
+
 
 class TestImageWell:
     def test_standard_sequence(self):
@@ -231,6 +440,16 @@ class TestPathBuilder:
         first.touch()
         second = build_image_path(context, "shot", "cam")
         assert second.name == "shot_frozen_001.tiff"
+
+    def test_context_image_output_dir_overrides_process_default(self, tmp_path):
+        from cubos.protocol_engine.commands.camera import build_image_path
+
+        context = _context({})
+        context.image_output_dir = tmp_path / "run-artifacts" / "images"
+
+        path = build_image_path(context, "shot", "cam")
+
+        assert path.parent == context.image_output_dir / "adhoc"
 
 
 class TestPersistFailure:

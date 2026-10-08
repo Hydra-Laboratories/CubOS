@@ -79,10 +79,14 @@ def load_gantry_from_yaml(path: str | Path) -> GantryConfig:
     schema = GantryYamlSchema.model_validate(raw)
 
     expected_grbl = normalize_expected_grbl_settings(schema.grbl_settings)
-    instruments = {
-        name: entry.model_dump()
-        for name, entry in schema.instruments.items()
-    }
+    instruments = {}
+    motion_envelopes = {}
+    for name, entry in schema.instruments.items():
+        dumped = entry.model_dump()
+        envelope = dumped.pop("motion_envelope", None)
+        instruments[name] = dumped
+        if envelope is not None:
+            motion_envelopes[name] = envelope
 
     return GantryConfig(
         serial_port=schema.serial_port,
@@ -103,6 +107,7 @@ def load_gantry_from_yaml(path: str | Path) -> GantryConfig:
         origin_policy=OriginPolicy(schema.origin_policy),
         expected_grbl_settings=expected_grbl,
         instruments=instruments,
+        motion_envelopes=motion_envelopes,
     )
 
 

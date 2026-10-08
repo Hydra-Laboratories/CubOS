@@ -263,20 +263,12 @@ def test_well_rinse_water_golden_trace(tmp_path):
         ).fetchone()[0] == "completed"
 
 
-def test_restart_after_first_transfer_resumes_without_repeating_liquid(
+def test_restart_after_first_transfer_rejects_replay_without_repeating_liquid(
     tmp_path, monkeypatch,
 ):
-    """Crash between transfers; resume the same campaign+DB and complete.
+    """A consumed pickup target blocks replay of a partially applied protocol."""
+    from cubos.validation.errors import ProtocolSemanticValidationError
 
-    The crash is injected in the second transfer's stroke planning --
-    BEFORE any durable journaling for that step -- so the run dies with
-    step 1 (pick_up_tip) and step 2 (200 uL s1->w1) applied, the tip still
-    physically attached, and no operation pending reconciliation. The
-    resume re-runs the same protocol against the same campaign: the
-    campaign-scoped operation keys make steps 1-2 idempotent no-op skips
-    (no repeated liquid, no second tip), the persisted pipette attachment
-    is restored, and only the remaining steps execute.
-    """
     from cubos.protocol_engine.commands import pipette as pipette_commands
 
     db_path = tmp_path / "restart.db"
@@ -335,57 +327,38 @@ def test_restart_after_first_transfer_resumes_without_repeating_liquid(
             "SELECT status FROM campaigns WHERE id = ?", (cid,),
         ).fetchone()[0] == "failed"
 
-    # Resume: same DB, same campaign (its linked fluid state is resumed).
     resumed = DataStore(db_path)
     try:
-        results = run_on_hardware(
-            GANTRY, DECK, ACCEPTANCE_PROTOCOL,
-            mock_mode=True,
-            data_store=resumed,
-            campaign_id=cid,
-        )
+        fluid_before = resumed.get_fluid_snapshot(state_id)
+        tips_before = resumed.get_tip_snapshot(state_id)
+        with pytest.raises(ProtocolSemanticValidationError, match="tip_rack.A1.*not available"):
+            run_on_hardware(
+                GANTRY, DECK, ACCEPTANCE_PROTOCOL,
+                mock_mode=True,
+                data_store=resumed,
+                campaign_id=cid,
+            )
+        assert resumed.get_fluid_snapshot(state_id) == fluid_before
+        assert resumed.get_tip_snapshot(state_id) == tips_before
     finally:
         resumed.close()
-    assert len(results) == 6
 
-    # No repeated liquid: the first transfer appears exactly once; the
-    # second executed exactly once as its two strokes.
-    assert _fluid_trace(db_path, state_id) == [
-        (
-            f"campaign:{cid}:step:2:transfer:transfer",
-            "transfer", "s1", "w1", 200.0, "applied",
-        ),
-        (
-            f"campaign:{cid}:step:3:transfer:substep:stroke0:transfer",
-            "transfer", "s1", "w3", 200.0, "applied",
-        ),
-        (
-            f"campaign:{cid}:step:3:transfer:substep:stroke1:transfer",
-            "transfer", "s1", "w3", 200.0, "applied",
-        ),
-    ]
+    assert _fluid_trace(db_path, state_id) == trace
     _assert_containers(db_path, state_id, _expected_containers({
-        ("s1", ""): (5900.0, {"water": 5900.0}),
+        ("s1", ""): (6300.0, {"water": 6300.0}),
         ("w1", ""): (3800.0, {"dmfc": 3600.0, "water": 200.0}),
-        ("w3", ""): (12100.0, {"acn": 3600.0, "dmf": 8100.0, "water": 400.0}),
     }))
-
-    # One tip picked exactly once across both runs, dropped on the resume.
     tip_trace, consumed, pipette = _tip_state(db_path, state_id)
     assert tip_trace == [
         (
             f"campaign:{cid}:step:1:pick_up_tip:pick_up_tip",
             "pick_up_tip", "tip_rack", "A1", "applied",
         ),
-        (
-            f"campaign:{cid}:step:4:drop_tip:drop_tip",
-            "drop_tip", "tip_rack", "A1", "applied",
-        ),
     ]
-    assert consumed == {("tip_rack", "A1"): "consumed"}
-    assert pipette["rack_key"] is None
-    assert pipette["slot_id"] is None
+    assert consumed == {("tip_rack", "A1"): "attached"}
+    assert pipette["rack_key"] == "tip_rack"
+    assert pipette["slot_id"] == "A1"
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT status FROM campaigns WHERE id = ?", (cid,),
-        ).fetchone()[0] == "completed"
+        ).fetchone()[0] == "failed"

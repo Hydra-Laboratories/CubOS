@@ -1,0 +1,85 @@
+# SIMULATION ONLY — photo-derived estimates, not calibrated hardware configs.
+labware:
+  plate:
+    type: well_plate
+    name: 96-well color plate
+    rows: 8
+    columns: 12
+    length: 127.76
+    width: 85.48
+    height: 15
+    capacity_ul: 300
+    working_volume_ul: 300
+    calibration:
+      a1:
+        x: 30
+        y: 90
+        z: 15
+      a2:
+        x: 39
+        y: 90
+        z: 15
+    x_offset: 9
+    y_offset: 9
+    row_direction: negative
+  stocks:
+    type: vial_grid
+    name: Six-vial holder
+    rows: 2
+    columns: 3
+    calibration:
+      a1:
+        x: 35
+        y: 150
+        z: 45
+      a2:
+        x: 58
+        y: 150
+        z: 45
+    x_offset: 23
+    y_offset: 23
+    row_direction: negative
+    vial_height: 45
+    vial_diameter: 18
+    capacity_ul: 5000
+    working_volume_ul: 4000
+  tips:
+    type: tip_rack
+    name: "1000 \xB5L / 70 mm side-exit rack"
+    model_name: ColorMatching_TipHolder
+    location:
+      x: 150
+      y: 20
+      z: 0
+    rows: 8
+    columns: 12
+    calibration:
+      a1:
+        x: 263
+        y: 26
+        z: 70
+      a2:
+        x: 253
+        y: 26
+        z: 70
+    x_offset: 10
+    y_offset: 10
+    pickup_z: 70
+    tip_length: 70
+    length: 120
+    width: 84
+    height: 63
+    side_exit:
+      lift_mm: 30
+      exit_x: 140
+  waste:
+    type: vial
+    name: Virtual tip waste
+    location:
+      x: 280
+      y: 145
+      z: 45
+    height: 45
+    diameter: 20
+    capacity_ul: 5000
+    working_volume_ul: 4000

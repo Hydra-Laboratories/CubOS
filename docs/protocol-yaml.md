@@ -331,11 +331,15 @@ applied and a rerun never re-applies committed liquid.
   (`reconciliation_required`, or never registered). Explicit opt-in only —
   never runs `decap` itself; a target with no durable cap state at all is
   not constrained by this check.
+- `blow_out` *(bool, default `true`)* — perform the pipette's calibrated
+  blow-out motion after the final dispense. Set to `false` to skip it for
+  faster transfers. Multi-stroke transfers blow out only after their final
+  stroke when enabled.
 
-Every `transfer` runs the pipette's calibrated blow-out motion once, right
-after the final stroke's dispense, to clear any fluid left in the tip. Does
-not change the tracked dispense volume; a blow-out failure is treated the
-same as a dispense failure.
+By default, `transfer` runs the pipette's calibrated blow-out motion once,
+right after the final stroke's dispense, to clear any fluid left in the tip.
+This does not change the tracked dispense volume; a blow-out failure is
+treated the same as a dispense failure.
 
 #### `serial_transfer`
 

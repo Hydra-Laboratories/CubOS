@@ -1,0 +1,34 @@
+# REVIEW / CALIBRATION COPY ONLY — no custom travel or camera operation.
+protocol:
+- pick_up_tip:
+    position: tips.A1
+- transfer:
+    source: stocks.A1
+    destination: plate.A1
+    volume_ul: 100
+    source_height: '-20'
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A2
+- transfer:
+    source: stocks.A2
+    destination: plate.A1
+    volume_ul: 100
+    source_height: '-20'
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A3
+- transfer:
+    source: stocks.A3
+    destination: plate.A1
+    volume_ul: 100
+    source_height: '-20'
+- mix:
+    position: plate.A1
+    volume_ul: 60
+    cycles: 3
+    height: -7
+- drop_tip:
+    position: waste

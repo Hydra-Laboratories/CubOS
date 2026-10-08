@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 StateDomain = Literal["fluid", "tip", "cap"]
@@ -65,6 +65,16 @@ class CreateFluidStateRequest(BaseModel):
     deck_file: str
     label: Optional[str] = None
     fluids: Dict[str, FluidSeedItem] = Field(default_factory=dict)
+    tips: Dict[str, bool] = Field(default_factory=dict)
+
+    @field_validator("tips", mode="before")
+    @classmethod
+    def require_boolean_tip_presence(cls, value):
+        if isinstance(value, dict) and any(
+            not isinstance(present, bool) for present in value.values()
+        ):
+            raise ValueError("tip presence values must be true or false")
+        return value
 
 
 class FluidStateSummaryResponse(BaseModel):
@@ -119,6 +129,41 @@ class TipContainerView(BaseModel):
     updated_at: str
 
 
+class TipRefillRequest(BaseModel):
+    rack_key: str
+    pipette_bare_confirmed: bool
+    operator: str
+    reason: str
+    operation_key: str
+
+    @model_validator(mode="after")
+    def validate_refill_confirmation(self) -> "TipRefillRequest":
+        if not self.rack_key.strip():
+            raise ValueError("rack_key is required")
+        if not self.operation_key.strip():
+            raise ValueError("operation_key is required")
+        if not self.operator.strip():
+            raise ValueError("operator is required")
+        if not self.reason.strip():
+            raise ValueError("reason is required")
+        if not self.pipette_bare_confirmed:
+            raise ValueError(
+                "pipette_bare_confirmed must be true to refill a rack"
+            )
+        return self
+
+
+class TipRefillView(BaseModel):
+    id: int
+    operation_key: str
+    rack_key: str
+    operator: str
+    reason: str
+    changed_slots: List[str]
+    preserved_slots: List[str]
+    created_at: str
+
+
 class PipetteAttachmentView(BaseModel):
     pipette_key: str
     rack_key: Optional[str] = None
@@ -133,6 +178,39 @@ class TipStateResponse(BaseModel):
     fluid_state_id: int
     containers: List[TipContainerView]
     pipette: PipetteAttachmentView
+    refills: List[TipRefillView] = Field(default_factory=list)
+
+
+class TipRefillResponse(TipRefillView):
+    fluid_state_id: int
+    status: str = "applied"
+
+
+class FluidStockReconciliationRequest(BaseModel):
+    target: str
+    volume_ul: float
+    composition: Optional[Dict[str, float]] = None
+    operation_key: str
+    operator: str
+    reason: str
+
+    @model_validator(mode="after")
+    def validate_audit_fields(self) -> "FluidStockReconciliationRequest":
+        for name in ("target", "operation_key", "operator", "reason"):
+            if not getattr(self, name).strip():
+                raise ValueError(f"{name} is required")
+        return self
+
+
+class FluidStockReconciliationResponse(BaseModel):
+    fluid_state_id: int
+    operation_key: str
+    target: str
+    volume_ul: float
+    composition: Dict[str, float]
+    operator: str
+    reason: str
+    status: str = "applied"
 
 
 class CapContainerView(BaseModel):

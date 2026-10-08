@@ -22,6 +22,7 @@ from cubos.instruments.camera.exceptions import CameraError
 from cubos.instruments.camera.interface import CameraInstrument
 from cubos.instruments.lighting.exceptions import LightingError
 from cubos.instruments.lighting.interface import LightingInstrument
+from cubos.optimization.color import analyze_color_image
 
 from ..errors import ProtocolExecutionError
 from ..registry import protocol_command
@@ -85,7 +86,12 @@ def build_image_path(
     ``adhoc`` directory when the run has no campaign), with a numeric
     suffix when the same second produces multiple captures.
     """
-    root = default_images_dir()
+    configured_root = getattr(context, "image_output_dir", None)
+    root = (
+        Path(configured_root).expanduser()
+        if configured_root is not None
+        else default_images_dir()
+    )
     group = (
         f"campaign_{context.campaign_id}"
         if context.campaign_id is not None
@@ -160,6 +166,14 @@ def capture(
         position:   Optional deck target the image belongs to (persistence
                     attribution only).
     """
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        planned = prepared_step(context, "capture")
+        if planned.data["instrument"] != instrument:
+            raise ProtocolExecutionError(
+                "Planned capture instrument does not match the active step."
+            )
     camera = _get_camera(context, instrument)
     path = build_image_path(context, label, instrument)
     try:
@@ -169,6 +183,132 @@ def capture(
     context.logger.info("capture: %s -> %s", instrument, saved)
     _persist_image(context, position, saved)
     return saved
+
+
+@protocol_command("measure_color", summary=_summaries.measure_color)
+def measure_color(
+    context: "ProtocolContext",
+    instrument: str,
+    reference_lab: tuple[float, float, float] | None = None,
+    reference_rgb: tuple[float, float, float] | None = None,
+    reference_origin: str | None = None,
+    reference_processing_profile_id: str | None = None,
+    roi_fraction: float = 0.5,
+    expected_center: tuple[float, float] | None = None,
+    expected_center_source: str | None = None,
+    image_height: float | None = None,
+    label: str | None = None,
+    position: str | None = None,
+) -> dict[str, object]:
+    """Capture a well-local color estimate and optionally score it against Lab.
+
+    With ``image_height``, whole-protocol routing approaches ``position`` and
+    retracts after capture. Otherwise capture occurs at the current location.
+    Delta E is emitted only when image quality passes and the reference profile
+    exactly matches this capture and analysis configuration.
+    """
+    planned = None
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        planned = prepared_step(context, "measure_color")
+        if planned.data["instrument"] != instrument:
+            raise ProtocolExecutionError(
+                "Planned measure_color instrument does not match the active step."
+            )
+    elif image_height is not None:
+        raise ProtocolExecutionError(
+            "measure_color image_height requires a planning-enabled deck."
+        )
+    camera = _get_camera(context, instrument)
+    path = build_image_path(context, label or "color", instrument)
+    capture_after_plan = int(planned.data["capture_after_plan"]) if planned else -1
+    try:
+        fingerprint_method = getattr(camera, "control_fingerprint", None)
+        requested_capture_profile = (
+            fingerprint_method()
+            if callable(fingerprint_method)
+            else {"status": "unavailable"}
+        )
+    except (CameraError, ValueError, RuntimeError) as exc:
+        raise ProtocolExecutionError(
+            f"measure_color capture profile: {type(exc).__name__}: {exc}"
+        ) from exc
+    if planned is not None:
+        for motion_plan in planned.plans[:capture_after_plan + 1]:
+            context.routing_session.execute(motion_plan)
+    try:
+        saved = camera.capture(save_path=str(path))
+        metadata_method = getattr(camera, "last_frame_metadata", None)
+        frame_metadata = (
+            metadata_method()
+            if callable(metadata_method)
+            else None
+        )
+        actual_capture_profile = (
+            frame_metadata.get("capture_profile")
+            if isinstance(frame_metadata, dict)
+            else None
+        )
+        acquisition_context = {
+            "requested_capture_profile": requested_capture_profile,
+            "actual_capture_profile": actual_capture_profile,
+            "image_height": image_height,
+        }
+        if planned is not None:
+            for motion_plan in planned.plans[capture_after_plan + 1:]:
+                context.routing_session.execute(motion_plan)
+        _persist_image(context, position, saved)
+        result = analyze_color_image(
+            saved,
+            roi_fraction=roi_fraction,
+            expected_center=expected_center,
+            expected_center_source=expected_center_source,
+            reference_rgb=reference_rgb,
+            reference_origin=reference_origin,
+            reference_lab=reference_lab,
+            reference_processing_profile_id=reference_processing_profile_id,
+            acquisition_context=acquisition_context,
+        )
+        result["frame_metadata"] = (
+            {
+                key: frame_metadata[key]
+                for key in (
+                    "frame_id", "received_at", "width", "height",
+                    "configuration_revision", "image_sha256",
+                )
+                if key in frame_metadata
+            }
+            if isinstance(frame_metadata, dict)
+            else None
+        )
+    except CameraError as exc:
+        raise ProtocolExecutionError(f"measure_color: {exc}") from exc
+    except (ValueError, RuntimeError) as exc:
+        raise ProtocolExecutionError(
+            f"measure_color: {type(exc).__name__}: {exc}"
+        ) from exc
+    result["well_identity"] = {
+        "expected_well": position,
+        "source": "protocol_position" if position is not None else "unspecified",
+        "verification_status": "not_verified_by_cv",
+    }
+    if result.get("measurement_status") == "accepted":
+        context.logger.info(
+            "measure_color: %s -> estimated Lab %s%s",
+            instrument,
+            result["lab"],
+            f", Delta E00 {result['delta_e_00']:.3f}"
+            if "delta_e_00" in result
+            else "",
+        )
+    else:
+        context.logger.warning(
+            "measure_color: %s rejected (%s)",
+            instrument,
+            ", ".join(result["quality"]["flags"]),
+        )
+    return result
 
 
 def _resolve_lighting(

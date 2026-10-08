@@ -83,6 +83,7 @@ class GantryConfig:
     default_feed_rate_mm_min: Optional[float] = None
     expected_grbl_settings: Optional[Dict[str, float]] = field(default=None)
     instruments: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    motion_envelopes: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         try:

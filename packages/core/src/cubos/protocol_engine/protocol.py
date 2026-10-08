@@ -76,6 +76,12 @@ class Protocol:
         Low-level primitive: the caller owns the gantry connection and
         instrument lifecycle. Returns the list of step results.
         """
+        if getattr(context.deck, "planning_enabled", False) is True:
+            from .routing import prepare_planning_context
+
+            if context.routing_session is None:
+                prepare_planning_context(self, context)
+
         self.logger.info(
             "Running protocol (%d steps)%s",
             len(self._steps),

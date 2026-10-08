@@ -1,0 +1,241 @@
+schema_version: cubos.campaign-preset.v1
+name: color_match_120
+spec:
+  name: CIEDE2000 color matching
+  gantry_file: picus120.yaml
+  deck_file: cub_deck.yaml
+  protocol_file: ade_color_matching_bde991a9.yaml
+  parameters:
+  - name: red_ul
+    minimum: 50.0
+    maximum: 200.0
+    step: 5.0
+    bindings:
+    - step_index: 1
+      argument: volume_ul
+  - name: yellow_ul
+    minimum: 50.0
+    maximum: 200.0
+    step: 5.0
+    bindings:
+    - step_index: 4
+      argument: volume_ul
+  - name: blue_ul
+    minimum: 50.0
+    maximum: 200.0
+    step: 5.0
+    bindings:
+    - step_index: 7
+      argument: volume_ul
+  sequences:
+  - name: candidate_well
+    values:
+    - plate.A5
+    - plate.A6
+    - plate.A7
+    - plate.A8
+    - plate.A9
+    - plate.A10
+    - plate.A11
+    - plate.A12
+    - plate.B1
+    - plate.B2
+    - plate.B3
+    - plate.B4
+    - plate.B5
+    - plate.B6
+    - plate.B7
+    - plate.B8
+    - plate.B9
+    - plate.B10
+    bindings:
+    - step_index: 1
+      argument: destination
+    - step_index: 4
+      argument: destination
+    - step_index: 7
+      argument: destination
+    - step_index: 10
+      argument: position
+    - step_index: 12
+      argument: position
+    - step_index: 13
+      argument: position
+  - name: red_tip
+    values:
+    - tips.A1
+    - tips.A1
+    - tips.A1
+    - tips.A1
+    - tips.A1
+    - tips.A1
+    - tips.A10
+    - tips.A10
+    - tips.A10
+    - tips.A10
+    - tips.A10
+    - tips.A10
+    - tips.B7
+    - tips.B7
+    - tips.B7
+    - tips.B7
+    - tips.B7
+    - tips.B7
+    bindings:
+    - step_index: 0
+      argument: position
+  - name: yellow_tip
+    values:
+    - tips.A2
+    - tips.A2
+    - tips.A2
+    - tips.A2
+    - tips.A2
+    - tips.A2
+    - tips.A11
+    - tips.A11
+    - tips.A11
+    - tips.A11
+    - tips.A11
+    - tips.A11
+    - tips.B8
+    - tips.B8
+    - tips.B8
+    - tips.B8
+    - tips.B8
+    - tips.B8
+    bindings:
+    - step_index: 3
+      argument: position
+  - name: blue_tip
+    values:
+    - tips.A3
+    - tips.A3
+    - tips.A3
+    - tips.A3
+    - tips.A3
+    - tips.A3
+    - tips.A12
+    - tips.A12
+    - tips.A12
+    - tips.A12
+    - tips.A12
+    - tips.A12
+    - tips.B9
+    - tips.B9
+    - tips.B9
+    - tips.B9
+    - tips.B9
+    - tips.B9
+    bindings:
+    - step_index: 6
+      argument: position
+  - name: mix_tip
+    values:
+    - tips.A4
+    - tips.A5
+    - tips.A6
+    - tips.A7
+    - tips.A8
+    - tips.A9
+    - tips.B1
+    - tips.B2
+    - tips.B3
+    - tips.B4
+    - tips.B5
+    - tips.B6
+    - tips.B10
+    - tips.B11
+    - tips.B12
+    - tips.C1
+    - tips.C2
+    - tips.C3
+    bindings:
+    - step_index: 9
+      argument: position
+  objective:
+    mode: result
+    path: 13.delta_e_00
+    direction: minimize
+  optimizer:
+    method: ei
+    kernel: matern52
+    initial_trials: 6
+    initial_points:
+    - red_ul: 200.0
+      yellow_ul: 50.0
+      blue_ul: 50.0
+    - red_ul: 50.0
+      yellow_ul: 200.0
+      blue_ul: 50.0
+    - red_ul: 50.0
+      yellow_ul: 50.0
+      blue_ul: 200.0
+    - red_ul: 125.0
+      yellow_ul: 125.0
+      blue_ul: 50.0
+    - red_ul: 125.0
+      yellow_ul: 50.0
+      blue_ul: 125.0
+    - red_ul: 50.0
+      yellow_ul: 125.0
+      blue_ul: 125.0
+    exploration: 0.05
+    seed: 7
+  stop:
+    max_trials: 18
+    target_value: 3.0
+    patience: 0
+    min_improvement: 0.0
+    max_seconds:
+  sum_constraint:
+    parameters:
+    - red_ul
+    - yellow_ul
+    - blue_ul
+    total: 300.0
+  mock_mode: false
+  fluid_state_id:
+  batch_size: 6
+  source_protocol_file: 05_color_match_120ul.yaml
+  target_mode: rgb
+  target_rgb:
+  - 157.0
+  - 0.0
+  - 189.0
+color_setup:
+  source_protocol_file: 05_color_match_120ul.yaml
+  batch_size: 6
+  target_mode: rgb
+  target_well: plate.A1
+  target_rgb:
+  - 157.0
+  - 0.0
+  - 189.0
+  red_source: stocks.A1
+  yellow_source: stocks.A2
+  blue_source: stocks.A3
+  candidate_wells:
+  - plate.A5
+  - plate.A6
+  - plate.A7
+  - plate.A8
+  - plate.A9
+  - plate.A10
+  - plate.A11
+  - plate.A12
+  - plate.B1
+  - plate.B2
+  - plate.B3
+  - plate.B4
+  - plate.B5
+  - plate.B6
+  - plate.B7
+  - plate.B8
+  - plate.B9
+  - plate.B10
+  camera_instrument: camera
+  roi_fraction: 0.5
+  image_height:
+requires_fresh_state: true
+requires_fresh_target: true

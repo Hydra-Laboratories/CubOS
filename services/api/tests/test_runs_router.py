@@ -137,6 +137,32 @@ def test_submit_returns_202_and_persists_artifacts(monkeypatch):
     assert protocol.text == PROTOCOL_YAML
 
 
+def test_native_run_releases_manual_handles_but_preserves_monitor_leases(
+    monkeypatch,
+):
+    from cubos_api.routers import gantry as gantry_router
+    from cubos_api.routers import instruments as instruments_router
+
+    reset_calls = []
+    monkeypatch.setattr(
+        instruments_router,
+        "reset_manual_instruments",
+        lambda **kwargs: reset_calls.append(kwargs),
+    )
+    monkeypatch.setattr(
+        gantry_router,
+        "run_protocol_on_session",
+        lambda **_kwargs: {"ok": True},
+    )
+
+    app = create_app()
+    response = api_request(app, "POST", "/api/v1/runs", json=_payload())
+    assert response.status_code == 202
+    _wait_for_state(app, "run-001", "succeeded")
+
+    assert reset_calls == [{"preserve_camera_monitors": True}]
+
+
 def test_run_events_are_ordered_and_filterable(monkeypatch):
     from cubos_api.routers import gantry as gantry_router
 

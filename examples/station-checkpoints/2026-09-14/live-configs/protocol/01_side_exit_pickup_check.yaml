@@ -1,0 +1,18 @@
+positions:
+  rack_exit_lane:
+  - 140
+  - 110
+  - 30
+  clear_of_plate:
+  - 140
+  - 110
+  - 56
+protocol:
+- pick_up_tip:
+    position: tips.A12
+- move:
+    instrument: pipette
+    position: rack_exit_lane
+    travel_z: 30
+- drop_tip:
+    position: waste

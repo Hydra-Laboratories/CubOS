@@ -237,6 +237,34 @@ class Mill:
                 return True
         return False
 
+    def recover_critical_alarm(self, port: str, timeout: float = 3.0) -> str:
+        """Explicit reset-only recovery on one configured port; always close it."""
+        if self.active_connection or (self.ser_mill and self.ser_mill.is_open):
+            raise MillConnectionError("Controller serial session is already owned")
+        if not port:
+            raise MillConnectionError("Critical-alarm recovery requires a configured serial port")
+        self._init_state()
+        try:
+            self.ser_mill = serial.Serial(
+                port=port, baudrate=115200, timeout=0.1, write_timeout=0.5, exclusive=True,
+            )
+            # Remove a stale boot banner before requiring evidence of this reset.
+            self.ser_mill.reset_input_buffer()
+            self._write_serial(b"\x18")
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                line = self.ser_mill.readline().decode("ascii", errors="replace").strip()
+                if re.fullmatch(r"Grbl [0-9]+\.[0-9]+[a-z]? \['\$' for help\]", line):
+                    return line
+            raise MillConnectionError("No GRBL reset banner received; controller recovery unverified")
+        finally:
+            try:
+                if self.ser_mill is not None:
+                    self.ser_mill.close()
+            finally:
+                self.ser_mill = None
+                self._init_state()
+
     def connect(
         self,
         port: Optional[str] = None,
@@ -678,31 +706,31 @@ class Mill:
         return status
 
     def current_status(self) -> str:
-        """Get the current status of the mill."""
-        self._require_open_serial()
-        attempt_limit = 5
-        status = self._read_serial()
+        """Request status before reading; acknowledgments are not completion.
 
-        while status.strip().lower() in ["", "ok"] and attempt_limit > 0:
+        GRBL does not stream status by default. Reading before sending ``?``
+        costs a full serial timeout on every completion poll. Bound both the
+        number of requests and intervening acknowledgment/message lines.
+        """
+        self._require_open_serial()
+        for _ in range(5):
             self._write_serial(b"?")
             time.sleep(0.05)
-            status = self._read_serial()
-            attempt_limit -= 1
-
-        if not status:
-            raw_lines = self.ser_mill.readlines()
-            lines = [item.decode(errors="replace").rstrip() for item in raw_lines]
-            if not lines:
-                self.logger.error("Failed to get status from the mill")
-                raise StatusReturnError("Failed to get status from the mill")
-            # Find the first status line (<...>) or join all lines
-            status = next((l for l in lines if l.startswith("<")), "; ".join(lines))
-            self.last_status = status
-            if any(re.search(r"\b(error|alarm)\b", item.lower()) for item in lines):
-                self.logger.error("Error in status: %s", status)
-                raise StatusReturnError(f"Error in status: {status}")
-        self.last_status = status
-        return status
+            for _ in range(10):
+                status = self._read_serial().strip()
+                if not status:
+                    break
+                lowered = status.lower()
+                if lowered.startswith(("error:", "alarm:")):
+                    self.last_status = status
+                    raise StatusReturnError(f"Error in status: {status}")
+                if status.startswith("<") and status.endswith(">"):
+                    self.last_status = status
+                    return status
+                # 'ok' acknowledges a command, and [MSG:...] is informational.
+                # Neither is a controller state, so keep reading this reply.
+        self.logger.error("Failed to get status from the mill")
+        raise StatusReturnError("Failed to get status from the mill")
 
     def _read_serial(self):
         self._require_open_serial()
@@ -795,6 +823,32 @@ class Mill:
     def is_connected(self) -> bool:
         """Check if the serial connection is open."""
         return bool(self.ser_mill and self.ser_mill.is_open)
+
+    def coordinate_frame(self) -> dict:
+        """Read one fresh status frame without using cached offsets or deriving positions."""
+        self._require_open_serial()
+        self.ser_mill.reset_input_buffer()
+        raw = self.query_raw_status()
+        observed_at = time.time()
+        if not raw.startswith("<") or not raw.endswith(">"):
+            raise MillConnectionError("No fresh GRBL status frame received")
+        fields = raw[1:-1].split("|")
+        report = {
+            "raw_status": raw, "status": fields[0], "observed_at": observed_at,
+            "source": "fresh_grbl_status_query", "fresh": True,
+            "machine_position": None, "work_position": None, "work_coordinate_offset": None,
+        }
+        names = {"MPos": "machine_position", "WPos": "work_position", "WCO": "work_coordinate_offset"}
+        for field in fields[1:]:
+            name, separator, value = field.partition(":")
+            if separator and name in names:
+                try:
+                    coordinates = tuple(float(axis) for axis in value.split(","))
+                except ValueError:
+                    continue
+                if len(coordinates) == 3 and all(math.isfinite(axis) for axis in coordinates):
+                    report[names[name]] = dict(zip(("x", "y", "z"), coordinates))
+        return report
 
     def query_raw_status(self) -> str:
         """Send GRBL '?' and return the raw status string (e.g. '<Idle|WPos:...>').
@@ -939,8 +993,9 @@ class Mill:
         (InstrumentedGantry, protocol commands) own their own "safe approach" height instead of
         the mill baking in a machine-wide retract.
 
-        When ``travel_z`` is None, the mill issues a direct axis-by-axis
-        move (X, then Y, then Z) — no Z detour, no diagonal interpolation.
+        When ``travel_z`` is None, the mill issues a direct XY move followed
+        by Z. If both horizontal axes change, they share one coordinated GRBL
+        command so the carriage follows a straight diagonal.
 
         Args:
             x_coordinate (float): X coordinate.
@@ -1033,13 +1088,11 @@ class Mill:
         current_coordinates: Coordinates,
         target_coordinates: Coordinates,
     ):
-        """Direct move from current to target, axis-by-axis.
+        """Direct move from current to target, with coordinated XY travel.
 
-        Emits one G-code per changed axis in X-then-Y-then-Z order.
-        The mill never commands simultaneous multi-axis (diagonal)
-        motion — combining axes in a single G01 would couple their
-        motion into a straight interpolation that could graze
-        obstacles the caller didn't plan for.
+        Emits one horizontal G-code containing every changed XY axis, then a
+        separate Z command. Collision-aware callers remain responsible for
+        supplying checked horizontal segments.
 
         ``current_coordinates`` may be ``None`` (position read failed);
         every axis is then emitted unconditionally — safe because the
@@ -1048,10 +1101,13 @@ class Mill:
         f = f" F{self.default_feed_rate}"
         self._validate_target_coordinates(target_coordinates)
         commands = []
+        xy_words = []
         if current_coordinates is None or target_coordinates.x != current_coordinates.x:
-            commands.append(f"G01 X{target_coordinates.x}{f}")
+            xy_words.append(f"X{target_coordinates.x}")
         if current_coordinates is None or target_coordinates.y != current_coordinates.y:
-            commands.append(f"G01 Y{target_coordinates.y}{f}")
+            xy_words.append(f"Y{target_coordinates.y}")
+        if xy_words:
+            commands.append(f"G01 {' '.join(xy_words)}{f}")
         if current_coordinates is None or target_coordinates.z != current_coordinates.z:
             commands.append(f"G01 Z{target_coordinates.z}{f}")
         return commands
@@ -1062,16 +1118,15 @@ class Mill:
         target_coordinates: Coordinates,
         travel_z: float,
     ):
-        """Transit via ``travel_z``, axis-by-axis: lift → X → Y → descend.
+        """Transit via ``travel_z``: lift → coordinated XY → descend.
 
         Each step is emitted only when it would produce actual motion,
         so a move already at ``travel_z`` skips the lift, a same-X
-        (or same-Y) move skips that axis, and a final Z matching
-        ``travel_z`` skips the descent. X and Y always move in
-        separate G-codes — no diagonal.
+        (or same-Y) move omits that axis from the horizontal command, and a
+        final Z matching ``travel_z`` skips the descent.
 
         ``current_coordinates`` may be ``None`` (position read failed);
-        the full lift → X → Y → descend sequence is then emitted
+        the full lift → coordinated XY → descend sequence is then emitted
         unconditionally — safe because the commands are absolute and the
         lift happens first.
         """
@@ -1081,10 +1136,13 @@ class Mill:
         commands = []
         if current_coordinates is None or current_coordinates.z != travel_z:
             commands.append(f"G01 Z{travel_z}{f}")
+        xy_words = []
         if current_coordinates is None or target_coordinates.x != current_coordinates.x:
-            commands.append(f"G01 X{target_coordinates.x}{f}")
+            xy_words.append(f"X{target_coordinates.x}")
         if current_coordinates is None or target_coordinates.y != current_coordinates.y:
-            commands.append(f"G01 Y{target_coordinates.y}{f}")
+            xy_words.append(f"Y{target_coordinates.y}")
+        if xy_words:
+            commands.append(f"G01 {' '.join(xy_words)}{f}")
         if target_coordinates.z != travel_z:
             commands.append(f"G01 Z{target_coordinates.z}{f}")
         return commands

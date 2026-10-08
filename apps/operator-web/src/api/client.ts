@@ -382,5 +382,18 @@ export const instrumentsApi = {
   cameraLastImage: (instrument: string) =>
     // Cache-bust: repeated preview polls hit the same URL as the frame changes.
     download(`/instruments/camera/last-image?instrument=${encodeURIComponent(instrument)}&_=${Date.now()}`),
+  previewCameraAlignment: (body: {
+    gantry_file: string;
+    deck_file: string;
+    camera_instrument: string;
+    target_position: string;
+  }) => request<import("../types").CameraAlignmentProposal>("/instruments/camera/alignment/preview", {
+    method: "POST",
+    body: JSON.stringify(body),
+  }),
+  saveCameraAlignment: (proposal: import("../types").CameraAlignmentProposal) =>
+    request<{ saved: true; proposal: import("../types").CameraAlignmentProposal; saved_gantry_sha256: string }>("/instruments/camera/alignment/save", {
+      method: "POST",
+      body: JSON.stringify({ proposal }),
+    }),
 };
-

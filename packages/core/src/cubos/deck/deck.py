@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterator, Mapping
+from typing import Any, Dict, Iterator, Mapping
 
 from .labware.labware import Coordinate3D, Labware
 
@@ -41,6 +41,7 @@ class Deck:
         *,
         volume_labware: Mapping[str, Labware] | None = None,
         target_aliases: Mapping[str, str] | None = None,
+        motion_planning: Mapping[str, Any] | None = None,
     ) -> None:
         self._labware = dict(labware)
         self._has_explicit_volume_registry = volume_labware is not None
@@ -54,6 +55,18 @@ class Deck:
             }
         )
         self._target_aliases = dict(target_aliases or {})
+        self._motion_planning = (
+            dict(motion_planning) if motion_planning is not None else None
+        )
+
+    @property
+    def motion_planning(self) -> Dict[str, Any] | None:
+        """Return opt-in routing settings, or ``None`` for a legacy deck."""
+        return None if self._motion_planning is None else dict(self._motion_planning)
+
+    @property
+    def planning_enabled(self) -> bool:
+        return self._motion_planning is not None
 
     @property
     def labware(self) -> Dict[str, Labware]:

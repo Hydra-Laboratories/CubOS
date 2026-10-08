@@ -19,6 +19,7 @@ can be in flight for a session at a time.
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from contextlib import contextmanager
@@ -89,10 +90,22 @@ class PipetteAttachmentSnapshot(TypedDict):
     updated_at: str
 
 
+class TipRefillSnapshot(TypedDict):
+    id: int
+    operation_key: str
+    rack_key: str
+    operator: str
+    reason: str
+    changed_slots: list[str]
+    preserved_slots: list[str]
+    created_at: str
+
+
 class TipStateSnapshot(TypedDict):
     fluid_state_id: int
     containers: list[TipContainerSnapshot]
     operations: list[TipOperationSnapshot]
+    refills: list[TipRefillSnapshot]
     pipette: PipetteAttachmentSnapshot
 
 
@@ -192,6 +205,12 @@ def get_tip_snapshot(
             "ORDER BY id",
             (fluid_state_id,),
         ).fetchall()
+        refill_rows = connection.execute(
+            "SELECT id, operation_key, rack_key, operator, reason, "
+            "changed_slots_json, preserved_slots_json, created_at "
+            "FROM tip_refill_operations WHERE fluid_state_id = ? ORDER BY id",
+            (fluid_state_id,),
+        ).fetchall()
         pipette_row = _pipette_attachment_row(
             connection, fluid_state_id, _DEFAULT_PIPETTE_KEY,
         )
@@ -224,6 +243,19 @@ def get_tip_snapshot(
         }
         for row in operation_rows
     ]
+    refills: list[TipRefillSnapshot] = [
+        {
+            "id": int(row[0]),
+            "operation_key": row[1],
+            "rack_key": row[2],
+            "operator": row[3],
+            "reason": row[4],
+            "changed_slots": json.loads(row[5]),
+            "preserved_slots": json.loads(row[6]),
+            "created_at": row[7],
+        }
+        for row in refill_rows
+    ]
     pipette: PipetteAttachmentSnapshot = {
         "pipette_key": pipette_row["pipette_key"],
         "rack_key": pipette_row["rack_key"],
@@ -241,6 +273,7 @@ def get_tip_snapshot(
         "fluid_state_id": fluid_state_id,
         "containers": containers,
         "operations": operations,
+        "refills": refills,
         "pipette": pipette,
     }
 
@@ -633,6 +666,167 @@ def resolve_tip_operation(
         )
 
 
+def refill_tip_rack(
+    connection: sqlite3.Connection,
+    fluid_state_id: int,
+    operation_key: str,
+    rack_key: str,
+    *,
+    operator: str,
+    reason: str,
+    pipette_bare_confirmed: bool,
+) -> TipRefillSnapshot:
+    """Record an operator-confirmed refill of one rack without touching fluids.
+
+    A refill is a state reconciliation event, not a physical pipette action.
+    It makes consumed slots available and, only with explicit bare-pipette
+    confirmation, clears an attached tip in the durable state. Pending tip
+    operations and uncertain/reserved slots are never silently cleared.
+    """
+    _validate_operation_key(operation_key)
+    if not isinstance(rack_key, str) or not rack_key.strip():
+        raise TipStateError("rack_key must be a non-empty string.")
+    if not isinstance(operator, str) or not operator.strip():
+        raise TipStateError("operator must be a non-empty string.")
+    if not isinstance(reason, str) or not reason.strip():
+        raise TipStateError("reason must be a non-empty string.")
+    if not isinstance(pipette_bare_confirmed, bool):
+        raise TipStateError("pipette_bare_confirmed must be true or false.")
+
+    with _immediate_transaction(connection):
+        _require_session(connection, fluid_state_id)
+        owner = connection.execute(
+            "SELECT fluid_state_id FROM tip_refill_operations "
+            "WHERE operation_key = ?",
+            (operation_key,),
+        ).fetchone()
+        if owner is not None and int(owner[0]) != fluid_state_id:
+            raise TipStateConflictError(
+                f"Refill operation key {operation_key!r} belongs to fluid state "
+                f"{owner[0]}, not {fluid_state_id}."
+            )
+        existing = connection.execute(
+            "SELECT id, operation_key, rack_key, operator, reason, "
+            "changed_slots_json, preserved_slots_json, created_at "
+            "FROM tip_refill_operations WHERE operation_key = ?",
+            (operation_key,),
+        ).fetchone()
+        if existing is not None:
+            if existing[2] != rack_key or existing[3] != operator or existing[4] != reason:
+                raise TipStateError(
+                    f"Refill operation key {operation_key!r} was reused with "
+                    "different parameters."
+                )
+            return _tip_refill_snapshot(existing)
+
+        pending = pending_tip_operations(connection, fluid_state_id)
+        if pending:
+            details = ", ".join(f"{key} ({status})" for key, status in pending)
+            raise TipStateReconciliationRequiredError(
+                f"Fluid state {fluid_state_id} cannot refill rack {rack_key!r} "
+                f"while tip operations require reconciliation: {details}."
+            )
+
+        rows = connection.execute(
+            "SELECT id, slot_id, status, version FROM tip_containers "
+            "WHERE fluid_state_id = ? AND rack_key = ? ORDER BY id",
+            (fluid_state_id, rack_key),
+        ).fetchall()
+        if not rows:
+            raise TipStateError(
+                f"Tip rack {rack_key!r} is not registered in state {fluid_state_id}."
+            )
+
+        pipette = _pipette_attachment_row(connection, fluid_state_id)
+        attached_slots = [row[1] for row in rows if row[2] == "attached"]
+        if len(attached_slots) > 1:
+            raise TipStateConflictError(
+                f"Tip rack {rack_key!r} has multiple attached slots: {attached_slots}."
+            )
+        pointer = (pipette["rack_key"], pipette["slot_id"])
+        if pipette["attachment_uncertain"] and not pipette_bare_confirmed:
+            raise TipStateReconciliationRequiredError(
+                f"Pipette attachment for fluid state {fluid_state_id} is uncertain; "
+                "confirm the pipette is bare before refilling."
+            )
+        if pointer[0] is not None and pointer[0] != rack_key:
+            raise TipStateConflictError(
+                f"Pipette tip is attached from rack {pointer[0]!r}; refill that "
+                "rack first or reconcile the attachment."
+            )
+        if attached_slots and pointer != (rack_key, attached_slots[0]):
+            raise TipStateConflictError(
+                "Tip slot and pipette attachment disagree; reconcile before refill."
+            )
+        if pointer[1] is not None and pointer[1] not in attached_slots:
+            raise TipStateConflictError(
+                "Pipette attachment points to a slot that is not attached."
+            )
+
+        blocked = [row[1] for row in rows if row[2] in {"reserved", "reconciliation_required"}]
+        if blocked:
+            raise TipStateReconciliationRequiredError(
+                f"Tip slots require reconciliation before refill: {blocked}."
+            )
+
+        changed_slots: list[str] = []
+        preserved_slots: list[str] = []
+        for row in rows:
+            slot_id, status = row[1], row[2]
+            if status == "attached" and not pipette_bare_confirmed:
+                preserved_slots.append(slot_id)
+                continue
+            if status != "available":
+                cursor = connection.execute(
+                    "UPDATE tip_containers SET status = 'available', "
+                    "version = version + 1, updated_at = datetime('now') "
+                    "WHERE id = ? AND version = ? AND status = ?",
+                    (row[0], row[3], status),
+                )
+                if cursor.rowcount != 1:
+                    raise TipStateConflictError(
+                        f"Tip {rack_key}.{slot_id} changed while refilling."
+                    )
+                changed_slots.append(slot_id)
+
+        if pipette_bare_confirmed:
+            _set_pipette_attachment(
+                connection,
+                fluid_state_id,
+                rack_key=None,
+                slot_id=None,
+                tip_extension_mm=None,
+                contents_known_empty=True,
+                attachment_uncertain=False,
+            )
+
+        changed_json = json.dumps(changed_slots, separators=(",", ":"))
+        preserved_json = json.dumps(preserved_slots, separators=(",", ":"))
+        connection.execute(
+            "INSERT INTO tip_refill_operations "
+            "(fluid_state_id, operation_key, rack_key, operator, reason, "
+            "changed_slots_json, preserved_slots_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (
+                fluid_state_id,
+                operation_key,
+                rack_key,
+                operator.strip(),
+                reason.strip(),
+                changed_json,
+                preserved_json,
+            ),
+        )
+        _touch_session(connection, fluid_state_id)
+        row = connection.execute(
+            "SELECT id, operation_key, rack_key, operator, reason, "
+            "changed_slots_json, preserved_slots_json, created_at "
+            "FROM tip_refill_operations WHERE operation_key = ?",
+            (operation_key,),
+        ).fetchone()
+        assert row is not None
+        return _tip_refill_snapshot(row)
+
+
 # ── Resume-time pipette restore ──────────────────────────────────────────────
 
 
@@ -1014,6 +1208,19 @@ def _tip_operation_row(
     return dict(zip((column[0] for column in cursor.description), row))
 
 
+def _tip_refill_snapshot(row: Any) -> TipRefillSnapshot:
+    return {
+        "id": int(row[0]),
+        "operation_key": row[1],
+        "rack_key": row[2],
+        "operator": row[3],
+        "reason": row[4],
+        "changed_slots": json.loads(row[5]),
+        "preserved_slots": json.loads(row[6]),
+        "created_at": row[7],
+    }
+
+
 def _pipette_attachment_row(
     connection: sqlite3.Connection,
     fluid_state_id: int,
@@ -1139,6 +1346,7 @@ __all__ = [
     "PipetteAttachmentSnapshot",
     "TipContainerSnapshot",
     "TipOperationSnapshot",
+    "TipRefillSnapshot",
     "TipStateConflictError",
     "TipStateDeckMismatchError",
     "TipStateError",
@@ -1153,6 +1361,7 @@ __all__ = [
     "mark_tip_reconciliation_required",
     "pending_tip_operations",
     "resolve_tip_operation",
+    "refill_tip_rack",
     "restore_pipette_attachment",
     "seed_tip_state",
     "verify_tip_container_registry",

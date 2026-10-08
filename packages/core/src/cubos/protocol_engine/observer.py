@@ -71,6 +71,18 @@ class StepObserver(Protocol):
     ) -> None:
         ...
 
+    def photo_pause_completed(
+        self,
+        *,
+        index: int,
+        command: str,
+        substep: Optional[str],
+        seconds: float,
+        capture_hold_seconds: float,
+        well: str,
+    ) -> None:
+        ...
+
 
 def notify(observer: Any, hook: str, /, **kwargs: Any) -> None:
     """Dispatch *hook* on *observer*, never raising.

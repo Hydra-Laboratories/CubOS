@@ -20,6 +20,7 @@ from cubos.data import (
 )
 from cubos.deck import load_deck_from_yaml
 from cubos.deck.errors import DeckLoaderError
+from cubos.deck.labware.tip_rack import TipRackResolutionError, resolve_tip_rack_slot
 from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
@@ -29,6 +30,8 @@ from cubos_api.models.state import (
     CapStateResponse,
     ContainerView,
     CreateFluidStateRequest,
+    FluidStockReconciliationRequest,
+    FluidStockReconciliationResponse,
     FluidStateDetailResponse,
     FluidStateSummaryResponse,
     OperationsResponse,
@@ -38,9 +41,13 @@ from cubos_api.models.state import (
     ResolveReconciliationRequest,
     ResolveReconciliationResponse,
     TipContainerView,
+    TipRefillRequest,
+    TipRefillResponse,
+    TipRefillView,
     TipStateResponse,
 )
 from cubos_api.services.state_errors import map_state_exception
+from cubos_api.services.run_manager import RunConflictError
 from cubos_api.services.yaml_io import resolve_config_path
 
 router = APIRouter(prefix="/api/v1/fluid-states", tags=["cubos-state-v1"])
@@ -68,6 +75,20 @@ def _load_deck(deck_file: str):
         return path, load_deck_from_yaml(path)
     except (DeckLoaderError, ValueError, ValidationError) as exc:
         raise HTTPException(400, f"cannot load deck {deck_file!r}: {exc}") from exc
+
+
+def _apply_tip_seed(deck, tips: Dict[str, bool]) -> None:
+    """Apply explicit physical tip-presence overrides before state creation."""
+    for target, present in tips.items():
+        try:
+            rack, slot_id = resolve_tip_rack_slot(deck, target)
+        except TipRackResolutionError as exc:
+            raise HTTPException(400, f"invalid tip seed {target!r}: {exc}") from exc
+        if slot_id is None or slot_id not in rack.tips:
+            raise HTTPException(
+                400, f"invalid tip seed {target!r}: an explicit rack slot is required",
+            )
+        rack.tip_present[slot_id] = present
 
 
 def _containers_with_roles(snapshot: Dict[str, Any]) -> List[ContainerView]:
@@ -131,6 +152,34 @@ def _operation_views(
                 },
             )
         )
+    for adjustment in store.list_fluid_adjustments(fluid_state_id):
+        if only_status and "applied" not in only_status:
+            continue
+        target = (
+            f"{adjustment['labware_key']}.{adjustment['location_id']}"
+            if adjustment["location_id"] else adjustment["labware_key"]
+        )
+        views.append(
+            OperationView(
+                domain="fluid",
+                id=adjustment["id"],
+                operation_key=adjustment["operation_key"],
+                operation_type="stock_reconciliation",
+                status="applied",
+                campaign_id=None,
+                detail=f"[{adjustment['operator']}] {adjustment['reason']}",
+                created_at=adjustment["created_at"],
+                updated_at=adjustment["created_at"],
+                applied_at=adjustment["created_at"],
+                context={
+                    "target": target,
+                    "previous_volume_ul": adjustment["previous_volume_ul"],
+                    "previous_composition": adjustment["previous_composition"],
+                    "volume_ul": adjustment["volume_ul"],
+                    "composition": adjustment["composition"],
+                },
+            )
+        )
     for op in tip_snapshot["operations"]:
         if only_status and op["status"] not in only_status:
             continue
@@ -150,6 +199,28 @@ def _operation_views(
                     "rack_key": op["rack_key"],
                     "slot_id": op["slot_id"],
                     "tip_extension_mm": op["tip_extension_mm"],
+                },
+            )
+        )
+    for refill in tip_snapshot.get("refills", []):
+        if only_status and "applied" not in only_status:
+            continue
+        views.append(
+            OperationView(
+                domain="tip",
+                id=refill["id"],
+                operation_key=refill["operation_key"],
+                operation_type="rack_refill",
+                status="applied",
+                campaign_id=None,
+                detail=f"[{refill['operator']}] {refill['reason']}",
+                created_at=refill["created_at"],
+                updated_at=refill["created_at"],
+                applied_at=refill["created_at"],
+                context={
+                    "rack_key": refill["rack_key"],
+                    "changed_slots": refill["changed_slots"],
+                    "preserved_slots": refill["preserved_slots"],
                 },
             )
         )
@@ -184,6 +255,7 @@ def _summary(row: Dict[str, Any]) -> FluidStateSummaryResponse:
 @router.post("", response_model=FluidStateSummaryResponse, status_code=201)
 def create_fluid_state(body: CreateFluidStateRequest) -> FluidStateSummaryResponse:
     deck_path, deck = _load_deck(body.deck_file)
+    _apply_tip_seed(deck, body.tips)
     store = _open_store()
     try:
         fluids = {
@@ -268,7 +340,96 @@ def get_tips(fluid_state_id: int) -> TipStateResponse:
             fluid_state_id=snapshot["fluid_state_id"],
             containers=[TipContainerView(**c) for c in snapshot["containers"]],
             pipette=PipetteAttachmentView(**snapshot["pipette"]),
+            refills=[TipRefillView(**r) for r in snapshot.get("refills", [])],
         )
+    finally:
+        store.close()
+
+
+def _require_station_idle() -> None:
+    """Reject inventory edits while a run or campaign owns the station."""
+    from cubos_api.routers import gantry
+    from cubos_api.services.run_manager import get_run_manager
+
+    status = gantry.run_status()
+    manager = get_run_manager()
+    if status.get("active") or manager.active_run_id is not None:
+        raise HTTPException(409, "station is busy with an active protocol run")
+    from cubos_api.services.run_manager import reservation_context
+    if manager.reservation_owner is not None and not manager.owns_reservation(reservation_context.get()):
+        raise HTTPException(409, "station is reserved by an external client")
+
+
+@router.post(
+    "/{fluid_state_id}/reconcile-stock",
+    response_model=FluidStockReconciliationResponse,
+    status_code=200,
+)
+def reconcile_stock(
+    fluid_state_id: int, body: FluidStockReconciliationRequest,
+) -> FluidStockReconciliationResponse:
+    """Record an operator-confirmed stock replacement while the station is idle."""
+    from cubos_api.routers import gantry
+    from cubos_api.services.run_manager import get_run_manager
+
+    manager = get_run_manager()
+    try:
+        with manager.inventory_edit():
+            status = gantry.run_status()
+            if status.get("active"):
+                raise HTTPException(409, "station is busy with an active protocol run")
+            store = _open_store()
+            try:
+                try:
+                    result = store.reconcile_fluid_container(
+                        fluid_state_id,
+                        body.operation_key.strip(),
+                        body.target.strip(),
+                        body.volume_ul,
+                        body.composition,
+                        operator=body.operator.strip(),
+                        reason=body.reason.strip(),
+                    )
+                except _STATE_EXCEPTIONS as exc:
+                    raise map_state_exception(exc) from exc
+                return FluidStockReconciliationResponse(
+                    fluid_state_id=fluid_state_id,
+                    target=(
+                        f"{result['labware_key']}.{result['location_id']}"
+                        if result["location_id"] else result["labware_key"]
+                    ),
+                    **{key: result[key] for key in (
+                        "operation_key", "volume_ul", "composition", "operator", "reason", "status",
+                    )},
+                )
+            finally:
+                store.close()
+    except RunConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post(
+    "/{fluid_state_id}/tips/refill",
+    response_model=TipRefillResponse,
+    status_code=200,
+)
+def refill_tips(fluid_state_id: int, body: TipRefillRequest) -> TipRefillResponse:
+    """Apply an operator-confirmed full-rack refill to tip state only."""
+    _require_station_idle()
+    store = _open_store()
+    try:
+        try:
+            refill = store.refill_tip_rack(
+                fluid_state_id,
+                body.operation_key.strip(),
+                body.rack_key.strip(),
+                operator=body.operator.strip(),
+                reason=body.reason.strip(),
+                pipette_bare_confirmed=body.pipette_bare_confirmed,
+            )
+        except _STATE_EXCEPTIONS as exc:
+            raise map_state_exception(exc) from exc
+        return TipRefillResponse(fluid_state_id=fluid_state_id, **refill)
     finally:
         store.close()
 

@@ -210,6 +210,15 @@ def image_well(args: Dict[str, Any]) -> str:
     )
 
 
+def measure_color(args: Dict[str, Any]) -> str:
+    reference = args.get("reference_lab")
+    detail = "Lab + ΔE00" if reference is not None else "Lab"
+    return _join(
+        f"{args['instrument']} @ {_position(args.get('position', 'current position'))}",
+        detail,
+    )
+
+
 def clear_well(args: Dict[str, Any]) -> str:
     target = args.get("target_volume_ul", 0.0)
     explicit = args.get("volume_ul")
@@ -223,6 +232,7 @@ __all__ = [
     "breakpoint_cmd",
     "cap",
     "capture",
+    "measure_color",
     "clear_well",
     "decap",
     "drop_tip",

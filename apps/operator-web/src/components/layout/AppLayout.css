@@ -1,0 +1,176 @@
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  min-height: 0;
+  background: var(--z-canvas);
+}
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 0.5rem 1rem;
+  background: var(--z-header-bg);
+  border-bottom: 1px solid var(--z-border);
+  box-shadow: var(--z-header-hairline);
+}
+
+.app-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  transition: grid-template-columns 220ms ease;
+}
+
+.app-workspace.station-open {
+  grid-template-columns: minmax(0, 1fr) clamp(20rem, 31vw, 34rem);
+}
+
+.app-workspace.station-closed {
+  grid-template-columns: minmax(0, 1fr) 3rem;
+}
+
+.app-primary,
+.app-station {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--z-border);
+  background: var(--z-surface);
+  box-shadow: var(--z-shadow-card);
+}
+
+.app-primary {
+  overflow: auto;
+  padding: 1.125rem;
+  border-radius: 0.625rem;
+}
+
+.app-station {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+
+.app-station-toggle {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  border-bottom: 1px solid var(--z-border);
+  background: var(--z-surface-muted);
+  color: var(--z-text-secondary);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.app-station-toggle:hover {
+  color: var(--z-ink);
+  background: var(--z-segment-active-bg);
+}
+
+.app-station-toggle:focus-visible {
+  outline: 2px solid var(--z-accent);
+  outline-offset: -3px;
+}
+
+.app-station-toggle > span {
+  color: var(--z-accent-text);
+  font-size: 1.25rem;
+  line-height: 1;
+}
+
+.station-closed .app-station-toggle {
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 0.8rem 0.35rem;
+  border-bottom: 0;
+}
+
+.station-closed .app-station-toggle strong {
+  writing-mode: vertical-rl;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+}
+
+.app-station-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.app-station-deck {
+  min-height: 19rem;
+  height: min(42vh, 30rem);
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--z-border);
+}
+
+.app-station-controls {
+  padding-top: 0.75rem;
+}
+
+.campaign-template-disclosure {
+  margin: 0 0 0.875rem;
+  border: 1px solid var(--z-border);
+  border-radius: 0.45rem;
+  background: var(--z-surface-sunken);
+}
+
+.campaign-template-disclosure summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0.8rem;
+  color: var(--z-text-secondary);
+  cursor: pointer;
+}
+
+.campaign-template-disclosure summary:hover {
+  color: var(--z-ink);
+}
+
+.campaign-template-disclosure summary:focus-visible {
+  outline: 2px solid var(--z-accent);
+  outline-offset: 2px;
+}
+
+.campaign-template-disclosure summary small {
+  overflow: hidden;
+  color: var(--z-text-faint);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.campaign-template-disclosure > label {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0 0.8rem 0.8rem;
+  color: var(--z-text-muted);
+  font-size: 0.78rem;
+}
+
+@media (max-width: 900px) {
+  .app-workspace.station-open {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 42vw);
+  }
+
+  .app-primary {
+    padding: 0.85rem;
+  }
+}

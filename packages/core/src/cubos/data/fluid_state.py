@@ -357,6 +357,113 @@ def seed_fluid(
         )
 
 
+def reconcile_fluid_container(
+    connection: sqlite3.Connection,
+    fluid_state_id: int,
+    operation_key: str,
+    target: str | DeckLabwareTarget,
+    volume_ul: float,
+    composition: Mapping[str, float] | None,
+    *,
+    operator: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Record an operator-confirmed stock replacement with full provenance."""
+    _validate_operation_key(operation_key)
+    if not isinstance(operator, str) or not operator.strip():
+        raise FluidStateError("Stock reconciliation operator is required.")
+    if not isinstance(reason, str) or not reason.strip():
+        raise FluidStateError("Stock reconciliation reason is required.")
+    volume = _finite_nonnegative(volume_ul, "volume_ul")
+    with _immediate_transaction(connection):
+        _require_state(connection, fluid_state_id)
+        pending = _pending_operations(connection, fluid_state_id)
+        if pending:
+            details = ", ".join(f"{key} ({status})" for key, status in pending)
+            raise FluidStateReconciliationRequiredError(
+                f"Fluid state {fluid_state_id} cannot be reconciled while operations "
+                f"require reconciliation: {details}."
+            )
+        labware_key, location_id = _target_parts_for_state(
+            connection, fluid_state_id, target,
+        )
+        row = _container_row(connection, fluid_state_id, labware_key, location_id)
+        previous_volume = float(row["current_volume_ul"])
+        previous_composition = _decode_composition(
+            row["composition_json"], previous_volume,
+            target=_format_target(labware_key, location_id),
+        )
+        if composition is None:
+            normalized = (
+                _proportional_composition(previous_composition, previous_volume, volume)
+                if previous_volume > _VOLUME_TOLERANCE_UL
+                else _normalize_composition(None, volume)
+            )
+        else:
+            normalized = _normalize_composition(composition, volume)
+        _validate_replacement_volume(
+            row, volume, _format_target(labware_key, location_id), action="Refill"
+        )
+        existing = connection.execute(
+            "SELECT fluid_state_id, labware_key, location_id, operator, reason, volume_ul, "
+            "composition_json FROM fluid_adjustments WHERE operation_key = ?",
+            (operation_key,),
+        ).fetchone()
+        if existing is not None:
+            if (
+                int(existing[0]), existing[1], existing[2], existing[3], existing[4],
+                float(existing[5]), json.loads(existing[6]),
+            ) != (
+                fluid_state_id, labware_key, location_id, operator.strip(),
+                reason.strip(), volume, dict(normalized),
+            ):
+                raise FluidStateError(
+                    f"Stock reconciliation operation {operation_key!r} already exists "
+                    "with different details."
+                )
+            return {
+                "operation_key": operation_key,
+                "labware_key": labware_key,
+                "location_id": location_id,
+                "operator": existing[3],
+                "reason": existing[4],
+                "volume_ul": float(existing[5]),
+                "composition": json.loads(existing[6]),
+                "status": "applied",
+            }
+        connection.execute(
+            "INSERT INTO fluid_adjustments (fluid_state_id, operation_key, "
+            "labware_key, location_id, operator, reason, previous_volume_ul, "
+            "previous_composition_json, volume_ul, composition_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                fluid_state_id, operation_key, labware_key, location_id,
+                operator.strip(), reason.strip(), previous_volume,
+                _canonical_json(previous_composition), volume,
+                _canonical_json(dict(normalized)),
+            ),
+        )
+        connection.execute(
+            "UPDATE fluid_containers SET current_volume_ul = ?, composition_json = ?, "
+            "version = version + 1, updated_at = datetime('now') WHERE id = ?",
+            (volume, _canonical_json(dict(normalized)), row["id"]),
+        )
+        connection.execute(
+            "UPDATE fluid_state_sessions SET updated_at = datetime('now') WHERE id = ?",
+            (fluid_state_id,),
+        )
+    return {
+        "operation_key": operation_key,
+        "labware_key": labware_key,
+        "location_id": location_id,
+        "operator": operator.strip(),
+        "reason": reason.strip(),
+        "volume_ul": volume,
+        "composition": dict(normalized),
+        "status": "applied",
+    }
+
+
 def begin_fluid_transfer(
     connection: sqlite3.Connection,
     fluid_state_id: int,
@@ -865,6 +972,38 @@ def get_fluid_container(
         "version": int(row[7]),
         "updated_at": row[8],
     }
+
+
+def list_fluid_adjustments(
+    connection: sqlite3.Connection,
+    fluid_state_id: int,
+) -> list[dict[str, Any]]:
+    """Return operator stock replacements in durable chronological order."""
+    with _read_transaction(connection):
+        _require_state(connection, fluid_state_id)
+        rows = connection.execute(
+            "SELECT id, operation_key, labware_key, location_id, operator, reason, "
+            "previous_volume_ul, previous_composition_json, volume_ul, "
+            "composition_json, created_at FROM fluid_adjustments "
+            "WHERE fluid_state_id = ? ORDER BY id",
+            (fluid_state_id,),
+        ).fetchall()
+    return [
+        {
+            "id": int(row[0]),
+            "operation_key": row[1],
+            "labware_key": row[2],
+            "location_id": row[3],
+            "operator": row[4],
+            "reason": row[5],
+            "previous_volume_ul": float(row[6]),
+            "previous_composition": json.loads(row[7]),
+            "volume_ul": float(row[8]),
+            "composition": json.loads(row[9]),
+            "created_at": row[10],
+        }
+        for row in rows
+    ]
 
 
 def _resolved_deck_provenance(deck_path: str | Path) -> tuple[str, str]:

@@ -1,0 +1,44 @@
+# Campaign template for three-stock color matching. Replace reference_lab with
+# the Lab measurement returned by measure_color for the secret target in A1.
+protocol:
+  - pick_up_tip:
+      position: tips.A1
+  - transfer:
+      source: stocks.A1
+      destination: plate.A2
+      volume_ul: 200
+      source_height: -8
+  - drop_tip:
+      position: waste
+  - pick_up_tip:
+      position: tips.A2
+  - transfer:
+      source: stocks.A2
+      destination: plate.A2
+      volume_ul: 50
+      source_height: -8
+  - drop_tip:
+      position: waste
+  - pick_up_tip:
+      position: tips.A3
+  - transfer:
+      source: stocks.A3
+      destination: plate.A2
+      volume_ul: 50
+      source_height: -8
+  - mix:
+      position: plate.A2
+      volume_ul: 225
+      cycles: 3
+      height: -3
+  - drop_tip:
+      position: waste
+  - move:
+      instrument: camera
+      position: plate.A2
+  - measure_color:
+      instrument: camera
+      position: plate.A2
+      label: color_candidate
+      roi_fraction: 0.5
+      reference_lab: [50.0, 0.0, 0.0]

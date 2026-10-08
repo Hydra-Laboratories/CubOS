@@ -1,0 +1,249 @@
+labware:
+  plate:
+    type: well_plate
+    name: 96-well color plate
+    rows: 8
+    columns: 12
+    length: 127.76
+    width: 85.48
+    height: 15
+    capacity_ul: 300
+    working_volume_ul: 300
+    calibration:
+      a1:
+        x: 25.803
+        y: 70.035
+        z: 38.5
+      a2:
+        x: 34.803
+        y: 70.035
+    x_offset: 9
+    y_offset: 9
+    row_direction: negative
+    model_name: ''
+    well_attributes: {}
+    motion:
+      box:
+        anchor: A1
+        offset:
+          x: -14.38
+          y: -74.24
+          z: -15
+        size:
+          x: 127.76
+          y: 85.48
+          z: 15
+      access:
+        transfer:
+          strategy: vertical
+        mix:
+          strategy: vertical
+  stocks:
+    type: vial_grid
+    name: 12-vial holder (2 x 6, 20 mm pitch)
+    rows: 2
+    columns: 6
+    calibration:
+      a1:
+        x: 27.803
+        y: 129.035
+        z: 58.5
+      a2:
+        x: 47.803
+        y: 129.035
+    x_offset: 20
+    y_offset: 20
+    row_direction: negative
+    vial_height: 45
+    vial_diameter: 18
+    capacity_ul: 5000
+    working_volume_ul: 4000
+    model_name: ''
+    aliases: {}
+    motion:
+      box:
+        anchor: A1
+        offset:
+          x: -10
+          y: -30
+          z: -45
+        size:
+          x: 120
+          y: 40
+          z: 45
+      access:
+        transfer:
+          strategy: vertical
+  tips:
+    type: tip_rack
+    name: 1000 µL / 70 mm side-exit rack
+    model_name: ColorMatching_TipHolder
+    location:
+      x: 150
+      y: 20
+      z: 0
+    rows: 8
+    columns: 12
+    calibration:
+      a1:
+        x: 147.456
+        y: 72.535
+        z: 106
+      a2:
+        x: 157.456
+        y: 72.535
+    x_offset: 10
+    y_offset: 10
+    pickup_z: 96
+    tip_length: 70
+    length: 120
+    width: 84
+    height: 63
+    side_exit:
+      lift_mm: 30
+      exit_x: 140
+    slots: {}
+    tip_present:
+      A1: true
+      A2: true
+      A3: true
+      A4: true
+      A5: true
+      A6: true
+      A7: true
+      A8: true
+      A9: true
+      A10: true
+      A11: true
+      A12: true
+      B1: true
+      B2: true
+      B3: true
+      B4: true
+      B5: true
+      B6: true
+      B7: true
+      B8: true
+      B9: true
+      B10: true
+      B11: true
+      B12: true
+      C1: true
+      C2: true
+      C3: true
+      C4: true
+      C5: true
+      C6: true
+      C7: true
+      C8: true
+      C9: true
+      C10: true
+      C11: true
+      C12: true
+      D1: true
+      D2: true
+      D3: true
+      D4: true
+      D5: true
+      D6: true
+      D7: true
+      D8: true
+      D9: true
+      D10: true
+      D11: true
+      D12: true
+      E1: true
+      E2: true
+      E3: true
+      E4: true
+      E5: true
+      E6: true
+      E7: true
+      E8: true
+      E9: true
+      E10: true
+      E11: true
+      E12: true
+      F1: true
+      F2: true
+      F3: true
+      F4: true
+      F5: true
+      F6: true
+      F7: true
+      F8: true
+      F9: true
+      F10: true
+      F11: true
+      F12: true
+      G1: true
+      G2: true
+      G3: true
+      G4: true
+      G5: true
+      G6: true
+      G7: true
+      G8: true
+      G9: true
+      G10: true
+      G11: true
+      G12: true
+      H1: true
+      H2: true
+      H3: true
+      H4: true
+      H5: true
+      H6: true
+      H7: true
+      H8: true
+      H9: true
+      H10: true
+      H11: true
+      H12: true
+    motion:
+      box:
+        anchor: A1
+        offset:
+          x: -7
+          y: -78
+          z: -70
+        size:
+          x: 124
+          y: 84
+          z: 63
+      occupied_tip_radius_mm: 2.5
+      access:
+        pick_up_tip:
+          strategy: side_exit
+          lift_mm: 30
+          exit_edge: x_min
+          clearance_mm: 8
+  waste:
+    type: vial
+    name: Tip discard point - position provisionally copied from simulation
+    location:
+      x: 230
+      y: 129
+      z: 60
+    height: 45
+    diameter: 20
+    capacity_ul: 5000
+    working_volume_ul: 4000
+    model_name: ''
+    dead_volume_ul: 0
+    motion:
+      box:
+        anchor: location
+        offset:
+          x: -10
+          y: -10
+          z: -45
+        size:
+          x: 20
+          y: 20
+          z: 45
+      access:
+        drop_tip:
+          strategy: vertical
+motion_planning:
+  clearance_mm: 2

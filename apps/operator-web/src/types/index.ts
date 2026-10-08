@@ -11,6 +11,22 @@ export interface Coordinate2D {
   y: number;
 }
 
+export interface MotionBox {
+  anchor: "A1" | "location";
+  offset: Coordinate3D;
+  size: Coordinate3D;
+}
+
+export type MotionAccess =
+  | { strategy: "vertical" }
+  | { strategy: "side_exit"; lift_mm: number; exit_edge: "x_min" | "x_max" | "y_min" | "y_max"; clearance_mm: number };
+
+export interface LabwareMotion {
+  box: MotionBox;
+  occupied_tip_radius_mm?: number;
+  access?: Partial<Record<"move" | "pick_up_tip" | "transfer" | "mix" | "drop_tip", MotionAccess>>;
+}
+
 export interface CalibrationPoints {
   a1: Coordinate3D | null;
   a2: Coordinate3D;
@@ -31,6 +47,7 @@ export interface WellPlateConfig {
   y_offset: number;
   capacity_ul?: number | null;
   working_volume_ul?: number | null;
+  motion?: LabwareMotion;
 }
 
 export interface VialConfig {
@@ -42,6 +59,7 @@ export interface VialConfig {
   location: Coordinate3D;
   capacity_ul: number;
   working_volume_ul: number;
+  motion?: LabwareMotion;
 }
 
 export interface VialGridConfig {
@@ -60,6 +78,7 @@ export interface VialGridConfig {
   capacity_ul: number;
   working_volume_ul: number;
   [key: string]: unknown;
+  motion?: LabwareMotion;
 }
 
 // Mirrors TipRackYamlEntry: tip positions derive from a two-point XY
@@ -189,10 +208,12 @@ export interface LabwareResponse {
 export interface DeckResponse {
   filename: string;
   labware: LabwareResponse[];
+  motion_planning?: { clearance_mm: number } | null;
 }
 
 export interface DeckConfig {
   labware: Record<string, LabwareConfig>;
+  motion_planning?: { clearance_mm: number };
 }
 
 export interface InstrumentConfig {
@@ -278,6 +299,25 @@ export interface GantryPosition {
   calibration_active: boolean;
   calibration_warning?: string | null;
   move_error?: string | null;
+}
+
+export interface CameraAlignmentProposal {
+  proposal_id: string;
+  gantry_file: string;
+  gantry_sha256: string;
+  deck_file: string;
+  deck_sha256: string;
+  camera_instrument: string;
+  target_position: string;
+  head: { work_x: number; work_y: number; work_z: number; status: string };
+  target: Coordinate3D;
+  before: { offset_x: number; offset_y: number };
+  after: { offset_x: number; offset_y: number };
+  camera_frame_id: number;
+  camera_frame_received_at: number;
+  camera_frame_age_seconds: number;
+  calibration_warning: string | null;
+  expires_at: number;
 }
 
 export interface ZCalibrationSummary {
@@ -628,6 +668,7 @@ export interface CreateFluidStateRequest {
   deck_file: string;
   label?: string | null;
   fluids?: Record<string, FluidSeedItem>;
+  tips?: Record<string, boolean>;
 }
 
 // Run-submission state choice, owned by App.tsx and threaded into

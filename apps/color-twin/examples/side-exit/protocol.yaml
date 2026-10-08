@@ -1,0 +1,60 @@
+# SIMULATION ONLY — photo-derived estimates, not calibrated hardware configs.
+protocol:
+- pick_up_tip:
+    position: tips.A12
+- move:
+    instrument: pipette
+    position:
+    - 140
+    - 130
+    - 30
+    travel_z: 30
+- transfer:
+    source: stocks.A1
+    destination: plate.A1
+    volume_ul: 100
+    source_height: -8
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A11
+- move:
+    instrument: pipette
+    position:
+    - 140
+    - 130
+    - 30
+    travel_z: 30
+- transfer:
+    source: stocks.A2
+    destination: plate.A1
+    volume_ul: 100
+    source_height: -8
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A10
+- move:
+    instrument: pipette
+    position:
+    - 140
+    - 130
+    - 30
+    travel_z: 30
+- transfer:
+    source: stocks.A3
+    destination: plate.A1
+    volume_ul: 100
+    source_height: -8
+- mix:
+    position: plate.A1
+    volume_ul: 60
+    cycles: 3
+    height: -3
+- drop_tip:
+    position: waste
+- measure:
+    instrument: camera
+    position: plate.A1
+    measurement_height: 40
+    method: capture

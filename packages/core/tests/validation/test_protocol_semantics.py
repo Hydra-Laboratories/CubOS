@@ -833,6 +833,54 @@ def test_move_to_unknown_named_position_emits_violation():
     assert any("cannot be resolved" in v.message for v in violations), violations
 
 
+def test_planned_deck_move_uses_carriage_ceiling_in_semantic_bounds():
+    camera = _instrument("camera")
+    camera.offset_y = -46.5
+    camera.depth = -114.964
+    instrumented_gantry = InstrumentedGantry(
+        controller=MagicMock(), instruments={"camera": camera},
+    )
+    plate = WellPlate(
+        name="plate",
+        model_name="test_plate",
+        rows=1,
+        columns=1,
+        wells={"A1": Coordinate3D(x=25.803, y=70.035, z=38.5)},
+        capacity_ul=300.0,
+        working_volume_ul=300.0,
+    )
+    deck = Deck(
+        {"plate": plate}, motion_planning={"clearance_mm": 2.0},
+    )
+    gantry = _gantry_config(
+        x_max=258.205, y_max=144.645, z_max=66.5, safe_z=66.5,
+    )
+    protocol = _move_step(position="plate.A1", instrument="camera")
+
+    assert validate_protocol_semantics(
+        protocol, instrumented_gantry, deck, gantry,
+    ) == []
+
+
+def test_planned_literal_move_still_uses_instrument_depth_semantics():
+    camera = _instrument("camera")
+    camera.depth = -114.964
+    instrumented_gantry = InstrumentedGantry(
+        controller=MagicMock(), instruments={"camera": camera},
+    )
+    deck = Deck({}, motion_planning={"clearance_mm": 2.0})
+    gantry = _gantry_config(z_max=66.5, safe_z=66.5)
+    protocol = _move_step(
+        position=[25.803, 70.035, 66.5], instrument="camera",
+    )
+
+    violations = validate_protocol_semantics(
+        protocol, instrumented_gantry, deck, gantry,
+    )
+
+    assert any("gantry z=-48.464" in violation.message for violation in violations)
+
+
 # ─── working-volume bound checks for `scan` ──────────────────────────────────
 
 

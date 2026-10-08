@@ -51,3 +51,17 @@ def test_lifespan_resets_session_when_disconnect_raises(monkeypatch):
 
     assert session.disconnect_called is True
     assert gantry_router.current_session() is None
+
+
+def test_lifespan_releases_camera_monitors_without_gantry_session(monkeypatch):
+    reset_calls = []
+    monkeypatch.setattr(gantry_router, "_session", None)
+    monkeypatch.setattr(
+        api_app.instruments,
+        "reset_manual_instruments",
+        lambda: reset_calls.append(True),
+    )
+
+    _run_lifespan_once()
+
+    assert reset_calls == [True]

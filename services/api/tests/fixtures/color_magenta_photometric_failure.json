@@ -1,0 +1,999 @@
+{
+  "campaign_id": "102ed127bca944b0bca9c57a1540fb9e",
+  "spec": {
+    "name": "Deep magenta #B4298A",
+    "gantry_file": "overnight_1734c80cdae04887b29fb0a7d6f70f61_3_gantry.yaml",
+    "deck_file": "overnight_1734c80cdae04887b29fb0a7d6f70f61_3_deck.yaml",
+    "protocol_file": "ade_color_matching_a3b66e48.yaml",
+    "parameters": [
+      {
+        "name": "red_ul",
+        "minimum": 25.0,
+        "maximum": 100.0,
+        "step": 2.5,
+        "bindings": [
+          {
+            "step_index": 1,
+            "argument": "volume_ul"
+          }
+        ]
+      },
+      {
+        "name": "yellow_ul",
+        "minimum": 25.0,
+        "maximum": 100.0,
+        "step": 2.5,
+        "bindings": [
+          {
+            "step_index": 4,
+            "argument": "volume_ul"
+          }
+        ]
+      },
+      {
+        "name": "blue_ul",
+        "minimum": 25.0,
+        "maximum": 100.0,
+        "step": 2.5,
+        "bindings": [
+          {
+            "step_index": 7,
+            "argument": "volume_ul"
+          }
+        ]
+      }
+    ],
+    "sequences": [
+      {
+        "name": "candidate_well",
+        "values": [
+          "plate.A6",
+          "plate.B6",
+          "plate.C6",
+          "plate.D6",
+          "plate.E6",
+          "plate.F6",
+          "plate.G6",
+          "plate.H6"
+        ],
+        "bindings": [
+          {
+            "step_index": 1,
+            "argument": "destination"
+          },
+          {
+            "step_index": 4,
+            "argument": "destination"
+          },
+          {
+            "step_index": 7,
+            "argument": "destination"
+          },
+          {
+            "step_index": 10,
+            "argument": "position"
+          },
+          {
+            "step_index": 12,
+            "argument": "position"
+          },
+          {
+            "step_index": 13,
+            "argument": "position"
+          },
+          {
+            "step_index": 15,
+            "argument": "well"
+          }
+        ]
+      },
+      {
+        "name": "red_tip",
+        "values": [
+          "tips.C11",
+          "tips.C11",
+          "tips.C11",
+          "tips.D5",
+          "tips.D5",
+          "tips.D5",
+          "tips.D11",
+          "tips.D11"
+        ],
+        "bindings": [
+          {
+            "step_index": 0,
+            "argument": "position"
+          }
+        ]
+      },
+      {
+        "name": "yellow_tip",
+        "values": [
+          "tips.C12",
+          "tips.C12",
+          "tips.C12",
+          "tips.D6",
+          "tips.D6",
+          "tips.D6",
+          "tips.D12",
+          "tips.D12"
+        ],
+        "bindings": [
+          {
+            "step_index": 3,
+            "argument": "position"
+          }
+        ]
+      },
+      {
+        "name": "blue_tip",
+        "values": [
+          "tips.D1",
+          "tips.D1",
+          "tips.D1",
+          "tips.D7",
+          "tips.D7",
+          "tips.D7",
+          "tips.E1",
+          "tips.E1"
+        ],
+        "bindings": [
+          {
+            "step_index": 6,
+            "argument": "position"
+          }
+        ]
+      },
+      {
+        "name": "mix_tip",
+        "values": [
+          "tips.D2",
+          "tips.D3",
+          "tips.D4",
+          "tips.D8",
+          "tips.D9",
+          "tips.D10",
+          "tips.E2",
+          "tips.E3"
+        ],
+        "bindings": [
+          {
+            "step_index": 9,
+            "argument": "position"
+          }
+        ]
+      }
+    ],
+    "objective": {
+      "mode": "result",
+      "path": "13.delta_e_00",
+      "direction": "minimize"
+    },
+    "optimizer": {
+      "method": "ei",
+      "kernel": "matern52",
+      "initial_trials": 3,
+      "initial_points": [
+        {
+          "red_ul": 100.0,
+          "yellow_ul": 25.0,
+          "blue_ul": 25.0
+        },
+        {
+          "red_ul": 25.0,
+          "yellow_ul": 100.0,
+          "blue_ul": 25.0
+        },
+        {
+          "red_ul": 25.0,
+          "yellow_ul": 25.0,
+          "blue_ul": 100.0
+        }
+      ],
+      "exploration": 0.05,
+      "seed": 7
+    },
+    "stop": {
+      "max_trials": 8,
+      "target_value": 2.0,
+      "patience": 0,
+      "min_improvement": 0.0,
+      "max_seconds": null
+    },
+    "sum_constraint": {
+      "parameters": [
+        "red_ul",
+        "yellow_ul",
+        "blue_ul"
+      ],
+      "total": 150.0
+    },
+    "mock_mode": false,
+    "fluid_state_id": 10,
+    "batch_size": 3,
+    "skip_underexposed": true,
+    "source_protocol_file": "overnight_1734c80cdae04887b29fb0a7d6f70f61_3_protocol.yaml",
+    "target_mode": "rgb",
+    "target_rgb": [
+      180.0,
+      41.0,
+      138.0
+    ],
+    "target_run_id": null,
+    "target_analysis_revision": null,
+    "target_well": null,
+    "target_lab": null,
+    "reference_processing_profile_id": null
+  },
+  "state": "failed",
+  "created_at": 1791306250.2798185,
+  "updated_at": 1791306635.229669,
+  "active_run_id": null,
+  "trials": [
+    {
+      "index": 0,
+      "parameters": {
+        "red_ul": 100.0,
+        "yellow_ul": 25.0,
+        "blue_ul": 25.0
+      },
+      "run_id": "102ed127bca944b0bca9c57a1540fb9e-batch-1",
+      "state": "succeeded",
+      "objective": 34.26552753916546,
+      "measurement": {
+        "frame_metadata": {
+          "frame_id": 3731,
+          "received_at": 1791306508.754026,
+          "width": 800,
+          "height": 600,
+          "configuration_revision": 0,
+          "image_sha256": "537445110ab651a291ecfb08047986e718629bed2fdab4ad067943c62756e619"
+        },
+        "roi": {
+          "method": "detected_well_inner_disc",
+          "detection_status": "selected",
+          "center_x_px": 397,
+          "center_y_px": 297,
+          "radius_px": 20,
+          "sample_radius_px": 10.0,
+          "expected_center_x_px": 399.5,
+          "expected_center_y_px": 299.5,
+          "expected_center_source": "frame_center",
+          "center_residual_px": 3.5355339059327378,
+          "detection_confidence": 0.9893933982822019,
+          "candidate_count": 17
+        },
+        "delta_e_00": 34.26552753916546,
+        "quality": {
+          "accepted": true,
+          "status": "accepted",
+          "score": 0.9495268138801262,
+          "flags": [],
+          "warnings": [
+            "well identity is not verified by image analysis",
+            "Lab is an uncalibrated camera estimate"
+          ],
+          "roi_pixel_count": 317,
+          "valid_pixel_count": 301,
+          "excluded_pixel_count": 16,
+          "valid_fraction": 0.9495268138801262,
+          "low_clipped_pixel_count": 16,
+          "high_clipped_pixel_count": 0,
+          "glare_pixel_count": 0,
+          "low_clipped_fraction": 0.050473186119873815,
+          "high_clipped_fraction": 0.0,
+          "glare_fraction": 0.0,
+          "exposure_percentiles": {
+            "p01": 9.029784,
+            "p50": 12.023800000000001,
+            "p99": 14.946751999999998
+          }
+        },
+        "reference_lab": [
+          42.95359152551574,
+          62.81079595760586,
+          -21.310201737964718
+        ],
+        "well_identity": {
+          "expected_well": "plate.A6",
+          "source": "protocol_position",
+          "verification_status": "not_verified_by_cv"
+        },
+        "annotated_preview_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-130828.analysis.png",
+        "reference_rgb": [
+          180.0,
+          41.0,
+          138.0
+        ],
+        "lab": [
+          4.315770851330825,
+          13.622607870440353,
+          1.2692182952744158
+        ],
+        "measurement_status": "accepted",
+        "processing_profile": {
+          "schema": "cubos.camera-well-cielab.v1",
+          "id": "cubos.camera-well-cielab.v1:953fa0e08e265629",
+          "algorithm": "detected_well_inner_disc_median",
+          "configuration": {
+            "roi_fraction_of_detected_radius": 0.5,
+            "expected_center_normalized": [
+              0.5,
+              0.5
+            ],
+            "expected_center_source": "frame_center",
+            "well_detector": {
+              "method": "hough_circle_near_expected_center",
+              "minimum_radius_fraction": 0.015,
+              "maximum_radius_fraction": 0.08,
+              "maximum_center_offset_fraction": 0.25,
+              "maximum_center_residual_radii": 1.0
+            },
+            "quality_mask": {
+              "low_clip_max": 2,
+              "high_clip_min": 253,
+              "neutral_glare_min": 230,
+              "neutral_glare_max_chroma": 15,
+              "minimum_valid_pixels": 100,
+              "minimum_valid_fraction": 0.5,
+              "maximum_low_clipped_fraction": 0.2,
+              "maximum_high_clipped_fraction": 0.05,
+              "maximum_glare_fraction": 0.1,
+              "minimum_median_luminance": 10.0,
+              "maximum_median_luminance": 245.0
+            },
+            "estimator": "per_channel_median_of_valid_pixels",
+            "acquisition": {
+              "requested_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "actual_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "image_height": null
+            },
+            "image_properties": {
+              "width_px": 800,
+              "height_px": 600,
+              "channels": 3,
+              "dtype": "uint8"
+            },
+            "reference_origin": "user_selected_srgb"
+          },
+          "rgb_encoding": "sRGB",
+          "transfer_function": "IEC 61966-2-1 sRGB",
+          "xyz_matrix": "sRGB to XYZ D65",
+          "illuminant": "D65",
+          "observer": "CIE 1931 2 degree",
+          "reference_white_xyz": [
+            0.95047,
+            1.0,
+            1.08883
+          ],
+          "calibration_status": "uncalibrated",
+          "calibration_provenance": "Camera RGB interpreted as sRGB without an ICC profile or color-target correction; reported Lab is an estimate and is not traceable colorimetry."
+        },
+        "reference_provenance": {
+          "origin": "user_selected_srgb",
+          "source": "operator_selected",
+          "encoding": "sRGB",
+          "conversion": "cubos.optimization.color.rgb_to_lab",
+          "whitepoint": "D65",
+          "calibration_status": "uncalibrated_reference"
+        },
+        "reference_processing_profile_id": null,
+        "image_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-130828.tiff",
+        "roi_fraction": 0.5,
+        "rgb": [
+          34.0,
+          5.0,
+          13.0
+        ],
+        "comparison_status": "accepted",
+        "delta_e_76": 66.49954317727516,
+        "reference_origin": "user_selected_srgb"
+      },
+      "objective_status": "accepted",
+      "error": null,
+      "objective_path": "19.delta_e_00",
+      "sample_well": "plate.A6",
+      "batch_index": 1
+    },
+    {
+      "index": 1,
+      "parameters": {
+        "red_ul": 25.0,
+        "yellow_ul": 100.0,
+        "blue_ul": 25.0
+      },
+      "run_id": "102ed127bca944b0bca9c57a1540fb9e-batch-1",
+      "state": "succeeded",
+      "objective": null,
+      "measurement": {
+        "frame_metadata": {
+          "frame_id": 4592,
+          "received_at": 1791306566.1457176,
+          "width": 800,
+          "height": 600,
+          "configuration_revision": 0,
+          "image_sha256": "8ffb20276b386a5349e9cf0b2dfddc6e5b357b2f2a13d3599cc600cd87bd685f"
+        },
+        "roi": {
+          "method": "detected_well_inner_disc",
+          "detection_status": "selected",
+          "center_x_px": 397,
+          "center_y_px": 298,
+          "radius_px": 20,
+          "sample_radius_px": 10.0,
+          "expected_center_x_px": 399.5,
+          "expected_center_y_px": 299.5,
+          "expected_center_source": "frame_center",
+          "center_residual_px": 2.9154759474226504,
+          "detection_confidence": 0.991253572157732,
+          "candidate_count": 25
+        },
+        "quality": {
+          "accepted": false,
+          "status": "rejected",
+          "score": 0.40063091482649843,
+          "flags": [
+            "low_valid_fraction",
+            "excessive_low_clipping"
+          ],
+          "warnings": [
+            "well identity is not verified by image analysis",
+            "Lab is an uncalibrated camera estimate"
+          ],
+          "roi_pixel_count": 317,
+          "valid_pixel_count": 127,
+          "excluded_pixel_count": 190,
+          "valid_fraction": 0.40063091482649843,
+          "low_clipped_pixel_count": 190,
+          "high_clipped_pixel_count": 0,
+          "glare_pixel_count": 0,
+          "low_clipped_fraction": 0.5993690851735016,
+          "high_clipped_fraction": 0.0,
+          "glare_fraction": 0.0,
+          "exposure_percentiles": {
+            "p01": 18.670591999999996,
+            "p50": 30.926,
+            "p99": 51.444728
+          }
+        },
+        "reference_lab": [
+          42.95359152551574,
+          62.81079595760586,
+          -21.310201737964718
+        ],
+        "well_identity": {
+          "expected_well": "plate.B6",
+          "source": "protocol_position",
+          "verification_status": "not_verified_by_cv"
+        },
+        "annotated_preview_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-130926.analysis.png",
+        "reference_rgb": [
+          180.0,
+          41.0,
+          138.0
+        ],
+        "measurement_status": "rejected",
+        "processing_profile": {
+          "schema": "cubos.camera-well-cielab.v1",
+          "id": "cubos.camera-well-cielab.v1:953fa0e08e265629",
+          "algorithm": "detected_well_inner_disc_median",
+          "configuration": {
+            "roi_fraction_of_detected_radius": 0.5,
+            "expected_center_normalized": [
+              0.5,
+              0.5
+            ],
+            "expected_center_source": "frame_center",
+            "well_detector": {
+              "method": "hough_circle_near_expected_center",
+              "minimum_radius_fraction": 0.015,
+              "maximum_radius_fraction": 0.08,
+              "maximum_center_offset_fraction": 0.25,
+              "maximum_center_residual_radii": 1.0
+            },
+            "quality_mask": {
+              "low_clip_max": 2,
+              "high_clip_min": 253,
+              "neutral_glare_min": 230,
+              "neutral_glare_max_chroma": 15,
+              "minimum_valid_pixels": 100,
+              "minimum_valid_fraction": 0.5,
+              "maximum_low_clipped_fraction": 0.2,
+              "maximum_high_clipped_fraction": 0.05,
+              "maximum_glare_fraction": 0.1,
+              "minimum_median_luminance": 10.0,
+              "maximum_median_luminance": 245.0
+            },
+            "estimator": "per_channel_median_of_valid_pixels",
+            "acquisition": {
+              "requested_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "actual_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "image_height": null
+            },
+            "image_properties": {
+              "width_px": 800,
+              "height_px": 600,
+              "channels": 3,
+              "dtype": "uint8"
+            },
+            "reference_origin": "user_selected_srgb"
+          },
+          "rgb_encoding": "sRGB",
+          "transfer_function": "IEC 61966-2-1 sRGB",
+          "xyz_matrix": "sRGB to XYZ D65",
+          "illuminant": "D65",
+          "observer": "CIE 1931 2 degree",
+          "reference_white_xyz": [
+            0.95047,
+            1.0,
+            1.08883
+          ],
+          "calibration_status": "uncalibrated",
+          "calibration_provenance": "Camera RGB interpreted as sRGB without an ICC profile or color-target correction; reported Lab is an estimate and is not traceable colorimetry."
+        },
+        "reference_provenance": {
+          "origin": "user_selected_srgb",
+          "source": "operator_selected",
+          "encoding": "sRGB",
+          "conversion": "cubos.optimization.color.rgb_to_lab",
+          "whitepoint": "D65",
+          "calibration_status": "uncalibrated_reference"
+        },
+        "reference_processing_profile_id": null,
+        "image_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-130926.tiff",
+        "roi_fraction": 0.5,
+        "comparison_status": "rejected",
+        "reference_origin": "user_selected_srgb"
+      },
+      "objective_status": "rejected",
+      "error": "TemplateError: color objective is unverified: accepted measurement quality and either an exact matching camera profile or a declared sRGB reference are required",
+      "objective_path": "26.delta_e_00",
+      "sample_well": "plate.B6",
+      "batch_index": 1
+    },
+    {
+      "index": 2,
+      "parameters": {
+        "red_ul": 25.0,
+        "yellow_ul": 25.0,
+        "blue_ul": 100.0
+      },
+      "run_id": "102ed127bca944b0bca9c57a1540fb9e-batch-1",
+      "state": "succeeded",
+      "objective": 37.22010435959231,
+      "measurement": {
+        "frame_metadata": {
+          "frame_id": 5456,
+          "received_at": 1791306623.7372763,
+          "width": 800,
+          "height": 600,
+          "configuration_revision": 0,
+          "image_sha256": "b421ce88e80561da44e5a587e16ad209f7f3fc88488b79fd4572d287eb6df640"
+        },
+        "roi": {
+          "method": "detected_well_inner_disc",
+          "detection_status": "selected",
+          "center_x_px": 397,
+          "center_y_px": 297,
+          "radius_px": 21,
+          "sample_radius_px": 10.5,
+          "expected_center_x_px": 399.5,
+          "expected_center_y_px": 299.5,
+          "expected_center_source": "frame_center",
+          "center_residual_px": 3.5355339059327378,
+          "detection_confidence": 0.9893933982822019,
+          "candidate_count": 32
+        },
+        "delta_e_00": 37.22010435959231,
+        "quality": {
+          "accepted": true,
+          "status": "accepted",
+          "score": 0.9893933982822019,
+          "flags": [],
+          "warnings": [
+            "well identity is not verified by image analysis",
+            "Lab is an uncalibrated camera estimate"
+          ],
+          "roi_pixel_count": 349,
+          "valid_pixel_count": 349,
+          "excluded_pixel_count": 0,
+          "valid_fraction": 1.0,
+          "low_clipped_pixel_count": 0,
+          "high_clipped_pixel_count": 0,
+          "glare_pixel_count": 0,
+          "low_clipped_fraction": 0.0,
+          "high_clipped_fraction": 0.0,
+          "glare_fraction": 0.0,
+          "exposure_percentiles": {
+            "p01": 6.7878,
+            "p50": 11.499,
+            "p99": 13.718
+          }
+        },
+        "reference_lab": [
+          42.95359152551574,
+          62.81079595760586,
+          -21.310201737964718
+        ],
+        "well_identity": {
+          "expected_well": "plate.C6",
+          "source": "protocol_position",
+          "verification_status": "not_verified_by_cv"
+        },
+        "annotated_preview_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-131023.analysis.png",
+        "reference_rgb": [
+          180.0,
+          41.0,
+          138.0
+        ],
+        "lab": [
+          3.3629947659676276,
+          3.7031820959186335,
+          -6.487016852766092
+        ],
+        "measurement_status": "accepted",
+        "processing_profile": {
+          "schema": "cubos.camera-well-cielab.v1",
+          "id": "cubos.camera-well-cielab.v1:953fa0e08e265629",
+          "algorithm": "detected_well_inner_disc_median",
+          "configuration": {
+            "roi_fraction_of_detected_radius": 0.5,
+            "expected_center_normalized": [
+              0.5,
+              0.5
+            ],
+            "expected_center_source": "frame_center",
+            "well_detector": {
+              "method": "hough_circle_near_expected_center",
+              "minimum_radius_fraction": 0.015,
+              "maximum_radius_fraction": 0.08,
+              "maximum_center_offset_fraction": 0.25,
+              "maximum_center_residual_radii": 1.0
+            },
+            "quality_mask": {
+              "low_clip_max": 2,
+              "high_clip_min": 253,
+              "neutral_glare_min": 230,
+              "neutral_glare_max_chroma": 15,
+              "minimum_valid_pixels": 100,
+              "minimum_valid_fraction": 0.5,
+              "maximum_low_clipped_fraction": 0.2,
+              "maximum_high_clipped_fraction": 0.05,
+              "maximum_glare_fraction": 0.1,
+              "minimum_median_luminance": 10.0,
+              "maximum_median_luminance": 245.0
+            },
+            "estimator": "per_channel_median_of_valid_pixels",
+            "acquisition": {
+              "requested_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "actual_capture_profile": {
+                "schema": "cubos.opencv-capture.v1",
+                "vendor": "opencv",
+                "camera_id": 0,
+                "requested_resolution": {
+                  "width": 1280,
+                  "height": 720
+                },
+                "actual_resolution": {
+                  "width": 800,
+                  "height": 600
+                },
+                "requested_pixel_format": null,
+                "actual_pixel_format": "YUYV",
+                "controls": {
+                  "exposure": {
+                    "supported": null,
+                    "value": 156.0
+                  },
+                  "white_balance": {
+                    "supported": null,
+                    "value": 4600.0
+                  },
+                  "auto_white_balance": {
+                    "supported": null,
+                    "value": 1.0
+                  },
+                  "focus": {
+                    "supported": null,
+                    "value": -1.0
+                  },
+                  "brightness": {
+                    "supported": null,
+                    "value": 0.0
+                  },
+                  "auto_exposure": {
+                    "supported": null,
+                    "value": 3.0
+                  },
+                  "autofocus": {
+                    "supported": null,
+                    "value": -1.0
+                  }
+                },
+                "fingerprint": "b746d2b24934045d37eab5704e3aa3c7c0208e3816dfa8f4937ee544a3b723dd"
+              },
+              "image_height": null
+            },
+            "image_properties": {
+              "width_px": 800,
+              "height_px": 600,
+              "channels": 3,
+              "dtype": "uint8"
+            },
+            "reference_origin": "user_selected_srgb"
+          },
+          "rgb_encoding": "sRGB",
+          "transfer_function": "IEC 61966-2-1 sRGB",
+          "xyz_matrix": "sRGB to XYZ D65",
+          "illuminant": "D65",
+          "observer": "CIE 1931 2 degree",
+          "reference_white_xyz": [
+            0.95047,
+            1.0,
+            1.08883
+          ],
+          "calibration_status": "uncalibrated",
+          "calibration_provenance": "Camera RGB interpreted as sRGB without an ICC profile or color-target correction; reported Lab is an estimate and is not traceable colorimetry."
+        },
+        "reference_provenance": {
+          "origin": "user_selected_srgb",
+          "source": "operator_selected",
+          "encoding": "sRGB",
+          "conversion": "cubos.optimization.color.rgb_to_lab",
+          "whitepoint": "D65",
+          "calibration_status": "uncalibrated_reference"
+        },
+        "reference_processing_profile_id": null,
+        "image_path": "/home/cub/.cubos/images/campaign_73/color_candidate_20261006-131023.tiff",
+        "roi_fraction": 0.5,
+        "rgb": [
+          14.0,
+          10.0,
+          23.0
+        ],
+        "comparison_status": "accepted",
+        "delta_e_76": 72.66947212096868,
+        "reference_origin": "user_selected_srgb"
+      },
+      "objective_status": "accepted",
+      "error": null,
+      "objective_path": "33.delta_e_00",
+      "sample_well": "plate.C6",
+      "batch_index": 1
+    }
+  ],
+  "best_objective": null,
+  "stop_reason": "batch_objective_rejected",
+  "error": "Batch results were preserved, but optimization cannot continue: sample 2 (plate.B6): color objective is unverified: accepted measurement quality and either an exact matching camera profile or a declared sRGB reference are required",
+  "fluid_state_reconciliation_note": null,
+  "pause_requested": false,
+  "stop_requested": false,
+  "pause_reason": null,
+  "pending_batch": null,
+  "refill_requirements": []
+}

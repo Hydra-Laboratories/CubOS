@@ -1,0 +1,11 @@
+# REVIEW / CALIBRATION COPY ONLY — planner-owned transit to waste.
+protocol:
+  - pick_up_tip:
+      position: tips.A1
+  - transfer:
+      source: stocks.A1
+      destination: plate.A1
+      volume_ul: 100
+      source_height: -8
+  - drop_tip:
+      position: waste

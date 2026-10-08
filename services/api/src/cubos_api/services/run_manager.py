@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import hmac
+import json
+import secrets
+from contextvars import ContextVar
 import tempfile
 import threading
 import time
 import traceback
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +22,7 @@ import yaml
 from cubos.data import DataStore
 from cubos.deck import load_deck_from_yaml
 from cubos.deck.errors import DeckLoaderError
+from cubos.protocol_engine.commands.camera import default_images_dir
 
 from cubos_api.config import CubOSSettings, get_settings
 from cubos_api.models.runs import RunRecord, RunSubmission
@@ -25,6 +31,8 @@ from cubos_api.services.run_store import RunStore, sha256_text
 from cubos_api.services.step_observer import RunStoreStepObserver
 from cubos_api.services.yaml_io import resolve_config_path
 
+
+reservation_context: ContextVar[str | None] = ContextVar("cubos_reservation", default=None)
 
 log = logging.getLogger(__name__)
 
@@ -123,6 +131,13 @@ class RunManager:
         self.store = RunStore(settings.ensure_run_dir())
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
+        self._reservation_owner: str | None = None
+        self._reservation_token: str | None = None
+        self._reservation_path = self.settings.ensure_run_dir() / "station-reservation.json"
+        if self._reservation_path.exists():
+            saved = json.loads(self._reservation_path.read_text())
+            self._reservation_owner = saved["owner"]
+            self._reservation_token = saved["reservation_token"]
         self._recover_interrupted_runs()
 
     def _recover_interrupted_runs(self) -> None:
@@ -139,9 +154,73 @@ class RunManager:
         with self._lock:
             return self._active_run_id
 
+    @property
+    def reservation_owner(self) -> str | None:
+        with self._lock:
+            return self._reservation_owner
+
+    def owns_reservation(self, token: str | None) -> bool:
+        with self._lock:
+            return self._matches_reservation(token)
+
+    def _matches_reservation(self, token: str | None) -> bool:
+        return bool(token and self._reservation_token and hmac.compare_digest(token, self._reservation_token))
+
+    def reserve_station(self, owner: str) -> str:
+        from cubos_api.routers import gantry
+        with self._lock:
+            session = gantry.current_session()
+            if self._active_run_id is not None or self._reservation_owner is not None or gantry.run_active():
+                raise RunConflictError("The station already has an active run or reservation")
+            if session is not None and session.calibration_active:
+                raise RunConflictError("Finish calibration before reserving the station")
+            token = secrets.token_urlsafe(32)
+            from cubos_api.services.run_store import _atomic_write
+            _atomic_write(self._reservation_path, json.dumps({"owner": owner, "reservation_token": token}))
+            self._reservation_owner = owner
+            self._reservation_token = token
+            self._reservation_path.chmod(0o600)
+            return token
+
+    def operator_release_station(self, owner: str, confirmation: str) -> None:
+        from cubos_api.routers import gantry
+        with self._lock:
+            if self._reservation_owner != owner or confirmation != f"release {owner}":
+                raise RunConflictError("Confirm the current reservation owner before releasing it")
+            if self._active_run_id is not None or gantry.run_active():
+                raise RunConflictError("Wait for the active run to finish before releasing the station")
+            self._reservation_path.unlink(missing_ok=True)
+            self._reservation_owner = None
+            self._reservation_token = None
+
+    def release_station(self, token: str) -> None:
+        with self._lock:
+            if not self._matches_reservation(token):
+                raise RunConflictError("The reservation token does not own the station")
+            if self._active_run_id is not None:
+                raise RunConflictError("Wait for the active run to finish before releasing the station")
+            self._reservation_path.unlink(missing_ok=True)
+            self._reservation_owner = None
+            self._reservation_token = None
+
+    @contextmanager
+    def inventory_edit(self):
+        with self._lock:
+            if self._active_run_id is not None or (
+                self._reservation_owner is not None
+                and not self._matches_reservation(reservation_context.get())
+            ):
+                raise RunConflictError("The station is busy with an active run or reservation")
+            yield
+
     def submit(self, submission: RunSubmission) -> RunRecord:
         run_id = submission.run_id or uuid.uuid4().hex
+        token = submission.reservation_token or reservation_context.get()
         with self._lock:
+            if self._reservation_owner is not None and not self._matches_reservation(token):
+                raise RunConflictError("The station is reserved by another client")
+            if token is not None and not self._matches_reservation(token):
+                raise RunConflictError("The reservation token does not own the station")
             if self._active_run_id is not None:
                 raise RunConflictError(f"server busy with run {self._active_run_id!r}")
             if self.store.exists(run_id) or self.store.run_dir(run_id).exists():
@@ -149,6 +228,8 @@ class RunManager:
 
             gantry_yaml, deck_yaml, protocol_yaml = self._resolve_bundle(submission)
             self._validate_bundle(gantry_yaml, deck_yaml, protocol_yaml)
+            if submission.mock_mode and submission.state is not None:
+                raise RunPolicyError("Mock runs cannot modify durable physical state")
             fluid_state_id = self._resolve_run_state(deck_yaml, submission.state)
             record = RunRecord(
                 run_id=run_id,
@@ -320,7 +401,7 @@ class RunManager:
                 # the vendor device open; the run's own instruments must be
                 # able to claim it.
                 from cubos_api.routers.instruments import reset_manual_instruments
-                reset_manual_instruments()
+                reset_manual_instruments(preserve_camera_monitors=True)
                 raw_result = gantry_router.run_protocol_on_session(
                     gantry_path=str(directory / "gantry.yaml"),
                     deck_path=str(directory / "deck.yaml"),
@@ -334,6 +415,7 @@ class RunManager:
                 )
             result = _jsonable(raw_result)
             record = self.store.read(run_id) or record
+            self.store.collect_measurement_evidence(record, result, allowed_root=default_images_dir())
             record.state = "succeeded"
             record.result = result
             record.finished_at = time.time()
@@ -380,3 +462,12 @@ def reset_run_manager() -> None:
     global _manager
     with _manager_lock:
         _manager = None
+
+
+def active_reservation_owner() -> str | None:
+    if _manager is None:
+        path = get_settings().run_dir.expanduser().resolve() / "station-reservation.json"
+        if not path.is_file():
+            return None
+        return get_run_manager().reservation_owner
+    return _manager.reservation_owner

@@ -26,6 +26,15 @@ function wellPlate(): WellPlateConfig {
     },
     x_offset: 15,
     y_offset: 15,
+    motion: {
+      box: {
+        anchor: "A1",
+        offset: { x: -4, y: -3, z: 0 },
+        size: { x: 20, y: 30, z: 10 },
+      },
+      occupied_tip_radius_mm: 4.5,
+      access: { transfer: { strategy: "vertical" } },
+    },
   };
 }
 
@@ -64,6 +73,7 @@ function tipRack(): TipRackConfig {
 function deckResponse(): DeckResponse {
   return {
     filename: "demo_deck.yaml",
+    motion_planning: { clearance_mm: 2 },
     labware: [
       { key: "plate", config: wellPlate(), wells: null },
       { key: "s1", config: vial(), wells: null },
@@ -250,6 +260,8 @@ describe("LabwareCalibrationModal", () => {
     // Untouched labware rides along unchanged.
     expect(config.labware.s1).toEqual(vial());
     expect(config.labware.tips).toEqual(tipRack());
+    expect(config.motion_planning).toEqual({ clearance_mm: 2 });
+    expect((config.labware.plate as WellPlateConfig).motion).toEqual(wellPlate().motion);
   });
 
   it("updates a vial location and keeps saved values when requested", async () => {

@@ -7,6 +7,7 @@ import type { DeckResponse } from "../../types";
 function deckFixture(): DeckResponse {
   return {
     filename: "deck.yaml",
+    motion_planning: { clearance_mm: 2 },
     labware: [
       {
         key: "plate_1",
@@ -114,7 +115,10 @@ describe("DeckEditor", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(props.onSave).toHaveBeenCalledWith(
       "deck.yaml",
-      expect.objectContaining({ labware: expect.objectContaining({ plate_1: expect.anything() }) }),
+      expect.objectContaining({
+        motion_planning: { clearance_mm: 2 },
+        labware: expect.objectContaining({ plate_1: expect.anything() }),
+      }),
     );
 
     await user.clear(screen.getByDisplayValue("Plate A"));

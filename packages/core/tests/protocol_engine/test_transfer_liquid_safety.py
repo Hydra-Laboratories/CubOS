@@ -263,6 +263,42 @@ class TestBlowOutOnFinalStroke:
             + ["aspirate", "dispense", "blowout"]
         )
 
+    def test_multi_stroke_transfer_can_skip_blowout(self, tracked_env):
+        deck, store, state_id, campaign_id = tracked_env
+        pipette = RecordingPipette()
+        context = _make_context(deck, store, state_id, campaign_id, pipette)
+
+        transfer(
+            context, source="source", destination="dest", volume_ul=600.0,
+            blow_out=False,
+        )
+
+        assert len(pipette.aspirate_volumes) >= 2
+        assert pipette.blowout_calls == []
+        assert pipette.call_order == ["aspirate", "dispense"] * len(
+            pipette.aspirate_volumes
+        )
+
+
+def test_transfer_yaml_accepts_blow_out_false(tmp_path):
+    from cubos.protocol_engine.loader import load_protocol_from_yaml
+
+    from cubos.protocol_engine import commands  # noqa: F401 -- register commands
+
+    path = tmp_path / "protocol.yaml"
+    path.write_text(
+        "protocol:\n"
+        "  - transfer:\n"
+        "      source: source\n"
+        "      destination: dest\n"
+        "      volume_ul: 25\n"
+        "      blow_out: false\n"
+    )
+
+    protocol = load_protocol_from_yaml(path)
+
+    assert protocol.steps[0].args["blow_out"] is False
+
 
 # ─── Preflight rejects before motion ─────────────────────────────────────────
 

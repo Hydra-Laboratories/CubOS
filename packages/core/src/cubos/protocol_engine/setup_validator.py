@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from collections.abc import Mapping
+from typing import Any, Literal
 
 _log = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ from cubos.deck.deck import Deck
 from cubos.deck.labware.vial import Vial
 from cubos.deck.labware.well_plate import WellPlate
 from cubos.deck.loader import load_deck_from_yaml
+from cubos.deck.tip_presence import apply_durable_tip_status
 from cubos.gantry.gantry import Gantry
 from cubos.gantry.instrument_loader import load_instrumented_gantry_from_config
 from cubos.gantry.loader import load_gantry_from_yaml
@@ -42,6 +44,7 @@ class SetupValidationResult:
     passed: bool
     errors: tuple[str, ...] = ()
     stage: ValidationStage = "validation"
+    motion_plans: tuple[dict[str, Any], ...] = ()
 
 def _labware_summary(deck: Deck) -> list[str]:
     """Return one-line summaries for each piece of labware."""
@@ -96,6 +99,7 @@ def run_setup_validation(
     deck_path: str | Path,
     protocol_path: str | Path,
     initial_fluids_path: str | Path | None = None,
+    tip_snapshot: Mapping[str, Any] | None = None,
 ) -> SetupValidationResult:
     """Run full offline setup validation and return a structured result.
 
@@ -105,6 +109,10 @@ def run_setup_validation(
     pipette-model volume bounds, vial dead-volume floors, and destination
     working-volume overflow are all validated offline before any hardware
     run (see ``cubos.validation.fluid_volumes``).
+
+    ``tip_snapshot`` optionally carries a durable tip snapshot
+    (``DataStore.get_tip_snapshot``); its per-slot status overrides the deck
+    YAML's ``tip_present`` so validation sees the same inventory the run will.
     """
     lines: list[str] = []
 
@@ -152,6 +160,9 @@ def run_setup_validation(
             message=f"{type(exc).__name__}: {exc}",
             result_message="RESULT: ERROR - could not load deck config",
         )
+
+    if tip_snapshot is not None:
+        apply_durable_tip_status(deck, tip_snapshot)
 
     out(f"  OK: {deck_path}")
     out(f"  Labware ({len(deck)}):")
@@ -309,6 +320,35 @@ def run_setup_validation(
             out("  OK")
         out()
 
+    serialized_motion_plans: tuple[dict[str, Any], ...] = ()
+    if not errors and getattr(deck, "planning_enabled", False) is True:
+        out("Validating collision-aware motion plans...")
+        try:
+            from cubos.protocol_engine.routing import prepare_planning_context
+            from cubos.protocol_engine.runtime import ProtocolContext
+
+            offline_gantry.move_to(vol.x_max, vol.y_max, vol.z_max)
+            planning_context = ProtocolContext(
+                gantry=instrumented_gantry,
+                deck=deck,
+                positions=protocol.positions,
+                gantry_config=gantry_config,
+            )
+            prepare_planning_context(protocol, planning_context)
+            serialized_motion_plans = tuple(
+                planning_context.serialized_motion_plans()
+            )
+            out(
+                "  OK "
+                f"({len(serialized_motion_plans)} immutable plan(s), nominal "
+                f"initial carriage pose=({vol.x_max}, {vol.y_max}, {vol.z_max}))"
+            )
+        except Exception as exc:
+            error = f"collision-aware planning: {type(exc).__name__}: {exc}"
+            errors.append(error)
+            out(f"  FAIL - {error}")
+        out()
+
     out(SEPARATOR)
     if errors:
         out(f"RESULT: FAIL - {len(errors)} violation(s) found")
@@ -327,6 +367,7 @@ def run_setup_validation(
         output="\n".join(lines),
         passed=True,
         stage="validation",
+        motion_plans=serialized_motion_plans,
     )
 __all__ = [
     "SetupValidationResult",

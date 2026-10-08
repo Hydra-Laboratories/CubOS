@@ -39,6 +39,13 @@ def move(
                     at ``position``. When omitted and the move changes XY,
                     the gantry lifts to the working-volume ceiling first.
     """
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        prepared = prepared_step(context, "move")
+        context.routing_session.execute(prepared.plans[0])
+        return
+
     if isinstance(position, (list, tuple)):
         target = tuple(position)
         context.logger.info(

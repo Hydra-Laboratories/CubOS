@@ -24,6 +24,7 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 class RunSubmission(BaseModel):
     run_id: str | None = None
+    reservation_token: str | None = Field(default=None, min_length=1, max_length=128)
     gantry_file: str | None = None
     deck_file: str | None = None
     protocol_file: str | None = None
@@ -54,7 +55,7 @@ class RunSubmission(BaseModel):
         return self
 
 
-RunEventKind = Literal["lifecycle", "step"]
+RunEventKind = Literal["lifecycle", "step", "photo_pause"]
 
 StepOutcome = Literal["started", "completed", "failed", "skipped"]
 

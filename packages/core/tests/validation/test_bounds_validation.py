@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from cubos.gantry.instrument_mount import InstrumentedGantry
 from cubos.deck.deck import Deck
 from cubos.deck.labware.labware import Coordinate3D
@@ -373,6 +375,67 @@ class TestValidateGantryPositions:
         assert all(v.instrument_name == "big_offset" for v in violations)
 
 class TestValidateProtocolMotionBounds:
+
+    def test_planned_deck_move_validates_exact_carriage_ceiling_pose(self):
+        gantry = _make_gantry(
+            x_max=25.8, y_max=144.645, z_min=10.5, z_max=66.5,
+            safe_z=66.5,
+        )
+        deck = Deck(
+            {"plate": _make_plate(a1_x=25.803, a1_y=70.035, a1_z=38.5)},
+            motion_planning={"clearance_mm": 2.0},
+        )
+        camera = _make_instrument(offset_x=0.0, offset_y=-46.5, depth=-114.964)
+        instrumented_gantry = _make_instrumented_gantry(("camera", camera))
+        protocol = _make_protocol(
+            "move", instrument="camera", position="plate.A1",
+        )
+
+        violations = validate_protocol_motion_bounds(
+            gantry, protocol, deck, instrumented_gantry,
+        )
+
+        assert len(violations) == 1
+        assert violations[0].axis == "x"
+        assert (violations[0].x, violations[0].y, violations[0].z) == pytest.approx(
+            (25.803, 116.535, 66.5),
+        )
+
+    def test_planned_literal_move_keeps_instrument_depth_bounds(self):
+        gantry = _make_gantry(z_min=10.5, z_max=66.5, safe_z=66.5)
+        deck = Deck({}, motion_planning={"clearance_mm": 2.0})
+        camera = _make_instrument(depth=-114.964)
+        instrumented_gantry = _make_instrumented_gantry(("camera", camera))
+        protocol = _make_protocol(
+            "move", instrument="camera", position=[25.803, 70.035, 66.5],
+        )
+
+        violations = validate_protocol_motion_bounds(
+            gantry, protocol, deck, instrumented_gantry,
+        )
+
+        assert len(violations) == 1
+        assert violations[0].axis == "z"
+        assert violations[0].z == pytest.approx(-48.464)
+
+    def test_legacy_deck_move_keeps_safe_z_instrument_depth_bounds(self):
+        gantry = _make_gantry(z_min=10.5, z_max=66.5, safe_z=66.5)
+        deck = _make_deck(
+            plate=_make_plate(a1_x=25.803, a1_y=70.035, a1_z=38.5),
+        )
+        camera = _make_instrument(depth=-114.964)
+        instrumented_gantry = _make_instrumented_gantry(("camera", camera))
+        protocol = _make_protocol(
+            "move", instrument="camera", position="plate.A1",
+        )
+
+        violations = validate_protocol_motion_bounds(
+            gantry, protocol, deck, instrumented_gantry,
+        )
+
+        assert len(violations) == 1
+        assert violations[0].axis == "z"
+        assert violations[0].z == pytest.approx(-48.464)
 
     def test_unused_out_of_bounds_labware_is_not_validated(self):
         gantry = _make_gantry(z_min=0.0, z_max=80.0, safe_z=80.0)

@@ -35,6 +35,7 @@ class ProtocolMotionTarget:
     y: float
     z: float
     tip_extension: float = 0.0
+    carriage_z: float | None = None
 
 
 def _check_point(
@@ -147,6 +148,7 @@ def _append_target(
     y: float,
     z: float,
     tip_extension: float = 0.0,
+    carriage_z: float | None = None,
 ) -> None:
     labware_key, position_id = _target_label(target, suffix)
     targets.append(ProtocolMotionTarget(
@@ -157,6 +159,7 @@ def _append_target(
         y=y,
         z=z,
         tip_extension=tip_extension,
+        carriage_z=carriage_z,
     ))
 
 
@@ -258,15 +261,19 @@ def _append_move_targets(
         coord = _resolve_deck_coord(deck, position)
         if coord is None:
             return
+        planned_carriage_z = (
+            gantry.working_volume.z_max if deck.planning_enabled else None
+        )
         _append_target(
             targets,
             target=position,
-            suffix="safe_z",
+            suffix=("carriage_ceiling" if deck.planning_enabled else "safe_z"),
             instrument=instrument,
             x=coord.x,
             y=coord.y,
             z=gantry.resolved_safe_z,
             tip_extension=tip_ext,
+            carriage_z=planned_carriage_z,
         )
         return
     else:
@@ -488,6 +495,17 @@ def _append_pipette_targets(
             tip_extension=tip_extension,
         )
     elif command_name == "pick_up_tip":
+        position = step_args.get("position")
+        try:
+            rack, tip_id = resolve_tip_rack_slot(deck, position)
+        except TipRackResolutionError:
+            rack, tip_id = None, None
+        if rack is not None and rack.side_exit is not None and tip_id in rack.tips:
+            for phase, (x, y, z), extension in rack.pickup_path(tip_id):
+                _append_target(targets, target=position, suffix=phase,
+                               instrument="pipette", x=x, y=y, z=z,
+                               tip_extension=extension)
+            return rack.tip_length
         _append_position_engage(
             targets,
             deck=deck,
@@ -631,7 +649,11 @@ def validate_protocol_motion_bounds(
             continue
         gx = target.x - instrument.offset_x
         gy = target.y - instrument.offset_y
-        gz = target.z + instrument.depth + target.tip_extension
+        gz = (
+            target.carriage_z
+            if target.carriage_z is not None
+            else target.z + instrument.depth + target.tip_extension
+        )
         for axis, bound_name, bound_value in _check_point(volume, gx, gy, gz):
             violations.append(BoundsViolation(
                 labware_key=target.labware_key,

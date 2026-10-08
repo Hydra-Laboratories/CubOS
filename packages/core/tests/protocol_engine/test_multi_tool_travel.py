@@ -84,9 +84,10 @@ class GCodeController:
         else:
             cmds = Mill._build_transit_move(self._mill, self.cur, target, travel_z)
         for cmd in cmds:
-            word = cmd.split()[1]
-            setattr(self.cur, word[0].lower(), float(word[1:]))
-            self.gcode.append((word[0], self.cur.x, self.cur.y, self.cur.z))
+            words = [word for word in cmd.split()[1:] if word[0] in "XYZ"]
+            for word in words:
+                setattr(self.cur, word[0].lower(), float(word[1:]))
+            self.gcode.append(("".join(word[0] for word in words), self.cur.x, self.cur.y, self.cur.z))
 
 
 @pytest.fixture
@@ -120,7 +121,7 @@ def _run_sequence(ctx):
 def test_every_xy_gcode_is_issued_at_the_ceiling(rig):
     ctx, controller, _, _ = rig
     _run_sequence(ctx)
-    lateral = [g for g in controller.gcode if g[0] in ("X", "Y")]
+    lateral = [g for g in controller.gcode if g[0] in ("X", "Y", "XY")]
     assert lateral, "sequence must include XY travel"
     low = [g for g in lateral if g[3] < Z_MAX]
     assert low == []
@@ -130,7 +131,7 @@ def test_pipette_tip_never_below_rim_while_moving_xy(rig):
     ctx, controller, pipette, _ = rig
     _run_sequence(ctx)
     lowest_tip = min(
-        z - pipette.effective_depth for axis, _, _, z in controller.gcode if axis in ("X", "Y")
+        z - pipette.effective_depth for axis, _, _, z in controller.gcode if axis in ("X", "Y", "XY")
     )
     assert lowest_tip > VIAL_RIM_Z
 
@@ -146,10 +147,20 @@ def test_capper_ends_above_the_vial_not_at_a_park_position(rig):
 
 
 def test_engage_and_retract_stay_z_only(rig):
-    ctx, controller, _, _ = rig
+    ctx, controller, _, capper = rig
     pick_up_tip(ctx, "tip_rack.A1")
     controller.gcode.clear()
     decap(ctx, "capper", "reagent")
-    # lift, X, Y, descend to safe_z, engage, retract: exactly one XY leg.
-    axes = [g[0] for g in controller.gcode]
-    assert axes == ["Z", "X", "Y", "Z", "Z", "Z"]
+    lateral_indices = [
+        index for index, (axes, _, _, _) in enumerate(controller.gcode)
+        if "X" in axes or "Y" in axes
+    ]
+    assert lateral_indices
+    assert all(controller.gcode[index][3] == pytest.approx(Z_MAX) for index in lateral_indices)
+    engagement = controller.gcode[lateral_indices[-1] + 1:]
+    assert len(engagement) >= 2
+    expected_xy = (100.0 - capper.offset_x, 100.0 - capper.offset_y)
+    assert all(axes == "Z" for axes, _, _, _ in engagement)
+    assert all((x, y) == pytest.approx(expected_xy) for _, x, y, _ in engagement)
+    assert engagement[-2][3] - capper.effective_depth == pytest.approx(VIAL_RIM_Z + capper.engage_depth_mm)
+    assert engagement[-1][3] - capper.effective_depth == pytest.approx(SAFE_Z)

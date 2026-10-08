@@ -37,7 +37,7 @@ export default function EditorTabs({
           display: "flex",
           gap: 4,
           borderBottom: `1px solid ${theme.color.border}`,
-          marginBottom: disabledMessage && activeTab === "Protocol" ? 0 : 18,
+          marginBottom: disabledMessage && disabledTabs.includes(activeTab) ? 0 : 18,
         }}
       >
         {TABS.map((tab) => {

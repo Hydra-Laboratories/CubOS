@@ -42,6 +42,7 @@ class LabwareResponse(BaseModel):
 class DeckResponse(BaseModel):
     filename: str
     labware: list[LabwareResponse]
+    motion_planning: Optional[Dict[str, Any]] = None
 
 
 # ── Routes ─────────────────────────────────────────────────────────────
@@ -97,7 +98,11 @@ def get_deck(filename: str) -> DeckResponse:
             )
         )
 
-    return DeckResponse(filename=filename, labware=items)
+    return DeckResponse(
+        filename=filename,
+        labware=items,
+        motion_planning=raw.get("motion_planning") if isinstance(raw, dict) else None,
+    )
 
 
 @router.post("/preview-wells")

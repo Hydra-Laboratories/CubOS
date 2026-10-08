@@ -1,0 +1,16 @@
+# Offline demonstration only. Never connect this gantry config to hardware.
+serial_port: SIMULATION_ONLY
+gantry_type: cub
+cnc:
+  factory_z_travel_mm: 56
+  safe_z: 50
+working_volume: {x_min: 0, x_max: 200, y_min: 0, y_max: 150, z_min: 0, z_max: 56}
+instruments:
+  film:
+    type: filmetrics
+    vendor: kla
+    offline: true
+    offset_x: 0
+    offset_y: 0
+    depth: 0
+    default_thickness_nm: 150

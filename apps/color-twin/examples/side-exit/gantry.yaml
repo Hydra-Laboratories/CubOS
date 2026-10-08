@@ -1,0 +1,28 @@
+# SIMULATION ONLY — photo-derived estimates, not calibrated hardware configs.
+serial_port: SIMULATION_ONLY
+gantry_type: cub
+cnc:
+  factory_z_travel_mm: 56
+  y_axis_motion: bed
+  safe_z: 56
+working_volume:
+  x_min: 0
+  x_max: 290
+  y_min: 0
+  y_max: 180
+  z_min: 0
+  z_max: 56
+instruments:
+  pipette:
+    type: pipette
+    vendor: sartorius
+    pipette_model: simulation_1000ul
+    offset_x: 0
+    offset_y: 0
+    depth: -70
+  camera:
+    type: camera
+    vendor: mount_only
+    offset_x: -25
+    offset_y: -28
+    depth: 0

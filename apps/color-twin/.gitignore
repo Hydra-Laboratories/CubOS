@@ -1,0 +1,10 @@
+node_modules
+dist/
+*.tsbuildinfo
+test-results/
+playwright-report/
+.deploy/
+.vercel/
+.local/
+dist-operator/
+dist-workbench/

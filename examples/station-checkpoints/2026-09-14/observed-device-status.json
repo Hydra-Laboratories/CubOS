@@ -1,0 +1,58 @@
+{
+  "gantry": {
+    "x": 230.0,
+    "y": 129.0,
+    "z": 66.5,
+    "work_x": 230.0,
+    "work_y": 129.0,
+    "work_z": 66.5,
+    "status": "Idle",
+    "connected": true,
+    "calibration_active": false,
+    "calibration_warning": "Calibration needed: connected, but controller GRBL settings differ from the selected gantry YAML. Run calibration again before trusting coordinates or running protocols. $27: expected 2, got 0.5",
+    "move_error": null
+  },
+  "grbl": {
+    "settings": {
+      "$0": "10",
+      "$1": "25",
+      "$2": "0",
+      "$3": "2",
+      "$4": "0",
+      "$5": "1",
+      "$6": "1",
+      "$10": "0",
+      "$11": "0.010",
+      "$12": "0.002",
+      "$13": "0",
+      "$20": "1",
+      "$21": "1",
+      "$22": "1",
+      "$23": "0",
+      "$24": "100.000",
+      "$25": "500.000",
+      "$26": "250",
+      "$27": "0.500",
+      "$30": "10000",
+      "$31": "0",
+      "$32": "0",
+      "$100": "800.000",
+      "$101": "800.000",
+      "$102": "800.000",
+      "$110": "2000.000",
+      "$111": "2000.000",
+      "$112": "2000.000",
+      "$120": "50.000",
+      "$121": "50.000",
+      "$122": "50.000",
+      "$130": "260.205",
+      "$131": "146.645",
+      "$132": "58.000"
+    }
+  },
+  "protocol": {
+    "active": false,
+    "protocol_file": null
+  },
+  "observed_at": "2026-09-14T19:46:56.839306+00:00"
+}

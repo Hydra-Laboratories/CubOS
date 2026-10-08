@@ -108,6 +108,13 @@ class Gantry:
             self.logger.error("Error connecting to gantry: %s", exc)
             raise
 
+    def recover_critical_alarm(self, port: str) -> str:
+        """Reset the controller explicitly without connecting, unlocking or moving."""
+        if self._offline:
+            raise MillConnectionError("Critical-alarm recovery requires a physical controller")
+        assert self._mill is not None
+        return self._mill.recover_critical_alarm(port)
+
     def connected_port(self) -> str | None:
         """Return the connected serial port, if one is available."""
         if self._offline:
@@ -594,6 +601,13 @@ class Gantry:
             if isinstance(raw_settings, dict):
                 return raw_settings.get(field_name)
         return None
+
+    def coordinate_frame(self) -> dict:
+        """Return fresh controller-reported machine/work/offset coordinates."""
+        if self._offline:
+            raise MillConnectionError("Coordinate-frame diagnostics require a physical controller")
+        assert self._mill is not None
+        return self._mill.coordinate_frame()
 
     def query_raw_status(self) -> str:
         """Return one raw GRBL status string for diagnostics/recovery."""

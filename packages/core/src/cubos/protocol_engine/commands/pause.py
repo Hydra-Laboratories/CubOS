@@ -33,6 +33,26 @@ def pause(
     time.sleep(seconds)
 
 
+@protocol_command("photo_pause", summary=_summaries.pause)
+def photo_pause(
+    context: ProtocolContext,
+    settle_seconds: float,
+    capture_hold_seconds: float,
+    well: str,
+) -> None:
+    """Hold a stable photo pose, then announce that settling completed."""
+    context.logger.info("Settling photo pose for %ss (%s)", settle_seconds, well)
+    time.sleep(settle_seconds)
+    context.notify_step(
+        "photo_pause_completed",
+        seconds=settle_seconds,
+        capture_hold_seconds=capture_hold_seconds,
+        well=well,
+    )
+    context.logger.info("Holding photo pose for capture for %ss (%s)", capture_hold_seconds, well)
+    time.sleep(capture_hold_seconds)
+
+
 @protocol_command("breakpoint", summary=_summaries.breakpoint_cmd)
 def breakpoint_cmd(
     context: ProtocolContext,

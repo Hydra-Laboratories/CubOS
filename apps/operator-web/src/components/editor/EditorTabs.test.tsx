@@ -12,6 +12,7 @@ describe("EditorTabs", () => {
     expect(screen.getByRole("button", { name: "Gantry" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Deck" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Protocol" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Active Learning" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Deck" }));
     expect(onTabChange).toHaveBeenCalledWith("Deck");

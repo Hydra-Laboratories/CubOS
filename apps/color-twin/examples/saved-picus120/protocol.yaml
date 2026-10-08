@@ -1,0 +1,175 @@
+protocol:
+- pick_up_tip:
+    position: tips.A1
+- transfer:
+    source: stocks.A1
+    destination: plate.A5
+    volume_ul: 200.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A1
+    destination: plate.A6
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A1
+    destination: plate.A7
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A1
+    destination: plate.A8
+    volume_ul: 125.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A1
+    destination: plate.A9
+    volume_ul: 125.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A1
+    destination: plate.A10
+    volume_ul: 50.0
+    source_height: '-20'
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A2
+- transfer:
+    source: stocks.A2
+    destination: plate.A5
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A2
+    destination: plate.A6
+    volume_ul: 200.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A2
+    destination: plate.A7
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A2
+    destination: plate.A8
+    volume_ul: 125.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A2
+    destination: plate.A9
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A2
+    destination: plate.A10
+    volume_ul: 125.0
+    source_height: '-20'
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A3
+- transfer:
+    source: stocks.A3
+    destination: plate.A5
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A3
+    destination: plate.A6
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A3
+    destination: plate.A7
+    volume_ul: 200.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A3
+    destination: plate.A8
+    volume_ul: 50.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A3
+    destination: plate.A9
+    volume_ul: 125.0
+    source_height: '-20'
+- transfer:
+    source: stocks.A3
+    destination: plate.A10
+    volume_ul: 125.0
+    source_height: '-20'
+- drop_tip:
+    position: waste
+- pick_up_tip:
+    position: tips.A4
+- mix:
+    position: plate.A5
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A5
+- pick_up_tip:
+    position: tips.A5
+- mix:
+    position: plate.A6
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A6
+- pick_up_tip:
+    position: tips.A6
+- mix:
+    position: plate.A7
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A7
+- pick_up_tip:
+    position: tips.A7
+- mix:
+    position: plate.A8
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A8
+- pick_up_tip:
+    position: tips.A8
+- mix:
+    position: plate.A9
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A9
+- pick_up_tip:
+    position: tips.A9
+- mix:
+    position: plate.A10
+    volume_ul: 60
+    cycles: 3
+    height: -2
+- drop_tip:
+    position: waste
+- move:
+    instrument: camera
+    position: plate.A10

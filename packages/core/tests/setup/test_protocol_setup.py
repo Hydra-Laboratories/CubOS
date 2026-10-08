@@ -289,6 +289,25 @@ protocol:
             assert context.campaign_id == 42
             assert context.fluid_state_id == 73
 
+    def test_setup_overlays_durable_tip_snapshot_before_validation(self):
+        class Store:
+            calls = []
+
+            def get_tip_snapshot(self, fluid_state_id):
+                self.calls.append(fluid_state_id)
+                return {"containers": []}
+
+        store = Store()
+        with _TempYamlFiles() as f:
+            setup_protocol(
+                f.gantry_path, f.deck_path, f.protocol_path,
+                data_store=store, fluid_state_id=73,
+            )
+            assert store.calls == [73]
+            store.calls.clear()
+            setup_protocol(f.gantry_path, f.deck_path, f.protocol_path, data_store=store)
+            assert store.calls == []
+
     def test_rejects_negative_space_gantry_config(self):
         legacy_gantry = GANTRY_YAML.replace("  x_min: 0.0\n", "  x_min: -300.0\n")
         with _TempYamlFiles(gantry=legacy_gantry) as f:

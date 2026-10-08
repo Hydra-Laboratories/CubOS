@@ -123,7 +123,12 @@ def test_schema_has_tip_tables_and_pending_index(tmp_path):
                 "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
-        assert {"tip_containers", "tip_operations", "pipette_attachment"} <= tables
+        assert {
+            "tip_containers",
+            "tip_operations",
+            "tip_refill_operations",
+            "pipette_attachment",
+        } <= tables
         indexes = {
             row[0]
             for row in connection.execute(
@@ -162,6 +167,89 @@ def test_create_seeds_tip_containers_from_deck_tip_present_and_pipette_row(tmp_p
         "attachment_uncertain": False,
         "updated_at": pipette["updated_at"],
     }
+    store.close()
+
+
+def test_operator_refill_resets_tips_and_preserves_fluid_history(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = _create_state(store, deck_path, deck)
+    campaign_id = _create_linked_campaign(store, state_id)
+    store.seed_fluid(state_id, "reagent", 100.0)
+    store.begin_pick_up_tip(
+        state_id, "refill-pick", "tip_rack", "A1", 59.3, campaign_id=campaign_id,
+    )
+    store.complete_pick_up_tip("refill-pick")
+    store.begin_fluid_transfer(
+        state_id, "refill-pending-fluid", "reagent", "waste", 10.0,
+        campaign_id=campaign_id,
+    )
+
+    before = store.get_fluid_snapshot(state_id)
+    refill = store.refill_tip_rack(
+        state_id,
+        "refill-rack-1",
+        "tip_rack",
+        operator="alexc",
+        reason="operator confirmed a new full rack and bare pipette",
+        pipette_bare_confirmed=True,
+    )
+    after = store.get_fluid_snapshot(state_id)
+    snapshot = store.get_tip_snapshot(state_id)
+
+    assert refill["changed_slots"] == ["A1", "B2"]
+    assert refill["preserved_slots"] == []
+    assert after["containers"] == before["containers"]
+    assert [op["operation_key"] for op in after["operations"]] == [
+        "refill-pending-fluid"
+    ]
+    assert all(slot["status"] == "available" for slot in snapshot["containers"])
+    assert snapshot["pipette"]["rack_key"] is None
+    assert snapshot["pipette"]["attachment_uncertain"] is False
+    assert snapshot["refills"][0]["operation_key"] == "refill-rack-1"
+    store.close()
+
+
+def test_refill_does_not_clear_pending_tip_operation(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = _create_state(store, deck_path, deck)
+    campaign_id = _create_linked_campaign(store, state_id)
+    store.begin_pick_up_tip(
+        state_id, "pending-refill-pick", "tip_rack", "A1", 59.3,
+        campaign_id=campaign_id,
+    )
+
+    with pytest.raises(TipStateReconciliationRequiredError, match="pending-refill-pick"):
+        store.refill_tip_rack(
+            state_id,
+            "blocked-refill",
+            "tip_rack",
+            operator="alexc",
+            reason="operator confirmed a new rack",
+            pipette_bare_confirmed=True,
+        )
+
+    snapshot = store.get_tip_snapshot(state_id)
+    assert _slot(snapshot, "tip_rack", "A1")["status"] == "reserved"
+    assert snapshot["refills"] == []
+    store.close()
+
+
+def test_refill_operation_key_cannot_cross_fluid_states(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    first_state = _create_state(store, deck_path, deck, label="first")
+    second_state = _create_state(store, deck_path, deck, label="second")
+    kwargs = {
+        "operator": "alexc",
+        "reason": "operator confirmed a new rack",
+        "pipette_bare_confirmed": True,
+    }
+    store.refill_tip_rack(first_state, "same-key", "tip_rack", **kwargs)
+
+    with pytest.raises(TipStateConflictError, match="belongs to fluid state"):
+        store.refill_tip_rack(second_state, "same-key", "tip_rack", **kwargs)
     store.close()
 
 

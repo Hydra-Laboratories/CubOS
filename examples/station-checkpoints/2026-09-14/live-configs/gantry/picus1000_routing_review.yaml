@@ -1,0 +1,95 @@
+serial_port: /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0
+gantry_type: cub
+cnc:
+  factory_z_travel_mm: 56.0
+  calibration_block_height_mm: 35.0
+  y_axis_motion: bed
+  safe_z: 66.5
+  default_feed_rate_mm_min: 2000.0
+working_volume:
+  x_min: 0.0
+  x_max: 258.205
+  y_min: 0.0
+  y_max: 144.645
+  z_min: 10.5
+  z_max: 66.5
+origin_policy: deck_origin
+grbl_settings:
+  dir_invert_mask: 2
+  status_report: 0
+  soft_limits: true
+  hard_limits: true
+  homing_enable: true
+  homing_dir_mask: 0
+  homing_pull_off: 2.0
+  steps_per_mm_x: 800.0
+  steps_per_mm_y: 800.0
+  steps_per_mm_z: 800.0
+  max_rate_x: 2000.0
+  max_rate_y: 2000.0
+  max_rate_z: 2000.0
+  accel_x: 50.0
+  accel_y: 50.0
+  accel_z: 50.0
+  max_travel_x: 260.205
+  max_travel_y: 146.645
+  max_travel_z: 58.0
+instruments:
+  pipette:
+    type: pipette
+    vendor: sartorius
+    offset_x: 0.0
+    offset_y: 0.0
+    depth: -70.0
+    motion_envelope:
+      box:
+        offset:
+          x: -2.0
+          y: -2.0
+          z: 0.0
+        size:
+          x: 4.0
+          y: 4.0
+          z: 30.0
+      additional_boxes:
+      - offset:
+          x: -15.0
+          y: -15.0
+          z: 30.0
+        size:
+          x: 30.0
+          y: 30.0
+          z: 110.0
+      attached_tip_radius_mm: 4.0
+    pipette_model: picus2_1ch_1000
+    port: /dev/serial/by-id/usb-Sartorius_Picus_2_47684951-if00
+    baud_rate: 230400
+    verify_model: true
+  camera:
+    type: camera
+    vendor: opencv
+    offset_x: 0.0
+    offset_y: -46.5
+    depth: -114.964
+    motion_envelope:
+      box:
+        offset:
+          x: -8.0
+          y: -8.0
+          z: 0.0
+        size:
+          x: 16.0
+          y: 16.0
+          z: 20.0
+      additional_boxes:
+      - offset:
+          x: -15.0
+          y: -15.0
+          z: 20.0
+        size:
+          x: 30.0
+          y: 30.0
+          z: 80.0
+    camera_id: 0
+    resolution_width: 1280
+    resolution_height: 720

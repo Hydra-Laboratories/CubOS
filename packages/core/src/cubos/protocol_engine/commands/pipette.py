@@ -378,10 +378,29 @@ def mix(
             context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
             return None
     try:
-        tip = _engage(context, position, command_label="mix", height=height)
-        result = pipette.mix(
-            volume_ul, cycles, speed, gantry=context.gantry, position=tip,
-        )
+        if getattr(context.deck, "planning_enabled", False) is True:
+            from ..routing import prepared_step
+
+            planned = prepared_step(context, "mix")
+            context.routing_session.execute(planned.plans[0])
+            motion_index = 1
+            for _ in range(cycles):
+                pipette.aspirate(volume_ul, speed)
+                context.routing_session.execute(planned.plans[motion_index])
+                motion_index += 1
+                pipette.dispense(volume_ul, speed)
+                pipette.aspirate(volume_ul, speed)
+                context.routing_session.execute(planned.plans[motion_index])
+                motion_index += 1
+                pipette.dispense(volume_ul, speed)
+            from cubos.instruments.pipette.models import MixResult
+
+            result = MixResult(success=True, volume_ul=volume_ul, cycles=cycles)
+        else:
+            tip = _engage(context, position, command_label="mix", height=height)
+            result = pipette.mix(
+                volume_ul, cycles, speed, gantry=context.gantry, position=tip,
+            )
     except BaseException as exc:
         if operation_key is not None:
             _mark_transfer_uncertain(context, operation_key, exc)
@@ -423,6 +442,12 @@ def pick_up_tip(
     definition before reruns.
     """
     pipette = _get_pipette(context)
+    planned = None
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        planned = prepared_step(context, "pick_up_tip")
+        position = planned.data["position"]
     try:
         rack, tip_id = resolve_tip_rack_slot(context.deck, position)
     except TipRackResolutionError as exc:
@@ -432,6 +457,11 @@ def pick_up_tip(
     tracked = _tracked_fluid_state(context)
     operation_key = None
     if tracked:
+        if rack.side_exit is not None and tip_id is None:
+            raise ProtocolExecutionError(
+                "Durably tracked side-exit pickup requires an explicit tip slot "
+                "selected from the rack opening inward."
+            )
         operation_key = context.fluid_operation_key("pick_up_tip")
         try:
             should_execute, resolved_tip_id, extension_mm = (
@@ -473,14 +503,46 @@ def pick_up_tip(
             )
 
     try:
-        _engage(context, position, command_label="pick_up_tip")
-        pipette.pick_up_tip(speed)
+        if planned is not None:
+            attach_after = int(planned.data["attach_after_plan"])
+            for plan in planned.plans[: attach_after + 1]:
+                context.routing_session.execute(plan)
+            pipette.pick_up_tip(speed)
+            pipette.set_attached_tip_extension(rack.tip_length)
+            rack.mark_tip_used(tip_id)
+            for plan in planned.plans[attach_after + 1:]:
+                context.routing_session.execute(plan)
+        else:
+            path = rack.pickup_path(tip_id)
+            if path:
+                blockers = rack.exit_blockers(tip_id)
+                if blockers:
+                    raise ProtocolExecutionError(f"Side-exit lane blocked by loaded tips {blockers}; pick from the opening inward.")
+                if pipette.attached_tip_extension:
+                    raise ProtocolExecutionError("Side-exit pickup requires a bare pipette.")
+                if context.gantry_config is None:
+                    raise ProtocolExecutionError("Side-exit pickup requires gantry_config for bounds preflight.")
+                for phase, (x, y, z), extension in path:
+                    target = (x - pipette.offset_x, y - pipette.offset_y, z + pipette.depth + extension)
+                    if not context.gantry_config.working_volume.contains(*target):
+                        raise ProtocolExecutionError(f"Side-exit {phase} target {target} exceeds gantry bounds.")
+                approach = path[0][1]
+                context.gantry.move("pipette", approach, travel_z=approach[2])
+                context.gantry.move("pipette", path[1][1])
+            else:
+                _engage(context, position, command_label="pick_up_tip")
+            pipette.pick_up_tip(speed)
+            pipette.set_attached_tip_extension(rack.tip_length)
+            rack.mark_tip_used(tip_id)
+            for phase, target, _ in path[2:]:
+                context.logger.info("Side-exit tip %s: %s to %s", position, phase, target)
+                context.gantry.move(
+                    "pipette", target, travel_z=target[2] if phase == "exit" else None,
+                )
     except BaseException as exc:
         if operation_key is not None:
             _mark_tip_uncertain(context, operation_key, exc)
         raise
-    pipette.set_attached_tip_extension(rack.tip_length)
-    rack.mark_tip_used(tip_id)
     if operation_key is not None:
         try:
             context.data_store.complete_pick_up_tip(operation_key)
@@ -504,6 +566,7 @@ def transfer(
     destination_height: Optional[float] = None,
     liquid_class: Optional[str] = None,
     require_uncapped: Optional[List[str]] = None,
+    blow_out: bool = True,
 ) -> None:
     """Aspirate from *source* and dispense into *destination*.
 
@@ -558,12 +621,13 @@ def transfer(
     hardware receives whatever correction is calibrated to actually deliver
     it.
 
-    Every transfer runs the pipette's calibrated blow-out motion once,
-    right after the *final* stroke's dispense -- clearing any fluid left in
-    the tip after the transfer is otherwise complete, rather than after
-    every stroke of a multi-stroke transfer. It does not change the
-    tracked dispense volume; a blow-out failure is treated the same as a
-    dispense failure (the stroke is marked ``reconciliation_required``).
+    By default, transfer runs the pipette's calibrated blow-out motion once,
+    right after the *final* stroke's dispense. Set ``blow_out=False`` to skip
+    that motion when throughput matters. For multi-stroke transfers, blow-out
+    is still performed at most once and only after the final dispense. It does
+    not change the tracked dispense volume; a blow-out failure is treated the
+    same as a dispense failure (the stroke is marked
+    ``reconciliation_required``).
     """
     _require_uncapped(context, require_uncapped, command_label="transfer")
 
@@ -681,6 +745,12 @@ def transfer(
     if resolved_destination_height is None:
         resolved_destination_height = 0.0
 
+    planned = None
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        planned = prepared_step(context, "transfer")
+
     stroke_count = len(stroke_volumes)
     multi_stroke = stroke_count > 1
     previous_substep = context.active_substep
@@ -706,7 +776,9 @@ def transfer(
                 tracked=tracked,
                 stroke_index=stroke_index,
                 stroke_count=stroke_count,
-                blow_out=stroke_index == stroke_count - 1,
+                planned_source=(planned.plans[2 * stroke_index] if planned else None),
+                planned_destination=(planned.plans[2 * stroke_index + 1] if planned else None),
+                blow_out=blow_out and stroke_index == stroke_count - 1,
             )
     finally:
         context.active_substep = previous_substep
@@ -728,6 +800,8 @@ def _execute_transfer_stroke(
     tracked: bool,
     stroke_index: int,
     stroke_count: int,
+    planned_source: Any = None,
+    planned_destination: Any = None,
     blow_out: bool = False,
 ) -> None:
     """Journal, actuate, and commit exactly one transfer stroke.
@@ -767,15 +841,21 @@ def _execute_transfer_stroke(
 
     commanded_volume_ul = correction.apply(stroke_volume_ul)
     try:
-        _engage(
-            context, source, command_label="transfer.aspirate",
-            height=source_height,
-        )
+        if planned_source is None:
+            _engage(
+                context, source, command_label="transfer.aspirate",
+                height=source_height,
+            )
+        else:
+            context.routing_session.execute(planned_source)
         pipette.aspirate(commanded_volume_ul, speed)
-        _engage(
-            context, destination, command_label="transfer.dispense",
-            height=destination_height,
-        )
+        if planned_destination is None:
+            _engage(
+                context, destination, command_label="transfer.dispense",
+                height=destination_height,
+            )
+        else:
+            context.routing_session.execute(planned_destination)
         pipette.dispense(commanded_volume_ul, speed)
         if blow_out:
             pipette.blowout(speed)
@@ -843,14 +923,25 @@ def drop_tip(
             context.notify_step("step_skipped", reason=_ALREADY_APPLIED)
             return
 
+    planned = None
+    if getattr(context.deck, "planning_enabled", False) is True:
+        from ..routing import prepared_step
+
+        planned = prepared_step(context, "drop_tip")
+
     try:
-        _engage(context, position, command_label="drop_tip")
+        if planned is None:
+            _engage(context, position, command_label="drop_tip")
+        else:
+            context.routing_session.execute(planned.plans[0])
         pipette.drop_tip(speed)
+        pipette.clear_attached_tip_extension()
+        if planned is not None:
+            context.routing_session.execute(planned.plans[1])
     except BaseException as exc:
         if operation_key is not None:
             _mark_tip_uncertain(context, operation_key, exc)
         raise
-    pipette.clear_attached_tip_extension()
     if operation_key is not None:
         try:
             context.data_store.complete_drop_tip(operation_key)

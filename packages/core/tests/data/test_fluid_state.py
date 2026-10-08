@@ -157,6 +157,102 @@ def _create_linked_campaign(store, state_id, description="fluid test"):
     return store.create_campaign(description, fluid_state_id=state_id)
 
 
+def test_stock_reconciliation_replaces_volume_and_records_audit(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = _create_seeded_state(store, deck_path, deck)
+
+    result = store.reconcile_fluid_container(
+        state_id,
+        "refill-1",
+        "source",
+        350.0,
+        {"water": 350.0},
+        operator="Alex",
+        reason="Measured refill before batch 2",
+    )
+
+    assert result["status"] == "applied"
+    assert store.get_fluid_container(state_id, "source", "")["current_volume_ul"] == 350.0
+    adjustment = store._conn.execute(
+        "SELECT operator, reason, previous_volume_ul, volume_ul "
+        "FROM fluid_adjustments WHERE operation_key = ?",
+        ("refill-1",),
+    ).fetchone()
+    assert adjustment == ("Alex", "Measured refill before batch 2", 100.0, 350.0)
+
+
+def test_stock_reconciliation_omitted_composition_scales_known_contents(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = store.create_fluid_state(
+        deck_path, deck,
+        initial_fluids={"source": {"volume_ul": 100.0, "composition": {"red": 100.0}}},
+    )
+
+    result = store.reconcile_fluid_container(
+        state_id, "refill-scale", "source", 500.0, None,
+        operator="Alex", reason="Measured final volume",
+    )
+
+    assert result["composition"] == {"red": 500.0}
+    assert store.get_fluid_container(state_id, "source", "")["composition"] == {
+        "red": 500.0
+    }
+
+
+def test_stock_reconciliation_omitted_composition_from_empty_state_is_unknown(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = store.create_fluid_state(deck_path, deck)
+
+    result = store.reconcile_fluid_container(
+        state_id, "refill-unknown", "source", 100.0, None,
+        operator="Alex", reason="Contents not characterized",
+    )
+
+    assert result["composition"] == {"unknown": 100.0}
+
+
+def test_stock_reconciliation_rejects_capacity_and_pending_operation(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    state_id = _create_seeded_state(store, deck_path, deck)
+
+    with pytest.raises(FluidStateError, match="capacity"):
+        store.reconcile_fluid_container(
+            state_id, "refill-too-large", "source", 501.0,
+            {"water": 501.0}, operator="Alex", reason="bad measurement",
+        )
+
+    campaign_id = _create_linked_campaign(store, state_id)
+    assert store.begin_fluid_transfer(
+        state_id, "transfer-1", "source", "plate.A1", 10.0,
+        campaign_id=campaign_id,
+    )
+    with pytest.raises(FluidStateReconciliationRequiredError, match="cannot be reconciled"):
+        store.reconcile_fluid_container(
+            state_id, "refill-pending", "source", 250.0,
+            {"water": 250.0}, operator="Alex", reason="unsafe while pending",
+        )
+
+
+def test_stock_reconciliation_operation_key_cannot_cross_states(tmp_path):
+    deck_path, deck = _write_deck(tmp_path)
+    store = DataStore(":memory:")
+    first = _create_seeded_state(store, deck_path, deck)
+    second = _create_seeded_state(store, deck_path, deck)
+    store.reconcile_fluid_container(
+        first, "shared-key", "source", 200.0, {"water": 200.0},
+        operator="Alex", reason="first state",
+    )
+    with pytest.raises(FluidStateError, match="different details"):
+        store.reconcile_fluid_container(
+            second, "shared-key", "source", 200.0, {"water": 200.0},
+            operator="Alex", reason="second state",
+        )
+
+
 def _database_schema(path):
     connection = sqlite3.connect(path)
     try:
