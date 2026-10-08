@@ -49,6 +49,15 @@ CREATE TABLE IF NOT EXISTS fluid_state_sessions (
     updated_at         TEXT    NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One explicit physical setup survives experiment/run boundaries.  Historical
+-- sessions remain immutable records; this pointer is the only live default.
+CREATE TABLE IF NOT EXISTS active_fluid_state (
+    singleton           INTEGER PRIMARY KEY CHECK (singleton = 1),
+    fluid_state_id      INTEGER NOT NULL REFERENCES fluid_state_sessions(id),
+    revision            INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0),
+    updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS campaigns (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     description     TEXT    NOT NULL,
@@ -174,6 +183,7 @@ CREATE TABLE IF NOT EXISTS fluid_containers (
                                       AND working_volume_ul <= capacity_ul
                                   ),
     current_volume_ul  REAL    NOT NULL DEFAULT 0.0 CHECK (current_volume_ul >= 0),
+    volume_known       INTEGER NOT NULL DEFAULT 1 CHECK (volume_known IN (0, 1)),
     composition_json   TEXT    NOT NULL DEFAULT '{}',
     version            INTEGER NOT NULL DEFAULT 0 CHECK (version >= 0),
     created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -212,6 +222,18 @@ CREATE TABLE IF NOT EXISTS fluid_operations (
     created_at               TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at               TEXT    NOT NULL DEFAULT (datetime('now')),
     applied_at               TEXT
+);
+
+CREATE TABLE IF NOT EXISTS fluid_manual_edits (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fluid_state_id INTEGER NOT NULL REFERENCES fluid_state_sessions(id) ON DELETE CASCADE,
+    labware_key TEXT NOT NULL,
+    location_id TEXT NOT NULL DEFAULT '',
+    operation TEXT NOT NULL,
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL,
+    detail TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS tip_containers (
@@ -390,6 +412,8 @@ class DataStore:
             "deck_descriptor_json",
             "TEXT NOT NULL DEFAULT '{}'",
         )
+        self._add_column_if_missing("fluid_containers", "volume_known", "INTEGER NOT NULL DEFAULT 1")
+        self._add_column_if_missing("fluid_manual_edits", "detail", "TEXT")
         self._conn.execute(
             "UPDATE experiments SET labware_key = labware_name "
             "WHERE labware_key IS NULL"
@@ -1053,17 +1077,20 @@ class DataStore:
         *,
         label: str | None = None,
         initial_fluids: Mapping[str, Any] | None = None,
+        omitted_volumes_unknown: bool = False,
     ) -> int:
         """Create a deck-associated fluid-state session."""
         from .fluid_state import create_fluid_state
 
-        return create_fluid_state(
+        state_id = create_fluid_state(
             self._conn,
             deck_path,
             deck,
             label=label,
             initial_fluids=initial_fluids,
+            omitted_volumes_unknown=omitted_volumes_unknown,
         )
+        return state_id
 
     def resume_fluid_state(
         self,
@@ -1087,6 +1114,54 @@ class DataStore:
         from .fluid_state import list_fluid_states
 
         return list_fluid_states(self._conn)
+
+    def get_active_fluid_state(self) -> dict[str, Any] | None:
+        """Return the explicitly selected live setup and its optimistic revision."""
+        row = self._conn.execute(
+            "SELECT fluid_state_id, revision, updated_at FROM active_fluid_state "
+            "WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        return {"fluid_state_id": row[0], "revision": row[1], "updated_at": row[2]}
+
+    def list_fluid_manual_edits(self, fluid_state_id: int) -> list[dict[str, Any]]:
+        rows = self._conn.execute(
+            "SELECT id, labware_key, location_id, operation, before_json, after_json, detail, created_at "
+            "FROM fluid_manual_edits WHERE fluid_state_id=? ORDER BY id", (fluid_state_id,)
+        ).fetchall()
+        return [{"id": r[0], "labware_key": r[1], "location_id": r[2], "operation": r[3],
+                 "before": json.loads(r[4]), "after": json.loads(r[5]), "note": r[6], "created_at": r[7]} for r in rows]
+
+    def set_active_fluid_state(self, fluid_state_id: int, *, expected_revision: int | None = None) -> dict[str, Any]:
+        """Select a live setup, rejecting stale writes atomically."""
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            return self._set_active_fluid_state_locked(fluid_state_id, expected_revision=expected_revision)
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def _set_active_fluid_state_locked(self, fluid_state_id: int, *, expected_revision: int | None = None) -> dict[str, Any]:
+        row = self._conn.execute(
+            "SELECT revision FROM active_fluid_state WHERE singleton = 1"
+        ).fetchone()
+        if self._conn.execute(
+            "SELECT 1 FROM fluid_state_sessions WHERE id = ?", (fluid_state_id,)
+        ).fetchone() is None:
+            raise ValueError(f"fluid state {fluid_state_id} does not exist")
+        current = int(row[0]) if row else 0
+        if expected_revision is not None and expected_revision != current:
+            raise ValueError(f"active fluid state revision is {current}, expected {expected_revision}")
+        next_revision = current + 1
+        self._conn.execute(
+            "INSERT INTO active_fluid_state(singleton, fluid_state_id, revision) VALUES (1, ?, ?) "
+            "ON CONFLICT(singleton) DO UPDATE SET fluid_state_id=excluded.fluid_state_id, "
+            "revision=excluded.revision, updated_at=datetime('now')",
+            (fluid_state_id, next_revision),
+        )
+        self._conn.commit()
+        return self.get_active_fluid_state()  # type: ignore[return-value]
 
     def get_fluid_container(
         self,
@@ -1118,6 +1193,135 @@ class DataStore:
             volume_ul,
             composition,
         )
+
+    def adjust_fluid_container(
+        self,
+        fluid_state_id: int,
+        labware_key: str,
+        location_id: str,
+        volume_ul: float,
+        composition: Mapping[str, float] | None = None,
+        *,
+        expected_version: int | None = None,
+        operation: str = "manual_adjustment",
+    ) -> FluidContainerSnapshot:
+        """Record a manual contents correction with optimistic concurrency."""
+        result = self.apply_manual_edits(
+            fluid_state_id,
+            [{"mode": "set", "labware_key": labware_key, "location_id": location_id,
+              "volume_ul": volume_ul, "composition": composition if composition is not None else {"unknown": volume_ul}}],
+            expected_revisions={
+                (f"{labware_key}.{location_id}" if location_id else labware_key): expected_version
+            } if expected_version is not None else {},
+        )
+        return result[0]
+
+    def apply_manual_edits(
+        self, fluid_state_id: int, actions: list[Mapping[str, Any]], *, expected_revisions: Mapping[str, int] | None = None, expected_active_revision: int | None = None, note: str | None = None
+    ) -> list[FluidContainerSnapshot]:
+        """Validate and apply a batch of record-only edits in one transaction.
+
+        Actions use ``set``, ``add``, ``remove``, ``empty``, and ``transfer``.
+        A transfer updates both containers and carries the source composition.
+        """
+        expected_revisions = expected_revisions or {}
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            from .fluid_state import FluidStateReconciliationRequiredError
+            pending = self._conn.execute(
+                "SELECT 1 FROM fluid_operations WHERE fluid_state_id=? AND status IN ('started','reconciliation_required') "
+                "UNION ALL SELECT 1 FROM tip_operations WHERE fluid_state_id=? AND status IN ('started','reconciliation_required') "
+                "UNION ALL SELECT 1 FROM cap_operations WHERE fluid_state_id=? AND status IN ('started','reconciliation_required') LIMIT 1",
+                (fluid_state_id, fluid_state_id, fluid_state_id),
+            ).fetchone()
+            if pending is not None:
+                raise FluidStateReconciliationRequiredError("manual contents edits require reconciliation of pending operations")
+            active = self._conn.execute("SELECT fluid_state_id, revision FROM active_fluid_state WHERE singleton=1").fetchone()
+            if active is None or int(active[0]) != fluid_state_id:
+                raise ValueError("only the selected active setup can be edited")
+            if expected_active_revision is not None and int(active[1]) != expected_active_revision:
+                raise ValueError(f"active setup revision is {active[1]}, expected {expected_active_revision}")
+            touched: dict[tuple[str, str], FluidContainerSnapshot] = {}
+            for action in actions:
+                mode = str(action.get("mode", "set"))
+                if mode == "replace":
+                    cap = self._conn.execute(
+                        "SELECT status FROM cap_containers WHERE fluid_state_id=? AND labware_key=? AND location_id=?",
+                        (fluid_state_id, str(action["labware_key"]), str(action.get("location_id", ""))),
+                    ).fetchone()
+                    if cap is not None and cap[0] != "uncapped":
+                        raise ValueError("cannot replace a capped container; reconcile or explicitly confirm its cap state first")
+                if mode == "replace":
+                    mode = "set"
+                source_key = str(action["labware_key"])
+                source_loc = str(action.get("location_id", ""))
+                source = self.get_fluid_container(fluid_state_id, source_key, source_loc)
+                identity = f"{source_key}.{source_loc}" if source_loc else source_key
+                if expected_revisions and identity not in expected_revisions:
+                    raise ValueError(f"missing expected revision for {identity}")
+                if identity in expected_revisions and source["version"] != expected_revisions[identity]:
+                    raise ValueError(f"container revision is {source['version']}, expected {expected_revisions[identity]}")
+                if mode == "transfer":
+                    dest_key = str(action["destination_labware_key"])
+                    dest_loc = str(action.get("destination_location_id", ""))
+                    dest = self.get_fluid_container(fluid_state_id, dest_key, dest_loc)
+                    dest_identity = f"{dest_key}.{dest_loc}" if dest_loc else dest_key
+                    if expected_revisions and dest_identity not in expected_revisions:
+                        raise ValueError(f"missing expected revision for {dest_identity}")
+                    if not source.get("volume_known", True) or not dest.get("volume_known", True):
+                        raise ValueError("transfer requires known source and destination volumes")
+                    volume = float(action["volume_ul"])
+                    if volume <= 0 or source["current_volume_ul"] < volume:
+                        raise ValueError("transfer volume exceeds known source volume")
+                    composition = dict(source["composition"])
+                    ratio = volume / source["current_volume_ul"] if source["current_volume_ul"] else 0
+                    moved = {k: v * ratio for k, v in composition.items()}
+                    updates = [(source, source["current_volume_ul"] - volume, {k: v - moved.get(k, 0) for k, v in composition.items()}),
+                               (dest, dest["current_volume_ul"] + volume, {k: dest["composition"].get(k, 0) + moved.get(k, 0) for k in set(dest["composition"]) | set(moved)})]
+                else:
+                    current = source["current_volume_ul"]
+                    delta = float(action.get("volume_ul", 0))
+                    if mode == "add":
+                        volume = current + delta
+                        added = action.get("composition")
+                        if added is None:
+                            added = {"unknown": delta} if delta else {}
+                        composition = dict(source["composition"])
+                        for key, value in added.items():
+                            composition[key] = composition.get(key, 0.0) + float(value)
+                    elif mode == "remove":
+                        volume = current - delta
+                        if current and volume >= 0:
+                            ratio = volume / current
+                            composition = {key: value * ratio for key, value in source["composition"].items()}
+                        else:
+                            composition = {}
+                    elif mode == "empty":
+                        volume = 0
+                        composition = {}
+                    else:
+                        volume = delta
+                        supplied = action.get("composition")
+                        composition = dict(supplied) if supplied is not None else ({"unknown": volume} if volume else {})
+                    if volume < 0 or volume > source["capacity_ul"]: raise ValueError("volume is outside container capacity")
+                    updates = [(source, volume, composition or {})]
+                for old, new_volume, new_composition in updates:
+                    if abs(sum(new_composition.values()) - new_volume) > 1e-6:
+                        raise ValueError("composition must sum to current volume")
+                    key = (old["labware_key"], old["location_id"])
+                    touched[key] = old
+                    self._conn.execute(
+                        "UPDATE fluid_containers SET current_volume_ul=?, volume_known=1, composition_json=?, version=version+1, updated_at=datetime('now') WHERE fluid_state_id=? AND labware_key=? AND location_id=?",
+                        (new_volume, json.dumps(new_composition), fluid_state_id, old["labware_key"], old["location_id"]),
+                    )
+                    new = dict(old); new.update(current_volume_ul=new_volume, composition=new_composition, version=old["version"] + 1)
+                    self._conn.execute("INSERT INTO fluid_manual_edits(fluid_state_id, labware_key, location_id, operation, before_json, after_json, detail) VALUES (?, ?, ?, ?, ?, ?, ?)", (fluid_state_id, old["labware_key"], old["location_id"], mode, json.dumps(dict(old)), json.dumps(new), note))
+            self._conn.execute("UPDATE fluid_state_sessions SET updated_at=datetime('now') WHERE id=?", (fluid_state_id,))
+            self._conn.commit()
+            return [self.get_fluid_container(fluid_state_id, *key) for key in touched]
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def begin_fluid_transfer(
         self,

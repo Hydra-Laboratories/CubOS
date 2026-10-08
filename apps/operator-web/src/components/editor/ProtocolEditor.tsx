@@ -79,6 +79,7 @@ interface Props {
   fluidStateChoice?: FluidStateChoice;
   onFluidStateChoiceChange?: (choice: FluidStateChoice) => void;
   availableFluidStates?: FluidStateSummary[];
+  activeFluidStateId?: number | null;
 }
 
 // Categorical accents for step kinds: movement = indigo accent, liquid
@@ -178,6 +179,7 @@ export default function ProtocolEditor({
   fluidStateChoice = { mode: "none", newLabel: "", resumeId: null, seeds: [] },
   onFluidStateChoiceChange,
   availableFluidStates = [],
+  activeFluidStateId = null,
 }: Props) {
   const [steps, setSteps] = useState<ProtocolStep[]>(() => (
     loadedSteps ? structuredClone(loadedSteps) : []
@@ -385,7 +387,8 @@ export default function ProtocolEditor({
   // "new"/"resume" both need an explicit, complete choice before Run is
   // enabled — resume specifically needs a picked state id. "none" (the
   // default) never blocks Run, so every pre-Feature-07 flow is unaffected.
-  const stateChoiceIncomplete = fluidStateChoice.mode === "resume" && fluidStateChoice.resumeId === null;
+  const stateChoiceIncomplete = (fluidStateChoice.mode === "resume" && fluidStateChoice.resumeId === null)
+    || (fluidStateChoice.mode === "active" && activeFluidStateId === null);
   // "new" fluid-state seed rows are validated the same way the server would
   // (Feature 07b): a negative volume, a composition that doesn't sum, or a
   // duplicate container blocks Run with an inline message instead of a 4xx.
@@ -398,7 +401,7 @@ export default function ProtocolEditor({
   const runButtonTitle = hasUnsaved
     ? "Save your changes before running"
     : stateChoiceIncomplete
-      ? "Select a fluid state to resume before running"
+      ? fluidStateChoice.mode === "active" ? "Activate a physical setup in Deck contents before running" : "Select a fluid state to resume before running"
       : seedRowsInvalid
         ? "Fix the fluid-state seed rows before running"
         : runDisabledReason ?? undefined;
@@ -665,6 +668,15 @@ export default function ProtocolEditor({
           <div style={stateChoicePanelStyle}>
             <div style={theme.sectionLabel}>Fluid state tracking</div>
             <div style={stateChoiceOptionsStyle}>
+              <label style={stateChoiceOptionStyle}>
+                <input
+                  type="radio"
+                  name="fluid-state-choice"
+                  checked={fluidStateChoice.mode === "active"}
+                  onChange={() => onFluidStateChoiceChange({ ...fluidStateChoice, mode: "active" })}
+                />
+                Use active deck contents
+              </label>
               <label style={stateChoiceOptionStyle}>
                 <input
                   type="radio"

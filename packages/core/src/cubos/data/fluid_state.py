@@ -61,6 +61,7 @@ class FluidContainerSnapshot(TypedDict):
     capacity_ul: float
     working_volume_ul: float
     current_volume_ul: float
+    volume_known: bool
     composition: dict[str, float]
     version: int
     updated_at: str
@@ -202,6 +203,7 @@ def create_fluid_state(
     *,
     label: str | None = None,
     initial_fluids: Mapping[str, Any] | None = None,
+    omitted_volumes_unknown: bool = False,
 ) -> int:
     """Create one durable state session and register its volume labware."""
     path, snapshot_json = _resolved_deck_provenance(deck_path)
@@ -248,6 +250,12 @@ def create_fluid_state(
                 location_id,
                 definition["volume_ul"],
                 definition["composition"],
+            )
+        if omitted_volumes_unknown:
+            connection.execute(
+                "UPDATE fluid_containers SET volume_known=0 WHERE fluid_state_id=? "
+                "AND current_volume_ul=0 AND composition_json='{}'",
+                (fluid_state_id,),
             )
         connection.execute(
             "UPDATE fluid_state_sessions SET updated_at = datetime('now') "
@@ -759,7 +767,7 @@ def get_fluid_snapshot(
 
         container_rows = connection.execute(
             "SELECT labware_key, location_id, labware_type, capacity_ul, "
-            "working_volume_ul, current_volume_ul, composition_json, version, "
+            "working_volume_ul, current_volume_ul, volume_known, composition_json, version, "
             "updated_at FROM fluid_containers WHERE fluid_state_id = ? "
             "ORDER BY labware_key, location_id",
             (fluid_state_id,),
@@ -783,11 +791,12 @@ def get_fluid_snapshot(
             "capacity_ul": float(row[3]),
             "working_volume_ul": float(row[4]),
             "current_volume_ul": volume,
+            "volume_known": bool(row[6]),
             "composition": _decode_composition(
-                row[6], volume, target=_format_target(row[0], row[1]),
+                row[7], volume, target=_format_target(row[0], row[1]),
             ),
-            "version": int(row[7]),
-            "updated_at": row[8],
+            "version": int(row[8]),
+            "updated_at": row[9],
         })
 
     operations: list[FluidOperationSnapshot] = []
@@ -841,7 +850,7 @@ def get_fluid_container(
         _require_state(connection, fluid_state_id)
         row = connection.execute(
             "SELECT labware_key, location_id, labware_type, capacity_ul, "
-            "working_volume_ul, current_volume_ul, composition_json, version, "
+            "working_volume_ul, current_volume_ul, volume_known, composition_json, version, "
             "updated_at FROM fluid_containers WHERE fluid_state_id = ? AND "
             "labware_key = ? AND location_id = ?",
             (fluid_state_id, labware_key, location_id),
@@ -859,11 +868,12 @@ def get_fluid_container(
         "capacity_ul": float(row[3]),
         "working_volume_ul": float(row[4]),
         "current_volume_ul": volume,
+        "volume_known": bool(row[6]),
         "composition": _decode_composition(
-            row[6], volume, target=_format_target(row[0], row[1]),
+            row[7], volume, target=_format_target(row[0], row[1]),
         ),
-        "version": int(row[7]),
-        "updated_at": row[8],
+        "version": int(row[8]),
+        "updated_at": row[9],
     }
 
 
@@ -1307,7 +1317,7 @@ def _seed_fluid_row(
             _format_target(labware_key, location_id), volume_ul, working,
         )
     connection.execute(
-        "UPDATE fluid_containers SET current_volume_ul = ?, composition_json = ?, "
+        "UPDATE fluid_containers SET current_volume_ul = ?, volume_known = 1, composition_json = ?, "
         "version = version + 1, updated_at = datetime('now') WHERE id = ?",
         (volume_ul, _canonical_json(dict(composition)), row["id"]),
     )

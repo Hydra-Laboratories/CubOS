@@ -33,6 +33,9 @@ class RunSubmission(BaseModel):
     mock_mode: bool = False
     metadata: Dict[str, Any] = Field(default_factory=dict)
     state: RunStateSelection | None = None
+    # Explicit opt-in for the persistent physical setup workflow.  Leaving
+    # this false preserves legacy stateless run submissions exactly.
+    use_active_state: bool = False
 
     @model_validator(mode="after")
     def validate_source(self) -> "RunSubmission":
@@ -51,6 +54,8 @@ class RunSubmission(BaseModel):
         selected = files if has_files else inline
         if not all(isinstance(value, str) and value for value in selected):
             raise ValueError("gantry, deck, and protocol inputs are all required")
+        if self.use_active_state and self.state is not None:
+            raise ValueError("use_active_state cannot be combined with state")
         return self
 
 

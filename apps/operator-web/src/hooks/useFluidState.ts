@@ -1,11 +1,67 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { fluidStateApi } from "../api/client";
-import type { CreateFluidStateRequest, ResolveReconciliationRequest } from "../types";
+import type { CreateFluidStateRequest, FluidStateDetail, ManualContainerEditRequest, ManualEditBatchRequest, ResolveReconciliationRequest } from "../types";
 
 export function useFluidStates() {
   return useQuery({
     queryKey: ["fluid-states"],
     queryFn: fluidStateApi.list,
+  });
+}
+
+export function useActiveFluidState() {
+  return useQuery({
+    queryKey: ["fluid-states", "active"],
+    queryFn: fluidStateApi.getActive,
+  });
+}
+
+export function useSelectActiveFluidState() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ fluidStateId, expectedRevision }: { fluidStateId: number; expectedRevision?: number }) =>
+      fluidStateApi.selectActive(fluidStateId, expectedRevision),
+    onSuccess: (active) => {
+      qc.setQueryData(["fluid-states", "active"], active);
+    },
+  });
+}
+
+export function useEditFluidContainer(fluidStateId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ManualContainerEditRequest) => fluidStateApi.editContainer(fluidStateId!, body),
+    onSuccess: (container) => {
+      qc.setQueryData<FluidStateDetail | undefined>(["fluid-states", fluidStateId], (current) => current ? {
+        ...current,
+        updated_at: container.updated_at,
+        containers: current.containers.map((item) => (
+          item.labware_key === container.labware_key && item.location_id === container.location_id ? container : item
+        )),
+      } : current);
+      qc.invalidateQueries({ queryKey: ["fluid-states", fluidStateId, "operations"] });
+      qc.invalidateQueries({ queryKey: ["fluid-states"] });
+    },
+  });
+}
+
+export function useApplyManualEdits(fluidStateId: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ManualEditBatchRequest) => fluidStateApi.applyManualEdits(fluidStateId!, body),
+    onSuccess: (detail) => {
+      qc.setQueryData(["fluid-states", fluidStateId], detail);
+      qc.invalidateQueries({ queryKey: ["fluid-states"] });
+      qc.invalidateQueries({ queryKey: ["fluid-states", fluidStateId, "manual-edits"] });
+    },
+  });
+}
+
+export function useManualEdits(fluidStateId: number | null) {
+  return useQuery({
+    queryKey: ["fluid-states", fluidStateId, "manual-edits"],
+    queryFn: () => fluidStateApi.listManualEdits(fluidStateId!),
+    enabled: fluidStateId != null,
   });
 }
 

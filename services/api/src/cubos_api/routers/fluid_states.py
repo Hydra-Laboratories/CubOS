@@ -37,16 +37,142 @@ from cubos_api.models.state import (
     ReconciliationResponse,
     ResolveReconciliationRequest,
     ResolveReconciliationResponse,
+    ActiveFluidStateResponse,
+    SelectActiveFluidStateRequest,
+    ManualContainerEditRequest,
+    ManualEditBatchRequest,
+    ManualEditView,
     TipContainerView,
     TipStateResponse,
 )
 from cubos_api.services.state_errors import map_state_exception
+from cubos_api.services.contents_ownership import ContentsOwnershipError, get_contents_ownership
 from cubos_api.services.yaml_io import resolve_config_path
 
 router = APIRouter(prefix="/api/v1/fluid-states", tags=["cubos-state-v1"])
 
 _PENDING_STATUSES = {"started", "reconciliation_required"}
 _STATE_EXCEPTIONS = (FluidStateError, TipStateError, CapStateError)
+
+
+@router.get("/active", response_model=Optional[ActiveFluidStateResponse])
+def get_active_fluid_state() -> Optional[ActiveFluidStateResponse]:
+    """Return the explicit live physical setup; history is never auto-selected."""
+    store = _open_store()
+    try:
+        active = store.get_active_fluid_state()
+        return ActiveFluidStateResponse(**active) if active else None
+    finally:
+        store.close()
+
+
+@router.put("/active", response_model=ActiveFluidStateResponse)
+def select_active_fluid_state(body: SelectActiveFluidStateRequest) -> ActiveFluidStateResponse:
+    store = _open_store()
+    try:
+        try:
+            with get_contents_ownership().manual_transaction():
+                active = store.set_active_fluid_state(
+                    body.fluid_state_id, expected_revision=body.expected_revision
+                )
+        except ContentsOwnershipError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            status = 409 if "revision" in str(exc) else 404
+            raise HTTPException(status, str(exc)) from exc
+        return ActiveFluidStateResponse(**active)
+    finally:
+        store.close()
+
+
+@router.post("/{fluid_state_id}/containers/edit", response_model=ContainerView)
+def edit_fluid_container(
+    fluid_state_id: int, body: ManualContainerEditRequest
+) -> ContainerView:
+    """Apply a record-only contents correction; this never actuates hardware."""
+    store = _open_store()
+    try:
+        try:
+            with get_contents_ownership().manual_transaction():
+                container = store.adjust_fluid_container(
+                    fluid_state_id,
+                    body.labware_key,
+                    body.location_id,
+                    body.volume_ul,
+                    body.composition,
+                    expected_version=body.expected_version,
+                    operation=body.operation,
+                )
+            snapshot = store.get_fluid_snapshot(fluid_state_id)
+        except ContentsOwnershipError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            status = 409 if "revision" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
+        except _STATE_EXCEPTIONS as exc:
+            raise map_state_exception(exc) from exc
+        views = _containers_with_roles(snapshot)
+        for view in views:
+            if view.labware_key == body.labware_key and view.location_id == body.location_id:
+                return view
+        raise HTTPException(404, "container not found")
+    finally:
+        store.close()
+
+
+@router.post("/{fluid_state_id}/manual-edits", response_model=FluidStateDetailResponse)
+def apply_manual_edits(fluid_state_id: int, body: ManualEditBatchRequest) -> FluidStateDetailResponse:
+    store = _open_store()
+    try:
+        try:
+            required = set()
+            for action in body.actions:
+                source = action.get("labware_key")
+                if source:
+                    required.add(f"{source}.{action.get('location_id', '')}" if action.get("location_id", "") else str(source))
+                if action.get("mode") == "transfer" and action.get("destination_labware_key"):
+                    dest = action["destination_labware_key"]
+                    loc = action.get("destination_location_id", "")
+                    required.add(f"{dest}.{loc}" if loc else str(dest))
+            if required != set(body.expected_revisions):
+                missing = sorted(required - set(body.expected_revisions))
+                extra = sorted(set(body.expected_revisions) - required)
+                raise HTTPException(422, f"expected_revisions must match touched containers; missing={missing}, extra={extra}")
+            with get_contents_ownership().manual_transaction():
+                store.apply_manual_edits(fluid_state_id, body.actions,
+                    expected_revisions=body.expected_revisions,
+                    expected_active_revision=body.expected_active_revision,
+                    note=body.note)
+            snapshot = store.get_fluid_snapshot(fluid_state_id)
+        except ContentsOwnershipError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(409 if "revision" in str(exc) else 400, str(exc)) from exc
+        except _STATE_EXCEPTIONS as exc:
+            raise map_state_exception(exc) from exc
+        containers = _containers_with_roles(snapshot)
+        return FluidStateDetailResponse(
+            id=snapshot["id"], deck_path=snapshot["deck_path"], deck_fingerprint=snapshot["deck_fingerprint"],
+            label=snapshot["label"], created_at=snapshot["created_at"], updated_at=snapshot["updated_at"],
+            containers=containers,
+            pending_operation_count=sum(op["status"] in _PENDING_STATUSES for op in snapshot["operations"]),
+            reconciliation_required_count=sum(op["status"] == "reconciliation_required" for op in snapshot["operations"]),
+        )
+    finally:
+        store.close()
+
+
+@router.get("/{fluid_state_id}/manual-edits", response_model=List[ManualEditView])
+def list_manual_edits(fluid_state_id: int) -> List[ManualEditView]:
+    store = _open_store()
+    try:
+        try:
+            store.get_fluid_snapshot(fluid_state_id)
+        except _STATE_EXCEPTIONS as exc:
+            raise map_state_exception(exc) from exc
+        return [ManualEditView(**row) for row in store.list_fluid_manual_edits(fluid_state_id)]
+    finally:
+        store.close()
 
 
 def _data_db_path() -> Path:
@@ -88,6 +214,7 @@ def _containers_with_roles(snapshot: Dict[str, Any]) -> List[ContainerView]:
                 capacity_ul=container["capacity_ul"],
                 working_volume_ul=container["working_volume_ul"],
                 current_volume_ul=container["current_volume_ul"],
+                volume_known=container.get("volume_known", False),
                 composition=container["composition"],
                 version=container["version"],
                 updated_at=container["updated_at"],
@@ -192,7 +319,8 @@ def create_fluid_state(body: CreateFluidStateRequest) -> FluidStateSummaryRespon
         }
         try:
             state_id = store.create_fluid_state(
-                str(deck_path), deck, label=body.label, initial_fluids=fluids
+                str(deck_path), deck, label=body.label, initial_fluids=fluids,
+                omitted_volumes_unknown=body.omitted_volumes_unknown,
             )
         except _STATE_EXCEPTIONS as exc:
             raise map_state_exception(exc) from exc

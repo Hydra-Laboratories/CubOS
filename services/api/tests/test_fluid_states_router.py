@@ -75,6 +75,80 @@ def test_create_fluid_state_returns_summary(monkeypatch, tmp_path: Path):
     assert isinstance(body["id"], int)
 
 
+def test_active_setup_is_explicit_and_revision_checked(monkeypatch, tmp_path: Path):
+    _write_deck_config(monkeypatch, tmp_path)
+    app = create_app()
+    created = api_request(
+        app, "POST", "/api/v1/fluid-states", json={"deck_file": "state-deck.yaml"}
+    ).json()
+    state_id = created["id"]
+    assert api_request(app, "GET", "/api/v1/fluid-states/active").json() is None
+    selected = api_request(
+        app, "PUT", "/api/v1/fluid-states/active", json={"fluid_state_id": state_id}
+    )
+    assert selected.status_code == 200
+    assert selected.json()["fluid_state_id"] == state_id
+    revision = selected.json()["revision"]
+    stale = api_request(
+        app,
+        "PUT",
+        "/api/v1/fluid-states/active",
+        json={"fluid_state_id": state_id, "expected_revision": revision - 1},
+    )
+    assert stale.status_code == 409
+
+
+def test_manual_container_edit_is_version_checked_and_audited(monkeypatch, tmp_path: Path):
+    _write_deck_config(monkeypatch, tmp_path)
+    app = create_app()
+    created = api_request(
+        app,
+        "POST",
+        "/api/v1/fluid-states",
+        json={"deck_file": "state-deck.yaml", "fluids": {"source": {"volume_ul": 20}}},
+    ).json()
+    state_id = created["id"]
+    api_request(app, "PUT", "/api/v1/fluid-states/active", json={"fluid_state_id": state_id})
+    before = api_request(app, "GET", f"/api/v1/fluid-states/{state_id}/containers").json()[0]
+    edited = api_request(
+        app,
+        "POST",
+        f"/api/v1/fluid-states/{state_id}/containers/edit",
+        json={
+            "labware_key": "source",
+            "volume_ul": 120,
+            "composition": {"buffer": 120.0},
+            "expected_version": before["version"],
+        },
+    )
+    assert edited.status_code == 200
+    assert edited.json()["current_volume_ul"] == 120
+    stale = api_request(
+        app,
+        "POST",
+        f"/api/v1/fluid-states/{state_id}/containers/edit",
+        json={"labware_key": "source", "volume_ul": 10, "expected_version": before["version"]},
+    )
+    assert stale.status_code == 409
+
+
+def test_new_workflow_can_mark_omitted_contents_unknown(monkeypatch, tmp_path: Path):
+    _write_deck_config(monkeypatch, tmp_path)
+    app = create_app()
+    state = api_request(
+        app, "POST", "/api/v1/fluid-states",
+        json={"deck_file": "state-deck.yaml", "omitted_volumes_unknown": True},
+    ).json()
+    api_request(app, "PUT", "/api/v1/fluid-states/active", json={"fluid_state_id": state["id"]})
+    containers = api_request(app, "GET", f"/api/v1/fluid-states/{state['id']}/containers").json()
+    assert all(container["volume_known"] is False for container in containers)
+    blocked = api_request(
+        app, "POST", f"/api/v1/fluid-states/{state['id']}/manual-edits",
+        json={"actions": [{"mode": "transfer", "labware_key": "source", "destination_labware_key": "waste", "volume_ul": 1}]},
+    )
+    assert blocked.status_code == 422
+
+
 def test_create_fluid_state_404_for_missing_deck_file(monkeypatch, tmp_path: Path):
     _write_deck_config(monkeypatch, tmp_path)
     app = create_app()

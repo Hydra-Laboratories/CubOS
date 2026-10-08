@@ -65,6 +65,7 @@ class CreateFluidStateRequest(BaseModel):
     deck_file: str
     label: Optional[str] = None
     fluids: Dict[str, FluidSeedItem] = Field(default_factory=dict)
+    omitted_volumes_unknown: bool = False
 
 
 class FluidStateSummaryResponse(BaseModel):
@@ -76,6 +77,44 @@ class FluidStateSummaryResponse(BaseModel):
     updated_at: str
     container_count: int
     operation_count: int
+
+
+class ActiveFluidStateResponse(BaseModel):
+    fluid_state_id: int
+    revision: int
+    updated_at: str
+
+
+class ManualContainerEditRequest(BaseModel):
+    labware_key: str
+    location_id: str = ""
+    volume_ul: float = Field(ge=0)
+    composition: Optional[Dict[str, float]] = None
+    expected_version: int = Field(ge=0)
+    operation: str = "manual_adjustment"
+
+
+class ManualEditBatchRequest(BaseModel):
+    expected_active_revision: Optional[int] = Field(default=None, ge=0)
+    expected_revisions: Dict[str, int] = Field(default_factory=dict)
+    actions: List[Dict[str, Any]] = Field(min_length=1)
+    note: Optional[str] = None
+
+
+class ManualEditView(BaseModel):
+    id: int
+    labware_key: str
+    location_id: str
+    operation: str
+    before: Dict[str, Any]
+    after: Dict[str, Any]
+    note: Optional[str] = None
+    created_at: str
+
+
+class SelectActiveFluidStateRequest(BaseModel):
+    fluid_state_id: int
+    expected_revision: Optional[int] = None
 
 
 # ── Container / operation resource shapes ────────────────────────────────
@@ -90,6 +129,7 @@ class ContainerView(BaseModel):
     capacity_ul: float
     working_volume_ul: float
     current_volume_ul: float
+    volume_known: bool = False
     composition: Dict[str, float]
     version: int
     updated_at: str

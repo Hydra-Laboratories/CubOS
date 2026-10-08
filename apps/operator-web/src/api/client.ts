@@ -313,6 +313,24 @@ export const fluidStateApi = {
       body: JSON.stringify(body),
     }),
   list: () => request<import("../types").FluidStateSummary[]>("/fluid-states"),
+  getActive: () => request<import("../types").ActiveFluidState | null>("/fluid-states/active"),
+  selectActive: (fluid_state_id: number, expected_revision?: number) =>
+    request<import("../types").ActiveFluidState>("/fluid-states/active", {
+      method: "PUT",
+      body: JSON.stringify({ fluid_state_id, expected_revision }),
+    }),
+  editContainer: (fluidStateId: number, body: import("../types").ManualContainerEditRequest) =>
+    request<import("../types").ContainerView>(`/fluid-states/${fluidStateId}/containers/edit`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  applyManualEdits: (fluidStateId: number, body: import("../types").ManualEditBatchRequest) =>
+    request<import("../types").FluidStateDetail>(`/fluid-states/${fluidStateId}/manual-edits`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listManualEdits: (fluidStateId: number) =>
+    request<import("../types").ManualEditView[]>(`/fluid-states/${fluidStateId}/manual-edits`),
   get: (fluidStateId: number) =>
     request<import("../types").FluidStateDetail>(`/fluid-states/${fluidStateId}`),
   getContainers: (fluidStateId: number) =>
@@ -383,4 +401,3 @@ export const instrumentsApi = {
     // Cache-bust: repeated preview polls hit the same URL as the frame changes.
     download(`/instruments/camera/last-image?instrument=${encodeURIComponent(instrument)}&_=${Date.now()}`),
 };
-

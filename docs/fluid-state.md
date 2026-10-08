@@ -35,7 +35,33 @@ fluids:
 ```
 
 For every location, `volume_ul` must equal the sum of the component volumes.
-Locations omitted from the seed start empty.
+Locations omitted from the legacy seed are known empty. The operator workflow
+can opt into an explicit fresh setup where omitted locations are **unknown**;
+unknown is shown separately from a confirmed empty location and cannot be used
+as a transfer source or destination until an operator records the observed
+volume or confirms empty.
+
+## Keep one physical setup across runs
+
+The operator selects one active setup in **Deck contents**. Starting another
+experiment does not create a new setup, and opening history never changes the
+active selection. The active selection survives a server restart. Before a run,
+review the active setup and its latest changes; the review reports known-volume
+shortages and existing protocol validation findings without predicting a
+measurement result.
+
+Manual contents changes are records only and never move the gantry. Use the
+table or plate view to prepare a batch, preview before/after values, then save
+it as one revision-checked batch. Supported record-only actions include setting
+or correcting a volume, adding/removing a known amount, confirming empty,
+transferring with composition carried to both sides, and replacing a selected
+same-shape plate. Every change has an immutable before/after history entry.
+Edits are rejected while a run or campaign owns the setup. If a run is
+interrupted, reconcile the actual source and destination volumes before
+resuming; CubOS does not infer them from the command that was attempted.
+An observed volume may exceed a labware working-volume warning while it is
+being recorded, but pre-run safety validation must resolve that warning before
+the robot is allowed to execute a protocol.
 
 ## Create a state
 

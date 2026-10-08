@@ -31,6 +31,9 @@ interface ResolveFormState {
   resolution: string;
   operator: string;
   reason: string;
+  sourceVolume: string;
+  destinationVolume: string;
+  finalStatus: string;
 }
 
 export default function StatePanel() {
@@ -59,7 +62,7 @@ export default function StatePanel() {
 
   const openResolveForm = (operation: OperationView) => {
     setResolveError(null);
-    setResolveForm({ operation, resolution: "applied", operator: "", reason: "" });
+    setResolveForm({ operation, resolution: "applied", operator: "", reason: "", sourceVolume: "", destinationVolume: "", finalStatus: "" });
   };
 
   const submitResolve = async () => {
@@ -76,6 +79,9 @@ export default function StatePanel() {
         resolution: resolveForm.resolution,
         operator: resolveForm.operator.trim(),
         reason: resolveForm.reason.trim(),
+        source_volume_ul: resolveForm.sourceVolume ? Number(resolveForm.sourceVolume) : null,
+        destination_volume_ul: resolveForm.destinationVolume ? Number(resolveForm.destinationVolume) : null,
+        final_status: resolveForm.finalStatus || null,
       });
       setResolveForm(null);
       reconciliation.refetch();
@@ -157,6 +163,20 @@ export default function StatePanel() {
               <div style={theme.sectionLabel}>
                 Resolve {resolveForm.operation.domain} operation {resolveForm.operation.operation_key}
               </div>
+              <label style={fieldRowStyle}>
+                <span style={theme.fieldLabel}>Observed source volume (µL)</span>
+                <input type="number" min="0" style={theme.input} value={resolveForm.sourceVolume} onChange={(event) => setResolveForm({ ...resolveForm, sourceVolume: event.target.value })} placeholder="Required when source was involved" />
+              </label>
+              <label style={fieldRowStyle}>
+                <span style={theme.fieldLabel}>Observed destination volume (µL)</span>
+                <input type="number" min="0" style={theme.input} value={resolveForm.destinationVolume} onChange={(event) => setResolveForm({ ...resolveForm, destinationVolume: event.target.value })} placeholder="Required when destination was involved" />
+              </label>
+              <label style={fieldRowStyle}>
+                <span style={theme.fieldLabel}>Final slot status</span>
+                <select style={selectStyle} value={resolveForm.finalStatus} onChange={(event) => setResolveForm({ ...resolveForm, finalStatus: event.target.value })}>
+                  <option value="">Leave unchanged</option><option value="empty">Empty</option><option value="known">Known contents</option><option value="uncertain">Uncertain</option>
+                </select>
+              </label>
               <label style={fieldRowStyle}>
                 <span style={theme.fieldLabel}>Resolution</span>
                 <select
