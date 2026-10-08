@@ -297,6 +297,7 @@ The HEAD marker shows the gantry reference position. A pipette with zero X/Y
 mount offsets shares that marker position; other instruments appear at their
 measured offsets. Depth affects Z and does not separate markers in the XY view.
 
-On a moving-bed gantry, the display slides the deck in Y while keeping the head
-and its mounted tools together. Instrument tooltips still report their actual
-deck coordinates. This display animation does not change calibration values.
+The display always keeps the deck fixed, including on moving-bed gantries.
+HEAD follows the displayed X/Y work coordinates; tools follow that position
+plus their measured offsets. For example, Y=145 is plotted at Y=145, not at
+Y=0. Physical bed-motion settings and calibration values remain unchanged.

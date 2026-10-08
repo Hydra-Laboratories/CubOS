@@ -282,42 +282,29 @@ describe("DeckVisualization", () => {
     expect(screen.getByText("350")).toBeInTheDocument();
   });
 
-  // Regression: bed mode used to translate the deck by -gantryY, moving it
-  // up-screen. The head marker is pinned at deck-frame Y=0 (bottom of the
-  // frame), so when WPos.y=50 the deck must shift down-screen (+sy) to put
-  // deck point y=50 under the fixed marker — the sign was inverted.
-  it("shifts the deck down-screen as gantry Y increases in bed mode", () => {
-    const { container } = render(
-      <DeckVisualization
-        deck={{ filename: "empty.yaml", labware: [] }}
-        instruments={null}
-        gantryPosition={{
-          connected: true,
-          status: "Idle",
-          x: 0,
-          y: 50,
-          z: 0,
-          work_x: 0,
-          work_y: 50,
-          work_z: 0,
-          calibration_active: false,
-        }}
-        machineXRange={[0, 300]}
-        machineYRange={[0, 200]}
-        yAxisMotion="bed"
-      />,
-    );
-
-    expect(screen.getByText("bed moves Y")).toBeInTheDocument();
-    const deckGroup = container.querySelector("g[transform]");
-    expect(deckGroup).not.toBeNull();
-    const match = /translate\(0,\s*(-?[\d.]+)\)/.exec(deckGroup!.getAttribute("transform")!);
-    expect(match).not.toBeNull();
-    const translateY = Number(match![1]);
-    // Visual bounds pad [0,300]x[0,200] to [-10,310]x[-10,210]; the 420px-high
-    // SVG letterboxes to scale = (420 - 40) / 220 px/mm.
-    const expectedScale = (420 - 2 * 20) / 220;
-    expect(translateY).toBeCloseTo(50 * expectedScale, 3);
+  it("plots actual Y=145 without shifting calibrated labware when gantry Y changes", () => {
+    const instruments = {pipette:{type:"pipette",vendor:"sartorius",offset_x:0,offset_y:0}};
+    const pos = (y: number) => ({connected:true,status:"Idle",x:100,y,z:0,work_x:100,work_y:y,work_z:0,calibration_active:false});
+    const {container,rerender} = render(<DeckVisualization deck={deck} instruments={instruments}
+      gantryPosition={pos(0)} machineXRange={[0,258]} machineYRange={[0,145]} yAxisMotion="bed" />);
+    const labwareGroup = screen.getByText("Rack A").closest("svg")!.querySelectorAll(":scope > g")[1];
+    const initialLabware = labwareGroup.outerHTML;
+    const headY0 = Number(screen.getByText("HEAD").parentElement!.querySelector("circle")!.getAttribute("cy"));
+    rerender(<DeckVisualization deck={deck} instruments={instruments}
+      gantryPosition={pos(145)} machineXRange={[0,258]} machineYRange={[0,145]} yAxisMotion="bed" />);
+    expect(labwareGroup.outerHTML).toBe(initialLabware);
+    expect(container.querySelector("g[transform]")).toBeNull();
+    expect(screen.queryByText("bed moves Y")).not.toBeInTheDocument();
+    const headY145 = Number(screen.getByText("HEAD").parentElement!.querySelector("circle")!.getAttribute("cy"));
+    const ticks = Array.from(container.querySelectorAll("text[text-anchor='end']"));
+    const first = ticks[0];
+    const second = ticks.find(node => Number(node.textContent) !== Number(first.textContent))!;
+    const scale = Math.abs((Number(second.getAttribute("y"))-Number(first.getAttribute("y"))) /
+      (Number(second.textContent)-Number(first.textContent)));
+    expect(headY145-headY0).toBeCloseTo(-145*scale,8);
+    const pipette = screen.getByText("pipette").parentElement!.querySelector("rect")!;
+    expect(Number(pipette.getAttribute("y"))+7).toBeCloseTo(headY145,8);
+    expect(screen.getByText("pipette").parentElement!.querySelector("title")!.textContent).toContain("(100.0, 145.0)");
   });
 
   it.each([
@@ -350,11 +337,15 @@ describe("DeckVisualization", () => {
     const cameraCenter = center(camera);
     expect(pipetteCenter.x).toBeCloseTo(Number(head.getAttribute("cx")),8);
     expect(pipetteCenter.y).toBeCloseTo(Number(head.getAttribute("cy")),8);
+    expect(container.querySelector("g[transform]")).toBeNull();
     const gridTicks = Array.from(container.querySelectorAll("text[text-anchor='end']"));
     const y0 = gridTicks[0];
     const otherTick = gridTicks.find(node => Number(node.textContent) !== Number(y0.textContent))!;
     const scale = Math.abs((Number(otherTick.getAttribute("y"))-Number(y0.getAttribute("y"))) /
       (Number(otherTick.textContent)-Number(y0.textContent)));
+    // Grid labels sit 3 pixels below their coordinate lines.
+    const expectedHeadY = Number(y0.getAttribute("y"))-3-(y-Number(y0.textContent))*scale;
+    expect(Number(head.getAttribute("cy"))).toBeCloseTo(expectedHeadY,8);
     expect(cameraCenter.x-pipetteCenter.x).toBeCloseTo(2.5*scale,8);
     expect(cameraCenter.y-pipetteCenter.y).toBeCloseTo(28.75*scale,8);
     expect(cameraGroup.querySelector("title")!.textContent).toBe(`camera (camera) at (${(x+2.5).toFixed(1)}, ${(y-28.75).toFixed(1)})`);
