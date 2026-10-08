@@ -19,6 +19,7 @@ nav:
     - Calibrate Gantry: calibration.md
     - Set Up Deck and Labware: deck.md
     - Run a Protocol with YAML: protocol-yaml.md
+    - Active Learning Campaigns: active-learning.md
     - Fluid State Tracking: fluid-state.md
     - PANDA-CUB Quickstart: panda-cub-quickstart.md
     - EmStat Cyclic Voltammetry: emstat-cv.md

@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from cubos_api.config import get_settings
 from cubos_api.routers import (
     data,
+    campaigns,
     deck,
     fluid_states,
     gantry,
@@ -116,6 +117,15 @@ async def _origin_host_middleware(request: Request, call_next):
             if scheme.lower() != "bearer" or not hmac.compare_digest(supplied, expected):
                 return JSONResponse({"detail": "Invalid API token"}, status_code=401)
 
+    if request.method in _STATE_CHANGING_METHODS:
+        from cubos_api.services.run_manager import active_campaign_owner
+        owner = active_campaign_owner()
+        path = request.url.path
+        emergency = path in {"/api/v1/gantry/feed-hold", "/api/v1/gantry/jog-cancel"}
+        campaign_action = path.startswith("/api/v1/campaigns/")
+        native_cancel = path.startswith("/api/v1/runs/") and path.endswith("/cancel")
+        if owner and not (emergency or campaign_action or native_cancel):
+            return JSONResponse({"detail": "Station reserved by an active-learning campaign; stop it before changing setup or moving manually."}, status_code=409)
     return await call_next(request)
 
 
@@ -146,6 +156,7 @@ def create_app() -> FastAPI:
     app.include_router(settings.router)
     app.include_router(system.router)
     app.include_router(runs.router)
+    app.include_router(campaigns.router)
     app.include_router(fluid_states.router)
 
     if FRONTEND_DIST.is_dir():

@@ -1,5 +1,7 @@
 import React, { useRef, useState, useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import CampaignPanel from "./components/campaigns/CampaignPanel";
+import { campaignApi } from "./components/campaigns/api";
 import AppLayout from "./components/layout/AppLayout";
 import DeckVisualization from "./components/deck/DeckVisualization";
 import GantryPositionWidget from "./components/gantry/GantryPositionWidget";
@@ -104,6 +106,9 @@ export default function App() {
   const qc = useQueryClient();
   const [activeView, setActiveView] = useState<"Workflow" | "Run" | "Visualize" | "State" | "Results">("Workflow");
   const [activeTab, setActiveTab] = useState("Gantry");
+  const [workflowMode, setWorkflowMode] = useState<"single" | "campaign">(() =>
+    localStorage.getItem("cubos.workflow-mode") === "campaign" ? "campaign" : "single");
+  React.useEffect(() => { localStorage.setItem("cubos.workflow-mode", workflowMode); }, [workflowMode]);
   const [uiTheme, setUiTheme] = useState<"light" | "dark">(() => (document.documentElement.dataset.theme === "light" ? "light" : "dark"));
   const [configDir, setConfigDir] = useState<string | null>(null);
   const [browseLoading, setBrowseLoading] = useState(false);
@@ -251,7 +256,18 @@ export default function App() {
   const validateProtocolSetup = useValidateProtocolSetup();
   const runStatus = useRunStatus();
   const serverRunActive = runStatus.data?.active ?? false;
-  const protocolRunActive = isRunning || serverRunActive;
+  const campaignRecords = useQuery({ queryKey: ["active-learning-campaigns", configDir],
+    queryFn: campaignApi.list, refetchInterval: 2000, retry: false });
+  const stationCampaign = Array.isArray(campaignRecords.data) ? campaignRecords.data.find((r) =>
+    !["completed", "stopped", "failed", "interrupted"].includes(r.state)) : undefined;
+  const protocolRunActive = isRunning || serverRunActive || !!stationCampaign;
+  React.useEffect(() => {
+    if (stationCampaign?.active_run_id) setActiveRunId(stationCampaign.active_run_id);
+    if (stationCampaign) {
+      qc.invalidateQueries({ queryKey: ["data", "campaigns"] });
+      qc.invalidateQueries({ queryKey: ["fluid-states"] });
+    }
+  }, [stationCampaign, qc]);
   const gantryPosition = useGantryPosition(true);
   const experimentData = useExperimentData();
   const fluidStates = useFluidStates();
@@ -641,7 +657,11 @@ export default function App() {
       // alone cannot say which run to cancel. `isRunning` is true only while
       // this tab's own submission is in flight; anything else active is a run
       // started elsewhere, which the session-wide endpoint below stops.
-      if (activeRunId && isRunning) {
+      if (stationCampaign) {
+        await campaignApi.cancel(stationCampaign.campaign_id);
+        qc.invalidateQueries({ queryKey: ["active-learning-campaigns"] });
+        setRunError("Campaign cancellation requested.");
+      } else if (activeRunId && isRunning) {
         await runsApi.cancel(activeRunId);
         setRunError("Protocol cancellation requested.");
       } else {
@@ -709,7 +729,7 @@ export default function App() {
       {protocolRunActive && (
         <div className="cubos-pulse" style={runStatusBannerStyle} role="status">
           <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 0 }}>
-            <span style={{ whiteSpace: "nowrap" }}>● Protocol running…</span>
+            <span style={{ whiteSpace: "nowrap" }}>{stationCampaign ? `● Campaign ${stationCampaign.state.replaceAll("_", " ")}` : "● Protocol running…"}</span>
             {runError && (
               <span style={runStatusWarningStyle} title={runError}>{runError}</span>
             )}
@@ -783,6 +803,14 @@ export default function App() {
     >
       {activeView === "Workflow" && (
         <>
+          <div aria-label="Execution mode" style={{ display: "flex", gap: 6, padding: "0 0 14px" }}>
+            <button type="button" aria-pressed={workflowMode === "single"}
+              style={workflowMode === "single" ? theme.btn.primary : theme.btn.secondary}
+              onClick={() => setWorkflowMode("single")}>Single protocol</button>
+            <button type="button" aria-pressed={workflowMode === "campaign"}
+              style={workflowMode === "campaign" ? theme.btn.primary : theme.btn.secondary}
+              onClick={() => { setWorkflowMode("campaign"); setActiveTab("Protocol"); }}>Active learning campaign</button>
+          </div>
           <EditorTabs
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -882,7 +910,7 @@ export default function App() {
           />
         </>
           )}
-          {activeTab === "Protocol" && deckQuery.data && gantryQuery.data && (
+          {activeTab === "Protocol" && workflowMode === "single" && deckQuery.data && gantryQuery.data && (
         <>
           {protocolQuery.isError && protocolFile && (
             <div style={importErrorStyle}>Protocol load failed: {errorMessage(protocolQuery.error)}</div>
@@ -969,6 +997,19 @@ export default function App() {
           )}
         </>
       )}
+      {workflowMode === "campaign" && <div style={{ display: activeView === "Workflow" && activeTab === "Protocol" ? "block" : "none" }}>
+        <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>Protocol template
+          <select className="campaign-template-select" aria-label="Campaign protocol template" value={protocolFile ?? ""}
+            onChange={(event) => void handleImportProtocol(event.target.value)}>
+            <option value="" disabled>Choose a saved protocol…</option>
+            {(protocolConfigs.data ?? []).map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>
+        <CampaignPanel gantryFile={gantryFile} deckFile={deckFile} protocolFile={protocolFile}
+          protocolSteps={protocolQuery.data?.steps ?? []}
+          disabledReason={unsavedConfigs.length ? `Save ${unsavedConfigs.join(", ")} changes before starting a campaign.` : null}
+          onRunSelected={(runId) => { setActiveRunId(runId); setActiveView("Run"); }} />
+      </div>}
       {/* The persistent right column already carries the live deck view and
           gantry readout, so the run mode only needs to own the left region. */}
       {activeView === "Run" && activeRunId && (

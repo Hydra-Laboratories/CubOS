@@ -123,6 +123,7 @@ class RunManager:
         self.store = RunStore(settings.ensure_run_dir())
         self._lock = threading.Lock()
         self._active_run_id: str | None = None
+        self._campaign_owner: str | None = None
         self._recover_interrupted_runs()
 
     def _recover_interrupted_runs(self) -> None:
@@ -139,9 +140,29 @@ class RunManager:
         with self._lock:
             return self._active_run_id
 
-    def submit(self, submission: RunSubmission) -> RunRecord:
+    @property
+    def campaign_owner(self) -> str | None:
+        with self._lock:
+            return self._campaign_owner
+
+    def reserve_campaign(self, campaign_id: str) -> None:
+        with self._lock:
+            if self._active_run_id is not None or self._campaign_owner is not None:
+                raise RunConflictError("The station already has an active run or campaign")
+            self._campaign_owner = campaign_id
+
+    def release_campaign(self, campaign_id: str) -> None:
+        with self._lock:
+            if self._campaign_owner == campaign_id:
+                self._campaign_owner = None
+
+    def submit(self, submission: RunSubmission, *, campaign_owner: str | None = None) -> RunRecord:
         run_id = submission.run_id or uuid.uuid4().hex
         with self._lock:
+            if self._campaign_owner is not None and campaign_owner != self._campaign_owner:
+                raise RunConflictError("The station is reserved by an active-learning campaign")
+            if campaign_owner is not None and campaign_owner != self._campaign_owner:
+                raise RunConflictError("Campaign does not own the station")
             if self._active_run_id is not None:
                 raise RunConflictError(f"server busy with run {self._active_run_id!r}")
             if self.store.exists(run_id) or self.store.run_dir(run_id).exists():
@@ -380,3 +401,7 @@ def reset_run_manager() -> None:
     global _manager
     with _manager_lock:
         _manager = None
+
+
+def active_campaign_owner() -> str | None:
+    return _manager.campaign_owner if _manager is not None else None
