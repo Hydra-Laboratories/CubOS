@@ -1,8 +1,16 @@
+# Seed config for the cub_xl gantry family.
+#
+# factory_z_travel_mm is the carriage stroke available BELOW the homed position
+# — not the "Z working range" printed on the machine label. The label figure
+# (110 mm) measures home -> the *stock* bed surface, which coincides with the
+# stroke only on an unmodified base; a lowered deck decouples the two. Measured
+# 2026-08-17 on the ASMI cub_xl by jogging Z from home to the bottom limit:
+# 117 mm below home (~120 mm switch-to-switch with the 3 mm $27 pull-off).
 serial_port: ""
 gantry_type: cub_xl
 cnc:
   default_feed_rate_mm_min: 3000.0
-  factory_z_travel_mm: 110.0
+  factory_z_travel_mm: 117.0
   calibration_block_height_mm: 35.0
   y_axis_motion: head
   safe_z: 85.0

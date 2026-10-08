@@ -134,8 +134,12 @@ Use this file when:
 machine family. Supported values are `cub` and `cub_xl`.
 
 `factory_z_travel_mm` is required and must be greater than zero. It is the
-out-of-box vertical travel range for the gantry family/workcell and is not
-rewritten by calibration. Calibration uses it only to decide whether a mounted
+carriage stroke available *below the homed position* for the gantry
+family/workcell, and is not rewritten by calibration. Measure it by homing and
+then jogging Z down to the bottom limit; do not copy the "Z working range"
+printed on the machine label, which measures home to the *stock* bed surface
+and diverges from the stroke as soon as the deck is raised or lowered.
+Calibration uses it only to decide whether a mounted
 instrument can safely reach deck bottom; calibrated `working_volume.z_max`
 comes from the final homed WPos readback. Deck labware deck-frame Z values come from
 calibration anchors only — `calibration.a1.z` (plates / holders / tip racks)
