@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
@@ -297,6 +297,9 @@ function installFetchMock(state: ApiState, options: FetchMockOptions = {}) {
       gantryConnected = false;
       return jsonResponse(gantryPosition());
     }
+    if (path === "/api/v1/gantry/calibration/instrument-offsets" && method === "POST") {
+      return jsonResponse(body?.config);
+    }
     if (path === "/api/v1/gantry/calibration/prepare-origin" && method === "POST") {
       gantryConnected = true;
       return jsonResponse(gantryPosition(0, 0, 80));
@@ -316,6 +319,9 @@ function installFetchMock(state: ApiState, options: FetchMockOptions = {}) {
     }
     if (path === "/api/v1/gantry/calibration/finalize-origin" && method === "POST") {
       return jsonResponse({
+        origin_policy: "deck_origin",
+        safe_z:76,
+        working_volume: {x_min:0,x_max:300,y_min:0,y_max:200,z_min:0,z_max:80},
         measured_volume: { x: 300, y: 200, z: 80 },
         z_calibration: {
           block_height: body?.block_height ?? 35,
@@ -734,6 +740,30 @@ describe("CubOS editor interactions", () => {
     expect(newFileCalls[0][1]?.method).toBe("PUT");
   });
 
+  it("saves an offset-calibration copy without reconnecting or changing the selected connected config", async () => {
+    const user = userEvent.setup();
+    const state = createState();
+    const fetchMock = installFetchMock(state);
+    renderApp();
+    await waitForSettingsLoad();
+    await importConfig(user, "Gantry config", "cubos.yaml");
+    await connectGantry(user);
+    fetchMock.mockClear();
+    await user.click(screen.getByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Calibrate offsets only" }));
+    await user.click(screen.getByRole("checkbox", { name: /existing offsets and depth are calibrated/ }));
+    await user.click(screen.getByRole("button", { name: "Record pipette_1 at fixed mark" }));
+    await screen.findByText(/pipette_1: recorded/);
+    await user.click(screen.getByRole("button", { name: "Review offsets" }));
+    await user.click(await screen.findByRole("button", { name: "Save instrument offsets" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Instrument offset calibration" })).not.toBeInTheDocument());
+    expect(state.gantries["cubos_offsets.yaml"]).toBeDefined();
+    expect(screen.getByRole("combobox", { name: "Gantry config" })).toHaveValue("cubos.yaml");
+    expect(screen.getByText(/The current connection is unchanged/)).toBeInTheDocument();
+    const writes = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST").map(([input]) => new URL(String(input), "http://localhost").pathname);
+    expect(writes).toEqual(["/api/v1/gantry/calibration/instrument-offsets"]);
+  });
+
   it("opens the gantry calibration wizard from the control panel", async () => {
     const user = userEvent.setup();
     const state = createState();
@@ -742,7 +772,9 @@ describe("CubOS editor interactions", () => {
     await waitForSettingsLoad();
 
     await importConfig(user, "Gantry config", "cubos.yaml");
+    fireEvent.change(await screen.findByLabelText("Serial port"), { target: { value: "/dev/calibrated" } });
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
 
     expect(screen.getByRole("dialog", { name: "Gantry calibration" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /XY origin/ })).not.toBeInTheDocument();
@@ -795,6 +827,7 @@ describe("CubOS editor interactions", () => {
           block_touch_z: 0,
           block_height: 36.25,
           factory_z_travel: 80,
+          origin_policy: "deck_origin",
         }),
       }),
     ));
@@ -805,6 +838,15 @@ describe("CubOS editor interactions", () => {
     expect(state.gantries["cubos.yaml"]?.config.working_volume.z_max).toBe(80);
     expect(state.gantries["cubos.yaml"]?.config.grbl_settings?.max_travel_z).toBe(90);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Gantry calibration" })).not.toBeInTheDocument());
+    const calibrated = structuredClone(state.gantries["cubos.yaml"].config);
+    fetchMock.mockClear();
+    await user.type(screen.getByRole("textbox", { name: "Save as filename" }), "calibrated_copy");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(state.gantries["calibrated_copy.yaml"]).toBeDefined());
+    expect(state.gantries["calibrated_copy.yaml"].config).toEqual(calibrated);
+    expect(calibrated.serial_port).toBe("/dev/calibrated");
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Gantry config" })).toHaveValue("calibrated_copy.yaml"));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(0);
   });
 
   it("shows an error when block height is empty and Continue is clicked", async () => {
@@ -815,6 +857,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("button", { name: "Home gantry" }));
 
@@ -834,6 +877,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
     await user.click(screen.getByRole("button", { name: "Continue" }));
     await user.click(screen.getByRole("button", { name: "Home gantry" }));
 
@@ -855,6 +899,7 @@ describe("CubOS editor interactions", () => {
 
     await importConfig(user, "Gantry config", "cubos.yaml");
     await user.click(await screen.findByRole("button", { name: "Calibrate" }));
+    await user.click(screen.getByRole("button", { name: "Full calibration" }));
 
     const outputYaml = screen.getByLabelText("Output YAML");
     await user.clear(outputYaml);

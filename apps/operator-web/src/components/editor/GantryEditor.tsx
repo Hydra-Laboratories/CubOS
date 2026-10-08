@@ -105,7 +105,7 @@ export default function GantryEditor({
   dirty,
   onRefresh,
 }: Props) {
-  const [config, setConfig] = useState<GantryConfig | null>(() => (
+  const [draftConfig, setConfig] = useState<GantryConfig | null>(() => (
     gantry ? structuredClone(gantry.config) : null
   ));
   const [addType, setAddType] = useState<string>("");
@@ -128,10 +128,16 @@ export default function GantryEditor({
   const [rawMode, setRawMode] = useState(false);
   const [rawText, setRawText] = useState("");
   const [rawError, setRawError] = useState<string | null>(null);
+  const [editVersion, setEditVersion] = useState(0);
+  const [savedEditVersion, setSavedEditVersion] = useState(0);
+  const hasLocalEdits = rawError !== null || (dirty ?? (editVersion !== savedEditVersion));
+  const config = hasLocalEdits ? draftConfig : (gantry?.config ?? null);
+
 
   const selectedAddType = addType || instrumentTypes[0]?.type || "";
 
   const commit = (next: GantryConfig) => {
+    setEditVersion(version => version + 1);
     setConfig(next);
     setSaveError(null);
     onLocalChange?.({ filename: selectedFile ?? "unsaved", config: next });
@@ -158,6 +164,7 @@ export default function GantryEditor({
   };
 
   const handleRawChange = (text: string) => {
+    setEditVersion(version => version + 1);
     setRawText(text);
     let parsed: unknown;
     try {
@@ -272,6 +279,7 @@ export default function GantryEditor({
     setSaving(true);
     try {
       await Promise.resolve(onSave(normalized, config));
+      setSavedEditVersion(editVersion);
       onSelectFile(normalized);
       setSaveAs("");
       setSaveError(null);
@@ -293,6 +301,7 @@ export default function GantryEditor({
     });
     if (!confirmed) return;
     setConfig(baseline ? structuredClone(baseline.config) : null);
+    setSavedEditVersion(editVersion);
     setSaveError(null);
     setRawMode(false);
     setRawError(null);
@@ -333,7 +342,7 @@ export default function GantryEditor({
               <h4 style={{ ...sectionTitleStyle, margin: "0 0 8px" }}>Raw YAML</h4>
               <textarea
                 aria-label="Raw gantry YAML"
-                value={rawText}
+                value={hasLocalEdits ? rawText : stringifyYaml(config)}
                 onChange={(e) => handleRawChange(e.target.value)}
                 spellCheck={false}
                 style={rawTextareaStyle}
@@ -630,7 +639,7 @@ export default function GantryEditor({
             </>
           )}
 
-          {dirty && (
+          {(dirty || hasLocalEdits) && (
             <div style={{ marginTop: 12 }}>
               <UnsavedNotice>
                 <strong>Unsaved changes.</strong>{" "}
@@ -651,10 +660,10 @@ export default function GantryEditor({
               style={filenameInputStyle}
             />
             <SaveButton onClick={handleSave} disabled={!canSave} />
-            {dirty && (
+            {(dirty || hasLocalEdits) && (
               <button onClick={handleDiscard} style={discardBtnStyle}>Discard changes</button>
             )}
-            {lastSaved && !dirty && <SavedStatus filename={lastSaved.filename} at={lastSaved.at} />}
+            {lastSaved && !dirty && !hasLocalEdits && <SavedStatus filename={lastSaved.filename} at={lastSaved.at} />}
           </div>
           <SaveTargetHint saveAs={saveAsFilename} selectedFile={selectedFile} exists={saveAsExists} />
         </>

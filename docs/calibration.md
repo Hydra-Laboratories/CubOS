@@ -104,6 +104,93 @@ This per-machine value is preserved when calibration saves a new gantry YAML. It
 
 When calibrating a pipette with a tip attached, home-to-contact travel uses the raw carriage positions. The tip length is stored in the bare-nozzle depth offset; it does not increase the distance the carriage traveled. A 70 mm tip can therefore be calibrated on a machine with 56 mm Z travel, provided the actual home-to-contact move fits that travel. Enter the measured tip extension in the wizard.
 
+## Verify the controller and saved origin
+
+Choose **Coordinate origin** in Prepare. **Calibrated deck reference** keeps
+X/Y zero at the marked point you calibrate; home reads the measured maxima.
+**Home corner** puts zero at the homed back-right-top corner and uses negative
+coordinates inside the workspace. Use the calibrated deck reference when that
+is the zero point you want for your plate and other labware.
+
+Both choices measure travel from a provisional front-left deck reference.
+Finalization then applies the selected persistent G54 origin and checks the
+controller's actual work-coordinate readback before saving the file. The file
+uses those verified working bounds. A failed origin write or readback must not
+be treated as completed calibration. Keep the tools still and restart full
+calibration if the origin cannot be verified.
+
+Safe Z belongs to the selected coordinate frame. For example, a home position
+of Z=81 with a travel height 5 mm below home is safe Z=76 in the calibrated deck
+frame, or safe Z=-5 in the home frame. Changing the selected origin translates
+safe Z so the physical travel height is preserved.
+
+If writing the file fails after verified finalization, retry Save; the verified
+result is retained so the retry does not home again or reuse measurements in a
+changed frame. Activate the successfully saved configuration before protocols.
+
+## Pipette calibration with a tip attached
+
+In the Operator UI, choose **Calibrate → Full calibration**, then select
+**Calibrating with a tip attached** when recording
+a pipette contact and enter the measured extension below the bare nozzle.
+For a leftmost pipette, set this option once in **Prepare** so you can align
+with the block using a tip. **Set XY Origin** shows a reminder of the saved
+choice without repeating the inputs. Its choice and length
+carry forward to that same pipette in **Set Z Reference** or **Record
+Instruments**. XY origin recording changes X/Y only.
+Home-to-contact travel uses the raw carriage positions. Tip length affects
+the saved bare-nozzle depth, not mechanical Z travel. For example, a 46 mm
+carriage move with a 50 mm tip remains 46 mm of travel, so it fits an 80 mm
+Z axis. Do not increase factory travel to compensate for tip length.
+
+When the reference pipette touches the block with a tip, its saved bare-nozzle
+depth can be negative. Runtime adds the attached tip extension back when
+positioning the tip. The calibration reference remains the point that touched
+the block.
+
+## Calibrate instrument offsets only
+
+Use **Calibrate → Calibrate offsets only** in Gantry Control after the gantry origin
+and travel limits have been calibrated. This measures relative instrument
+mounting offsets without homing, changing the coordinate origin, or changing
+controller limits. It preserves the selected reference tool's existing mount
+calibration, so that reference must already be calibrated.
+
+1. Select a calibrated contact instrument as the reference.
+2. Place a fixed mark or block where each instrument can reach it. Keep it in
+   the same place throughout the measurements.
+3. If a pipette has a tip attached, enable the tip option and enter the measured
+   extension below the bare nozzle before recording that tool.
+4. Manually jog the reference tool to the mark and record its position. Jog
+   each other contact tool to that same mark and record it.
+5. For a camera, center its view on the mark and enter its reference-point
+   distance above the mark. Co-mounted lighting follows the camera.
+6. Review the calculated offsets and save a new gantry config. Saving does not
+   reconnect or initialize hardware. Finish positioning the tools, then explicitly
+   select and reconnect with the saved config before using its offsets. Tool type,
+   driver settings, origin policy, working volume, safe Z and GRBL settings
+   remain as configured.
+7. With clear space and the operator at the machine, verify the pipette tip
+   and camera each align with the same mark. Verify pipette bare-nozzle depth
+   is unchanged when repeating the calibration with and without a measured
+   tip. Then calibrate labware using that saved gantry config.
+
+All jogging and contact confirmation are operator-controlled. This feature
+has offline test coverage; physical validation is required before relying on
+newly measured offsets for protocols.
+
+## Save a calibrated copy
+
+After calibration saves a gantry file, the Gantry editor displays the saved
+mount offsets, depths, working volume, and controller settings. To keep a copy,
+enter a new **Save as filename** and press **Save**. The copy retains those
+values; changing its filename does not reset calibration or reconnect hardware.
+Unsaved editor changes remain intact when saved configuration data refreshes.
+
+The verified finalization described above applies to the Operator UI. The
+command-line home-origin calibration path uses a separate implementation and
+has not received these checks; use the Operator UI for home-origin calibration.
+
 ## Run Calibration
 
 To calibrate in place, run:

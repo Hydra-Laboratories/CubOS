@@ -291,8 +291,16 @@ rather than indexing `well_attributes` directly.
     Replace the example paths with the gantry, deck, and protocol YAML files
     for your setup.
 
-## Moving-bed visualization
+## Read the deck visualizer
 
-The 2D deck map uses the same deck/work coordinates as Gantry Control, including for `cnc.y_axis_motion: bed`. Labware stays fixed against the axes; HEAD appears at the reported work X/Y, and mounted tools appear at that position plus their calibrated offsets. A zero-offset pipette therefore sits on HEAD. This is a coordinate map, not an animation of the moving bed.
+The HEAD marker shows the gantry reference position. A pipette with zero X/Y
+mount offsets shares that marker position; other instruments appear at their
+measured offsets. Depth affects Z and does not separate markers in the XY view.
+
+The 2D map uses deck/work coordinates, including for `cnc.y_axis_motion: bed`.
+Labware stays fixed against the axes, HEAD appears at reported work X/Y, and
+mounted tools appear at that position plus their calibrated offsets. A
+zero-offset pipette therefore sits on HEAD. This is a coordinate map rather
+than an animation of the moving bed. It does not change calibration values.
 
 Load `cub_deck.yaml` to continue editing the saved working deck. Importing a seed/template copies it over the working deck and can replace saved calibration positions. To refresh a display after a config update, refresh the page rather than re-importing the original seed.

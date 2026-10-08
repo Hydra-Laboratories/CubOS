@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import yaml
 from fastapi import APIRouter, HTTPException
@@ -23,6 +23,7 @@ from cubos.gantry.session import (
 from cubos.gantry.gantry_driver.exceptions import MillConnectionError
 from cubos.gantry.limit_recovery import looks_like_limit_alarm
 from cubos.gantry.yaml_schema import GantryYamlSchema
+from cubos.gantry.offset_calibration import calibrate_instrument_offsets
 from cubos.instruments.pipette.models import PIPETTE_MODELS
 from cubos.instruments.registry import (
     config_fields,
@@ -76,6 +77,12 @@ class InstrumentFieldInfo(BaseModel):
     required: bool
     default: Any = None
     choices: Optional[List[Any]] = None
+
+
+class InstrumentOffsetsRequest(BaseModel):
+    config: Dict[str, Any]
+    reference_instrument: str
+    captures: Dict[str, Dict[str, Any]]
 
 
 class JogRequest(BaseModel):
@@ -154,6 +161,7 @@ class FinalizeOriginRequest(BaseModel):
     block_height: float
     factory_z_travel: float
     tolerance_mm: float = 0.25
+    origin_policy: Literal["deck_origin", "home_origin"] | None = None
 
 
 class FinalizeOriginResponse(BaseModel):
@@ -162,6 +170,9 @@ class FinalizeOriginResponse(BaseModel):
     max_travel: Dict[str, float]
     position: Dict[str, float]
     homing_pull_off_mm: Optional[float] = None
+    origin_policy: str = "deck_origin"
+    working_volume: Optional[Dict[str, float]] = None
+    safe_z: Optional[float] = None
 
 
 class ConnectRequest(BaseModel):
@@ -484,6 +495,17 @@ def configure_soft_limits(req: ConfigureSoftLimitsRequest) -> dict:
     return {"status": "ok"}
 
 
+@router.post("/calibration/instrument-offsets")
+def preview_instrument_offsets(req: InstrumentOffsetsRequest) -> Dict[str, Any]:
+    try:
+        GantryYamlSchema.model_validate(req.config)
+        result = calibrate_instrument_offsets(req.config, req.reference_instrument, req.captures)
+        GantryYamlSchema.model_validate(result)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("/calibration/prepare-origin")
 def prepare_calibration_origin() -> GantryPosition:
     _reject_if_run_active()
@@ -534,6 +556,7 @@ def finalize_calibration_origin(req: FinalizeOriginRequest) -> FinalizeOriginRes
             block_height=req.block_height,
             factory_z_travel=req.factory_z_travel,
             tolerance_mm=req.tolerance_mm,
+            **({"origin_policy": req.origin_policy} if req.origin_policy is not None else {}),
         )
     except Exception as exc:
         raise _session_http_exception(
@@ -545,6 +568,9 @@ def finalize_calibration_origin(req: FinalizeOriginRequest) -> FinalizeOriginRes
         "max_travel": result.max_travel,
         "position": result.position,
         "homing_pull_off_mm": result.homing_pull_off_mm,
+        "origin_policy": getattr(result, "origin_policy", "deck_origin"),
+        "working_volume": getattr(result, "working_volume", None),
+        "safe_z": getattr(result, "safe_z", None),
     }
     return FinalizeOriginResponse(**payload)
 
@@ -700,6 +726,8 @@ def connect(body: Optional[ConnectRequest] = None) -> GantryPosition:
         snapshot = session.connect(path, filename=filename)
     except HTTPException:
         raise
+    except CalibrationBlockedError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except (ValueError, ValidationError, yaml.YAMLError) as exc:
         raise HTTPException(400, f"Invalid gantry config: {exc}") from exc
     except Exception as exc:

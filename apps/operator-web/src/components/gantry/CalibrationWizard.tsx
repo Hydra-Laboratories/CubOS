@@ -3,12 +3,13 @@ import type { KeyboardEvent as ReactKeyboardEvent, TouchEvent } from "react";
 import { gantryApi } from "../../api/client";
 import * as theme from "../../theme";
 import CameraPreview from "./CameraPreview";
-import type { GantryConfig, GantryPosition, GantryResponse } from "../../types";
+import type { FinalizeOriginResponse, GantryConfig, GantryPosition, GantryResponse } from "../../types";
 import {
   buildCalibratedConfig,
   calculateSingleInstrumentZCalibration,
   getConfiguredHomingPullOff,
   getFactoryZTravel,
+  validateFinalizedOrigin,
   type ZCalibrationResult,
 } from "./calibrationMath";
 import { createJogPacer, jogPaceMs } from "./jogPacing";
@@ -99,10 +100,12 @@ export default function CalibrationWizard({
   const previousStep = useRef(step);
   const pendingSingleOrigin = useRef<PendingSingleOrigin | null>(null);
   const pendingZReference = useRef<PendingZReference | null>(null);
+  const finalizedOrigin = useRef<FinalizeOriginResponse | null>(null);
+  const finalizedConfig = useRef<GantryConfig | null>(null);
 
   const filename = gantry?.filename ?? "";
   const config = gantry?.config ?? null;
-  const originPolicy = config?.origin_policy ?? "deck_origin";
+  const [originPolicy, setOriginPolicy] = useState<"deck_origin" | "home_origin">("deck_origin");
   const instruments = useMemo(() => Object.keys(config?.instruments ?? {}), [config]);
   const followCameraInstruments = useMemo(
     () => instruments.filter((name) => isFollowCameraInstrument(config?.instruments[name]?.type)),
@@ -153,6 +156,9 @@ export default function CalibrationWizard({
   // working-volume bounds (see calculateSingleInstrumentZCalibration) for
   // both flows, so it needs the same tip-attached compensation as any other
   // pipette touch, not just the non-reference instruments recorded above.
+  const referenceInstrumentIsPipette = config?.instruments[selectedReference]?.type === "pipette";
+  const referenceTipAttached = referenceInstrumentIsPipette && !!tipAttached[selectedReference];
+  const referenceTipLengthError = isMulti && referenceTipAttached ? validateTipLength(tipLengths[selectedReference]) : null;
   const lowestInstrumentIsPipette = selectedLowest
     ? config?.instruments[selectedLowest]?.type === "pipette"
     : false;
@@ -174,6 +180,7 @@ export default function CalibrationWizard({
     previousOpen.current = open;
     if (!open || wasOpen) return;
     setStep(0);
+    setOriginPolicy(config?.origin_policy ?? "deck_origin");
     setBusy(false);
     setOperation(null);
     setError(null);
@@ -197,7 +204,9 @@ export default function CalibrationWizard({
     recoveryAttemptKey.current = null;
     pendingSingleOrigin.current = null;
     pendingZReference.current = null;
-  }, [config?.cnc.calibration_block_height_mm, contactInstruments, filename, open]);
+    finalizedOrigin.current = null;
+    finalizedConfig.current = null;
+  }, [config?.cnc.calibration_block_height_mm, config?.origin_policy, contactInstruments, filename, open]);
 
   useEffect(() => {
     const priorStep = previousStep.current;
@@ -317,6 +326,8 @@ export default function CalibrationWizard({
   const clearPendingCaptures = () => {
     pendingSingleOrigin.current = null;
     pendingZReference.current = null;
+    finalizedOrigin.current = null;
+    finalizedConfig.current = null;
   };
 
   const resetFlow = () => {
@@ -514,6 +525,7 @@ export default function CalibrationWizard({
   const setXY = () => runAction(
     "Setting XY origin",
     async () => {
+    if (referenceTipLengthError) throw new Error(referenceTipLengthError);
     const result = await gantryApi.setWorkCoordinates({ x: 0, y: 0 });
     const captured = requirePosition(result);
     setXyOrigin(captured);
@@ -645,22 +657,23 @@ export default function CalibrationWizard({
   const save = () => runAction("Measuring travel and saving", async () => {
     if (!config) throw new Error("No gantry config is loaded.");
     if (!readyForSave) throw new Error("Complete the calibration positions before saving.");
-    if (!isMulti) {
-      const homeZ = requireCaptured(calibrationHome, "Home position");
-      const blockTouchZ = requireCaptured(blockTouch, "Block touch position");
-      const height = parseBlockHeight(blockHeight);
-      const factoryZTravel = getFactoryZTravel(config);
-      const finalized = await gantryApi.finalizeCalibrationOrigin({
-        home_z: homeZ,
-        block_touch_z: blockTouchZ,
-        block_height: height,
-        factory_z_travel: factoryZTravel,
-      });
-      const measuredVolume = capturedFromPlain(finalized.measured_volume);
-      const maxTravel = capturedFromPlain(finalized.max_travel);
-      await onSaveCalibrated(normalizedOutput, buildCalibratedConfig({
+    if (!finalizedConfig.current) {
+      const initial = isMulti ? requireZCalibration(zCalibration) : null;
+      if (!finalizedOrigin.current) {
+        finalizedOrigin.current = await gantryApi.finalizeCalibrationOrigin({
+          home_z: initial?.homeZ ?? requireCaptured(calibrationHome, "Home position"),
+          block_touch_z: initial?.blockTouchZ ?? requireCaptured(blockTouch, "Block touch position"),
+          block_height: initial?.blockHeight ?? parseBlockHeight(blockHeight),
+          factory_z_travel: initial?.factoryZTravel ?? getFactoryZTravel(config),
+          origin_policy: originPolicy,
+        });
+      }
+      const finalized = finalizedOrigin.current;
+      const verifiedVolume = validateFinalizedOrigin({ ...config, origin_policy: originPolicy }, finalized);
+      const calibrated = buildCalibratedConfig({
         config: {
           ...config,
+          origin_policy: originPolicy,
           cnc: {
             ...config.cnc,
             calibration_block_height_mm: finalized.z_calibration.block_height,
@@ -670,76 +683,23 @@ export default function CalibrationWizard({
             homing_pull_off: finalized.homing_pull_off_mm ?? config.grbl_settings?.homing_pull_off,
           },
         },
-        measuredVolume,
+        measuredVolume: capturedFromPlain(finalized.measured_volume),
         zMin: finalized.z_calibration.z_min,
         zMax: finalized.z_calibration.z_max,
-        maxTravel,
-        isMulti: false,
+        maxTravel: capturedFromPlain(finalized.max_travel),
+        isMulti,
         instruments,
         instrumentPositions,
         referenceInstrument: selectedReference,
         lowestInstrument: selectedLowest,
         cameraBlockDistances: parsedCameraBlockDistances(cameraBlockDistances, nonContactInstruments),
         tipLengths: parsedTipLengths(tipLengths, tipAttached),
-      }));
-      onClose();
-      return;
+      });
+      calibrated.working_volume = verifiedVolume;
+      calibrated.cnc.safe_z = finalized.safe_z;
+      finalizedConfig.current = calibrated;
     }
-    const result = await gantryApi.home();
-    const captured = requirePosition(result);
-    const initialZCalibration = requireZCalibration(zCalibration);
-    const calibratedConfig = {
-      ...config,
-      cnc: {
-        ...config.cnc,
-        calibration_block_height_mm: initialZCalibration.blockHeight,
-      },
-    };
-    const finalZCalibration = calculateSingleInstrumentZCalibration({
-      homeZ: initialZCalibration.homeZ,
-      blockTouchZ: initialZCalibration.blockTouchZ,
-      blockHeight: initialZCalibration.blockHeight,
-      factoryZTravel: initialZCalibration.factoryZTravel,
-      homedZ: captured.z,
-    });
-    const zMin = finalZCalibration.zMin;
-    const zMax = finalZCalibration.zMax;
-    const homingPullOff = getConfiguredHomingPullOff(config);
-    const maxTravel = {
-      x: roundMm(captured.x + homingPullOff),
-      y: roundMm(captured.y + homingPullOff),
-      z: roundMm(finalZCalibration.maxTravelZ + homingPullOff),
-    };
-    if (maxTravel.x <= 0 || maxTravel.y <= 0 || maxTravel.z <= 0) {
-      throw new Error("Measured travel spans must be positive.");
-    }
-    await gantryApi.configureSoftLimits({
-      max_travel_x: maxTravel.x,
-      max_travel_y: maxTravel.y,
-      max_travel_z: maxTravel.z,
-      status_report: 0,
-      homing_pull_off: homingPullOff,
-    });
-    await onSaveCalibrated(normalizedOutput, buildCalibratedConfig({
-      config: {
-        ...calibratedConfig,
-        grbl_settings: {
-          ...(calibratedConfig.grbl_settings ?? {}),
-          homing_pull_off: homingPullOff,
-        },
-      },
-      measuredVolume: captured,
-      zMin,
-      zMax,
-      maxTravel,
-      isMulti,
-      instruments,
-      instrumentPositions,
-      referenceInstrument: selectedReference,
-      lowestInstrument: selectedLowest,
-      cameraBlockDistances: parsedCameraBlockDistances(cameraBlockDistances, nonContactInstruments),
-      tipLengths: parsedTipLengths(tipLengths, tipAttached),
-    }));
+    await onSaveCalibrated(normalizedOutput, structuredClone(finalizedConfig.current));
     onClose();
   });
 
@@ -824,6 +784,46 @@ export default function CalibrationWizard({
 
   if (!open) return null;
 
+  const referenceTipControls = isMulti && referenceInstrumentIsPipette ? (
+    <div style={{ margin: "12px 0" }}>
+      <p style={instructionStyle}>
+        If the leftmost pipette cannot reach the block bare, attach a tip and align
+        its end with the mark. This step sets X/Y only. The tip length carries
+        forward to this pipette's Z reference or instrument-offset measurement.
+      </p>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+        <input
+          type="checkbox"
+          aria-label="Calibrating with a tip attached"
+          checked={referenceTipAttached}
+          onChange={(event) => setTipAttached((prev) => ({
+            ...prev, [selectedReference]: event.target.checked,
+          }))}
+          disabled={controlsLocked}
+        />
+        <span style={labelStyle}>Calibrating with a tip attached</span>
+      </label>
+      {referenceTipAttached && (
+        <label style={{ ...fieldStyle, marginTop: 8 }}>
+          <span style={labelStyle}>Tip length (mm)</span>
+          <input
+            aria-label="Tip length (mm)"
+            value={tipLengths[selectedReference] ?? ""}
+            onChange={(event) => setTipLengths((prev) => ({
+              ...prev, [selectedReference]: event.target.value,
+            }))}
+            disabled={controlsLocked}
+            inputMode="decimal"
+            style={buttonStateStyle(inputStyle, controlsLocked)}
+          />
+          {referenceTipLengthError && (
+            <span style={{ color: theme.color.danger, fontSize: 12 }}>{referenceTipLengthError}</span>
+          )}
+        </label>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div
       ref={dialogRef}
@@ -907,6 +907,21 @@ export default function CalibrationWizard({
                     ? "Choose a file name for the calibrated config, pick the leftmost and lowest instruments, then continue."
                     : "Choose a file name for the calibrated config, then continue."}
                 </p>
+                <label style={fieldStyle}>
+                  <span style={labelStyle}>Coordinate origin</span>
+                  <select aria-label="Coordinate origin" value={originPolicy} disabled={controlsLocked}
+                    onChange={event => setOriginPolicy(event.target.value as "deck_origin" | "home_origin")}
+                    style={buttonStateStyle(inputStyle, controlsLocked)}>
+                    <option value="deck_origin">Calibrated deck reference (0, 0)</option>
+                    <option value="home_origin">Home corner (0, 0, 0)</option>
+                  </select>
+                </label>
+                <p style={instructionStyle}>
+                  {originPolicy === "deck_origin"
+                    ? "The calibrated front-left reference stays at X=0, Y=0. Homed coordinates remain positive."
+                    : "The homed back-right-top corner becomes X=0, Y=0, Z=0. Coordinates toward the deck are negative."}
+                  {" Measure from the front-left reference for either choice. The selected origin is applied only when calibration is finalized."}
+                </p>
                 {isMulti && (
                   <p style={instructionStyle}>
                     Choose the physically leftmost contact instrument as viewed from
@@ -956,8 +971,9 @@ export default function CalibrationWizard({
                     </>
                   )}
                 </div>
+                {referenceTipControls}
                 <div style={actionRowStyle}>
-                  <button onClick={goToHome} disabled={controlsLocked || !filename || instruments.length === 0} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !filename || instruments.length === 0)}>Continue</button>
+                  <button onClick={goToHome} disabled={controlsLocked || !filename || instruments.length === 0 || !!referenceTipLengthError} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !filename || instruments.length === 0 || !!referenceTipLengthError)}>Continue</button>
                 </div>
               </div>
             )}
@@ -1002,9 +1018,8 @@ export default function CalibrationWizard({
               <div>
                 <h3 style={sectionTitleStyle}>Set Origin</h3>
                 <p style={instructionStyle}>
-                  {originPolicy === "home_origin"
-                    ? "Put the calibration block at the back-right corner of the deck. Jog the tool until it just touches the top of the block, then continue."
-                    : "Put the calibration block at the front-left corner of the deck. Jog the tool until it just touches the top of the block, then continue."}
+                  Put the calibration block at the front-left corner of the deck. Jog the tool until it just touches the top of the block, then continue.
+                  {originPolicy === "home_origin" && " The homed back-right-top corner becomes zero only when you finish and save calibration."}
                 </p>
                 {soleInstrumentIsPipette && (
                   <p style={{ ...instructionStyle, margin: "8px 0 0" }}>
@@ -1082,10 +1097,16 @@ export default function CalibrationWizard({
               <div>
                 <h3 style={sectionTitleStyle}>Set XY Origin</h3>
                 <p style={instructionStyle}>
-                  {originPolicy === "home_origin"
-                    ? "Put the calibration block at the back-right corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."
-                    : "Put the calibration block at the front-left corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue."}
+                  Put the calibration block at the front-left corner of the deck. Jog the selected leftmost instrument until it is directly over the mark on the block, then continue.
+                  {originPolicy === "home_origin" && " The homed back-right-top corner becomes zero only when you finish and save calibration."}
                 </p>
+                {referenceInstrumentIsPipette && (
+                  <div style={noteStyle}>
+                    {referenceTipAttached
+                      ? `Using ${selectedReference} with a ${tipLengths[selectedReference]} mm tip (set in Prepare).`
+                      : `Using ${selectedReference} bare nozzle (set in Prepare).`}
+                  </div>
+                )}
                 <JogPanel
                   xyStep={xyStep}
                   zStep={zStep}
@@ -1104,7 +1125,7 @@ export default function CalibrationWizard({
                   zBelowMin={zBelowMin}
                 />
                 <div style={actionRowStyle}>
-                  <button onClick={setXY} disabled={controlsLocked || !connected} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !connected)}>Set XY origin and continue</button>
+                  <button onClick={setXY} disabled={controlsLocked || !connected || !!referenceTipLengthError} style={buttonStateStyle(primaryButtonStyle, controlsLocked || !connected || !!referenceTipLengthError)}>Set XY origin and continue</button>
                 </div>
               </div>
             )}

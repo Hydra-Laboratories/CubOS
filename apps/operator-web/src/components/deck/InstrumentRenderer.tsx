@@ -10,6 +10,7 @@ interface Props {
   svgHeight: number;
   machineXRange: [number, number];
   machineYRange: [number, number];
+  displayTranslateY?: number;
 }
 
 const INSTRUMENT_COLORS: Record<string, string> = {
@@ -31,6 +32,7 @@ export default function InstrumentRenderer({
   svgHeight,
   machineXRange,
   machineYRange,
+  displayTranslateY = 0,
 }: Props) {
   const color = INSTRUMENT_COLORS[instrument.type] ?? INSTRUMENT_FALLBACK_COLOR;
 
@@ -38,7 +40,8 @@ export default function InstrumentRenderer({
   if (gantryPosition?.connected && gantryPosition.work_x != null && gantryPosition.work_y != null) {
     const instX = gantryPosition.work_x + (instrument.offset_x ?? 0);
     const instY = gantryPosition.work_y + (instrument.offset_y ?? 0);
-    const { sx, sy } = machineToSvg(instX, instY, svgWidth, svgHeight, machineXRange, machineYRange);
+    const { sx, sy: deckSy } = machineToSvg(instX, instY, svgWidth, svgHeight, machineXRange, machineYRange);
+    const sy = deckSy + displayTranslateY;
     const labelY = Math.max(12, sy - 10);
 
     return (
