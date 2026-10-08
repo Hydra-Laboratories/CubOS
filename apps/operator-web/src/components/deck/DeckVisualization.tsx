@@ -7,7 +7,7 @@ import type {
   InstrumentConfig,
   LabwareResponse,
 } from "../../types";
-import { getSvgViewport, machineToSvg, SVG_PADDING } from "../../utils/coordinates";
+import { getSvgViewport, machineToSvg } from "../../utils/coordinates";
 import { color as themeColor, font as themeFont, viz as themeViz } from "../../theme";
 import GantryMarker from "./GantryMarker";
 import HolderRenderer from "./HolderRenderer";
@@ -103,30 +103,10 @@ export default function DeckVisualization({
   gantryPosition,
   machineXRange = [0, 300],
   machineYRange = [0, 200],
-  yAxisMotion = "head",
 }: Props) {
   const visualBounds = getVisualizationBounds(deck, instruments, machineXRange, machineYRange);
   const visualXRange: [number, number] = [visualBounds.minX, visualBounds.maxX];
   const visualYRange: [number, number] = [visualBounds.minY, visualBounds.maxY];
-  const isBedMode = yAxisMotion === "bed";
-
-  // In bed mode, compute SVG pixel offset for the deck based on gantry Y.
-  // The head is pinned at deck-frame Y=0 (bottom of the frame) and the deck
-  // slides instead: when WPos reports Y=50 the head is over deck point
-  // y=50, so the deck must shift down-screen (+sy) by 50mm-worth of pixels
-  // to bring that point under the fixed marker — matching the physical bed
-  // moving toward the operator on a Y+ command.
-  let deckTranslateY = 0;
-  if (isBedMode && gantryPosition?.connected) {
-    const gantryY = gantryPosition.work_y ?? gantryPosition.y ?? 0;
-    const viewport = getSvgViewport(SVG_W, SVG_H, visualXRange, visualYRange);
-    deckTranslateY = gantryY * viewport.scale;
-  }
-
-  // In bed mode, the gantry marker only moves in X (Y is fixed at 0).
-  const markerPosition: GantryPosition | null = isBedMode && gantryPosition
-    ? { ...gantryPosition, work_y: 0, y: 0 }
-    : gantryPosition;
 
   return (
     <svg
@@ -144,14 +124,7 @@ export default function DeckVisualization({
         machineYRange={visualYRange}
       />
 
-      {isBedMode && (
-        <text x={SVG_W - SVG_PADDING} y={SVG_PADDING - 4} fill={themeViz.caption} fontSize={9} textAnchor="end">
-          bed moves Y
-        </text>
-      )}
-
-      {/* Deck group — shifts in Y when in bed mode */}
-      <g transform={isBedMode ? `translate(0, ${deckTranslateY})` : undefined}>
+      <g>
         {deck?.labware.map((item) => {
           if (item.config.type === "well_plate") {
             return (
@@ -332,7 +305,6 @@ export default function DeckVisualization({
             label={key}
             instrument={inst}
             gantryPosition={gantryPosition}
-            displayTranslateY={deckTranslateY}
             svgWidth={SVG_W}
             svgHeight={SVG_H}
             machineXRange={visualXRange}
@@ -340,9 +312,9 @@ export default function DeckVisualization({
           />
         ))}
 
-      {markerPosition && (
+      {gantryPosition && (
         <GantryMarker
-          position={markerPosition}
+          position={gantryPosition}
           svgWidth={SVG_W}
           svgHeight={SVG_H}
           machineXRange={visualXRange}
