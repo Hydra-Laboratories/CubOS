@@ -87,7 +87,7 @@ describe("CalibrationWizard origin_policy copy", () => {
     expect(screen.queryByText(/back-right corner of the deck/)).not.toBeInTheDocument();
   });
 
-  it("uses back-right wording for home_origin single-instrument configs", async () => {
+  it("measures from front-left before finalizing home_origin single-instrument configs", async () => {
     const user = userEvent.setup();
     installFetch();
     const config: GantryConfig = { ...singleInstrumentConfig(), origin_policy: "home_origin" };
@@ -106,11 +106,12 @@ describe("CalibrationWizard origin_policy copy", () => {
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> Reference height
     await user.click(await screen.findByRole("button", { name: "Continue" })); // -> Set Origin
 
-    expect(await screen.findByText(/back-right corner of the deck/)).toBeInTheDocument();
-    expect(screen.queryByText(/front-left corner of the deck/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/front-left corner of the deck/)).toBeInTheDocument();
+    expect(screen.getByText(/homed back-right-top corner becomes zero only/)).toBeInTheDocument();
+    expect(screen.queryByText(/back-right corner of the deck/)).not.toBeInTheDocument();
   });
 
-  it("uses back-right wording for home_origin multi-instrument XY origin step", async () => {
+  it("measures from front-left before finalizing home_origin multi-instrument XY origin step", async () => {
     const user = userEvent.setup();
     installFetch();
     const config: GantryConfig = { ...multiInstrumentConfig(), origin_policy: "home_origin" };
@@ -128,7 +129,8 @@ describe("CalibrationWizard origin_policy copy", () => {
     await user.click(screen.getByRole("button", { name: "Continue" })); // Prepare -> Home
     await user.click(await screen.findByRole("button", { name: "Home gantry" })); // -> XY origin
 
-    expect(await screen.findByText(/back-right corner of the deck/)).toBeInTheDocument();
-    expect(screen.queryByText(/front-left corner of the deck/)).not.toBeInTheDocument();
+    expect(await screen.findByText(/front-left corner of the deck/)).toBeInTheDocument();
+    expect(screen.getByText(/homed back-right-top corner becomes zero only/)).toBeInTheDocument();
+    expect(screen.queryByText(/back-right corner of the deck/)).not.toBeInTheDocument();
   });
 });

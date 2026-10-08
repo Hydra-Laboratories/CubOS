@@ -320,6 +320,48 @@ describe("DeckVisualization", () => {
     expect(translateY).toBeCloseTo(50 * expectedScale, 3);
   });
 
+  it.each([
+    ["bed", 0, [0, 258], [0, 145]],
+    ["bed", 72.5, [0, 258], [0, 145]],
+    ["bed", 145, [0, 258], [0, 145]],
+    ["bed", -145, [-258, 0], [-145, 0]],
+    ["bed", -72.5, [-258, 0], [-145, 0]],
+    ["bed", 0, [-258, 0], [-145, 0]],
+    ["head", 145, [0, 258], [0, 145]],
+    ["head", -72.5, [-258, 0], [-145, 0]],
+  ] as const)("keeps zero-offset pipette on HEAD in %s mode at Y=%s", (mode, y, xRange, yRange) => {
+    const x = xRange[0] < 0 ? -100 : 100;
+    const { container } = render(<DeckVisualization
+      deck={{filename:"empty.yaml",labware:[]}}
+      instruments={{
+        pipette:{type:"pipette",vendor:"sartorius",offset_x:0,offset_y:0},
+        camera:{type:"camera",vendor:"usb",offset_x:2.5,offset_y:-28.75},
+      }}
+      gantryPosition={{connected:true,status:"Idle",x,y,z:0,work_x:x,work_y:y,work_z:0,calibration_active:false}}
+      machineXRange={[...xRange]} machineYRange={[...yRange]} yAxisMotion={mode}
+    />);
+    const head = screen.getByText("HEAD").parentElement!.querySelector("circle")!;
+    const pipetteGroup = screen.getByText("pipette").parentElement!;
+    const cameraGroup = screen.getByText("camera").parentElement!;
+    const pipette = pipetteGroup.querySelector("rect")!;
+    const camera = cameraGroup.querySelector("rect")!;
+    const center = (rect: SVGRectElement) => ({x:Number(rect.getAttribute("x"))+7,y:Number(rect.getAttribute("y"))+7});
+    const pipetteCenter = center(pipette);
+    const cameraCenter = center(camera);
+    expect(pipetteCenter.x).toBeCloseTo(Number(head.getAttribute("cx")),8);
+    expect(pipetteCenter.y).toBeCloseTo(Number(head.getAttribute("cy")),8);
+    const gridTicks = Array.from(container.querySelectorAll("text[text-anchor='end']"));
+    const y0 = gridTicks[0];
+    const otherTick = gridTicks.find(node => Number(node.textContent) !== Number(y0.textContent))!;
+    const scale = Math.abs((Number(otherTick.getAttribute("y"))-Number(y0.getAttribute("y"))) /
+      (Number(otherTick.textContent)-Number(y0.textContent)));
+    expect(cameraCenter.x-pipetteCenter.x).toBeCloseTo(2.5*scale,8);
+    expect(cameraCenter.y-pipetteCenter.y).toBeCloseTo(28.75*scale,8);
+    expect(cameraGroup.querySelector("title")!.textContent).toBe(`camera (camera) at (${(x+2.5).toFixed(1)}, ${(y-28.75).toFixed(1)})`);
+    expect(pipetteGroup.querySelector("title")!.textContent).toBe(`pipette (pipette) at (${x.toFixed(1)}, ${y.toFixed(1)})`);
+    expect(Number(pipetteGroup.querySelector("text")!.getAttribute("y"))).toBeCloseTo(Math.max(12,pipetteCenter.y-10),8);
+  });
+
   it("renders holder labware with current CubOS dimension keys without NaN attributes", () => {
     const currentDeck: DeckResponse = {
       filename: "legacy_holder.yaml",

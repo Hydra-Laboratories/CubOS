@@ -1032,6 +1032,9 @@ export default function App() {
         gantryFile={displayGantry ? gantryFile : null}
         gantry={displayGantry}
         isRunning={protocolRunActive}
+        onSaveInstrumentOffsets={async (filename, body) => {
+          await saveGantry.mutateAsync({ filename, body });
+        }}
         onSaveCalibrated={async (filename, body) => {
           const previousGantryFile = gantryFile;
           const saved = await saveGantry.mutateAsync({ filename, body });

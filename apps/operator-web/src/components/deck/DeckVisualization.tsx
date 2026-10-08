@@ -332,6 +332,7 @@ export default function DeckVisualization({
             label={key}
             instrument={inst}
             gantryPosition={gantryPosition}
+            displayTranslateY={deckTranslateY}
             svgWidth={SVG_W}
             svgHeight={SVG_H}
             machineXRange={visualXRange}
