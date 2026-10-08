@@ -22,6 +22,7 @@ from cubos.gantry.instrument_mount import InstrumentedGantry
 from cubos.gantry.loader import load_gantry_from_yaml_safe
 from cubos.gantry.origin import validate_working_volume_origin
 from cubos.protocol_engine.errors import GantryHealthCheckError
+from cubos.protocol_engine.instrument_usage import required_instrument_names
 from cubos.protocol_engine.loader import load_protocol_from_yaml_safe
 from cubos.protocol_engine.protocol import Protocol
 from cubos.protocol_engine.runtime import ProtocolContext
@@ -174,7 +175,7 @@ def run_on_hardware(
            the optional fluid state to it
         5. ``gantry.connect()``
         6. ``gantry.prepare_for_protocol_run()`` — clear any startup alarm
-        7. ``connect_instruments()``
+        7. ``connect_instruments()`` for the instruments the protocol uses
         8. ``gantry.is_healthy()`` health check (abort if unhealthy)
         9. ``protocol.execute(context)`` — run the steps
         10. disconnect instruments and gantry in ``finally``, even on error
@@ -309,7 +310,9 @@ def run_on_hardware(
         context.fluid_state_id = fluid_state_id
         gantry.connect()
         gantry.prepare_for_protocol_run()
-        context.gantry.connect_instruments()
+        context.gantry.connect_instruments(
+            names=required_instrument_names(protocol, context.gantry),
+        )
         if not gantry.is_healthy():
             raise GantryHealthCheckError(
                 "Gantry health check failed before protocol execution; aborting."

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 import logging
 import math
 from typing import Any, TYPE_CHECKING
@@ -221,9 +222,22 @@ class InstrumentedGantry:
 
         return (obj.x, obj.y)
 
-    def connect_instruments(self) -> None:
-        """Connect all mounted instruments."""
+    def connect_instruments(self, names: Iterable[str] | None = None) -> None:
+        """Connect mounted instruments.
+
+        Connects every mounted instrument when *names* is omitted (the
+        default -- calibration and manual-connect flows need everything
+        live). When *names* is given, connects only the instruments named
+        in it and skips the rest, so a protocol run only powers/homes what
+        it actually uses.
+        """
+        selected = set(names) if names is not None else None
         for name, instrument in self.instruments.items():
+            if selected is not None and name not in selected:
+                self.logger.info(
+                    "Skipping instrument not used by protocol: %s", name,
+                )
+                continue
             self.logger.info("Connecting instrument: %s", name)
             instrument.connect()
 

@@ -25,6 +25,7 @@ from cubos.gantry.limit_recovery import (
     recover_from_limit_alarm,
 )
 from cubos.gantry.yaml_schema import GantryYamlSchema
+from cubos.protocol_engine.instrument_usage import required_instrument_names
 from cubos.protocol_engine.setup import setup_protocol
 
 
@@ -715,7 +716,9 @@ class GantrySession:
                     step_observer=step_observer,
                 )
                 gantry.prepare_for_protocol_run()
-                context.gantry.connect_instruments()
+                context.gantry.connect_instruments(
+                    names=required_instrument_names(protocol, context.gantry),
+                )
                 if not gantry.is_healthy():
                     raise GantrySessionHealthCheckError(
                         "Gantry health check failed before protocol execution; "

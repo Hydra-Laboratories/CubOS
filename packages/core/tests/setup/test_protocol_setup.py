@@ -915,10 +915,12 @@ instruments:
         # Track the instrument-level connect/disconnect steps.
         original_connect = InstrumentedGantry.connect_instruments
         original_disconnect = InstrumentedGantry.disconnect_instruments
+        connect_names = []
 
-        def tracking_connect(self):
+        def tracking_connect(self, names=None):
             calls.append("connect_instruments")
-            return original_connect(self)
+            connect_names.append(set(names) if names is not None else None)
+            return original_connect(self, names=names)
 
         def tracking_disconnect(self):
             calls.append("disconnect_instruments")
@@ -955,6 +957,9 @@ instruments:
             "disconnect_instruments",
             "disconnect",
         ]
+        # The protocol only moves the pipette; connect_instruments should
+        # only be asked to connect that, not every mounted instrument.
+        assert connect_names == [{"pipette"}]
 
     def test_mid_scan_failure_retracts_to_safe_z_before_disconnect(self, monkeypatch):
         events = []

@@ -266,6 +266,32 @@ class TestInstrumentedGantryConnectInstruments:
         with pytest.raises(RuntimeError, match="no port"):
             instrumented_gantry.connect_instruments()
 
+    def test_connect_with_names_only_connects_listed_instruments(self):
+        pip = _mock_instrument("pipette")
+        uv = _mock_instrument("uvvis")
+        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry(), instruments={"pipette": pip, "uvvis": uv})
+
+        instrumented_gantry.connect_instruments(names={"pipette"})
+
+        pip.connect.assert_called_once()
+        uv.connect.assert_not_called()
+
+    def test_connect_with_empty_names_connects_nothing(self):
+        pip = _mock_instrument("pipette")
+        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry(), instruments={"pipette": pip})
+
+        instrumented_gantry.connect_instruments(names=set())
+
+        pip.connect.assert_not_called()
+
+    def test_connect_with_names_ignores_unknown_name(self):
+        pip = _mock_instrument("pipette")
+        instrumented_gantry = InstrumentedGantry(controller=_mock_gantry(), instruments={"pipette": pip})
+
+        instrumented_gantry.connect_instruments(names={"nonexistent"})
+
+        pip.connect.assert_not_called()
+
 
 class TestInstrumentedGantryDisconnectInstruments:
 

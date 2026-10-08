@@ -97,8 +97,8 @@ class FakeGantry:
     def prepare_for_protocol_run(self):
         self.calls.append(("prepare_for_protocol_run", None))
 
-    def connect_instruments(self):
-        self.calls.append(("connect_instruments", None))
+    def connect_instruments(self, names=None):
+        self.calls.append(("connect_instruments", names))
 
     def disconnect_instruments(self):
         self.calls.append(("disconnect_instruments", None))
@@ -773,7 +773,7 @@ def test_run_protocol_uses_existing_gantry_and_preserves_connection(monkeypatch,
             events.append("store.close")
 
     class FakeInstrumented:
-        def connect_instruments(self):
+        def connect_instruments(self, names=None):
             events.append("cubos.instruments.connect")
 
         def disconnect_instruments(self):
@@ -828,6 +828,68 @@ def test_run_protocol_uses_existing_gantry_and_preserves_connection(monkeypatch,
     ]
 
 
+def test_run_protocol_only_connects_instruments_the_protocol_uses(monkeypatch, tmp_path):
+    """A protocol that only moves the pipette should not connect other
+    mounted instruments (#320): only turn on what a run actually needs."""
+    import cubos.gantry.session as session_module
+    from cubos.protocol_engine.runtime import ProtocolStep
+
+    session = GantrySession(gantry_factory=FakeGantry, sleep=lambda _seconds: None)
+    session.connect(_write_gantry(tmp_path), filename="gantry.yaml")
+    connect_calls: list[set | None] = []
+
+    class FakeStore:
+        def __init__(self, db_path=None):
+            pass
+
+        def close(self):
+            pass
+
+    class FakeInstrumented:
+        instruments: dict = {"pipette": object(), "uvvis": object()}
+
+        def connect_instruments(self, names=None):
+            connect_calls.append(set(names) if names is not None else None)
+
+        def disconnect_instruments(self):
+            pass
+
+    class FakeProtocol:
+        steps = [
+            ProtocolStep(
+                index=0, command_name="move", handler=lambda **_: None,
+                args={"instrument": "pipette", "position": "vial_1"},
+            ),
+        ]
+
+        def execute(self, context):
+            return []
+
+    instrumented = FakeInstrumented()
+    context = type("Context", (), {"gantry": instrumented})()
+
+    monkeypatch.setattr(session_module, "DataStore", FakeStore)
+    monkeypatch.setattr(
+        session_module, "create_campaign_for_protocol_run", lambda *a, **k: 1,
+    )
+    monkeypatch.setattr(
+        session_module, "setup_protocol",
+        lambda *a, **k: (FakeProtocol(), context),
+    )
+
+    session.run_protocol(
+        gantry_path=tmp_path / "gantry.yaml",
+        deck_path=tmp_path / "deck.yaml",
+        protocol_path=tmp_path / "protocol.yaml",
+        gantry_file="gantry.yaml",
+        deck_file="deck.yaml",
+        protocol_file="protocol.yaml",
+        db_path=tmp_path / "data.db",
+    )
+
+    assert connect_calls == [{"pipette"}]
+
+
 def test_run_protocol_links_fluid_state_to_campaign_and_context(monkeypatch, tmp_path):
     """The fluid state must reach BOTH the campaign record (tip/cap state
     journals resolve it through the campaign) and setup_protocol (context
@@ -847,7 +909,7 @@ def test_run_protocol_links_fluid_state_to_campaign_and_context(monkeypatch, tmp
             pass
 
     class FakeInstrumented:
-        def connect_instruments(self):
+        def connect_instruments(self, names=None):
             pass
 
         def disconnect_instruments(self):
@@ -940,7 +1002,7 @@ def test_run_protocol_disconnects_instruments_on_failure(monkeypatch, tmp_path):
             events.append("store.close")
 
     class FakeInstrumented:
-        def connect_instruments(self):
+        def connect_instruments(self, names=None):
             events.append("cubos.instruments.connect")
 
         def disconnect_instruments(self):
@@ -1004,7 +1066,7 @@ def test_run_protocol_health_failure_after_instruments_uses_session_error(
             events.append("store.close")
 
     class FakeInstrumented:
-        def connect_instruments(self):
+        def connect_instruments(self, names=None):
             events.append("cubos.instruments.connect")
 
         def disconnect_instruments(self):
