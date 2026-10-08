@@ -290,3 +290,13 @@ rather than indexing `well_attributes` directly.
 
     Replace the example paths with the gantry, deck, and protocol YAML files
     for your setup.
+
+## Read the deck visualizer
+
+The HEAD marker shows the gantry reference position. A pipette with zero X/Y
+mount offsets shares that marker position; other instruments appear at their
+measured offsets. Depth affects Z and does not separate markers in the XY view.
+
+On a moving-bed gantry, the display slides the deck in Y while keeping the head
+and its mounted tools together. Instrument tooltips still report their actual
+deck coordinates. This display animation does not change calibration values.
